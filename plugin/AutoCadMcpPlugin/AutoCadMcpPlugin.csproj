@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Multi-target: net48 cubre la "generación clásica" (~2019-2024, API .NET
+         Framework sin cambios entre versiones); net8.0-windows cubre AutoCAD
+         2025+ (Autodesk migró el runtime a .NET 8, mismo namespace/API para lo
+         básico). `dotnet build` compila los dos DLLs de una — en la otra máquina
+         se carga con NETLOAD el que corresponda a la versión real instalada. -->
+    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>AutoCadMcpPlugin</AssemblyName>
+    <RootNamespace>AutoCadMcpPlugin</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <!-- AutoCAD ~2019-2024 (.NET Framework 4.8) -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- AcCoreMgd.dll, AcDbMgd.dll, AcMgd.dll de AutoCAD 2022, CopyLocal=false
+         (AutoCAD las provee en runtime; misma generación de API que 2019-2024,
+         pero conviene probar en la versión real antes de confiar del todo). -->
+    <PackageReference Include="AutoCAD-2022.Net.Base" Version="1.0.0" ExcludeAssets="runtime" />
+    <!-- System.Text.Json no viene con net48, hay que traerlo por NuGet. -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <!-- AutoCAD 2025+ (.NET 8) -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <PackageReference Include="ModPlus.AutoCAD.API.2025" Version="3.0.0" ExcludeAssets="runtime" />
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+    <!-- System.Text.Json ya viene incluido en el runtime de .NET 8. -->
+  </ItemGroup>
+
+</Project>

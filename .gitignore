@@ -1,0 +1,9 @@
+# .NET / Visual Studio
+plugin/**/bin/
+plugin/**/obj/
+*.user
+
+# Python
+mcp_server/__pycache__/
+mcp_server/.venv/
+mcp_server/*.egg-info/

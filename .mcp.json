@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "autocad": {
+      "command": "mcp_server/.venv/Scripts/python.exe",
+      "args": [
+        "mcp_server/server.py"
+      ]
+    }
+  }
+}
