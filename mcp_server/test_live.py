@@ -22,6 +22,15 @@ import autocad_client as acad
 KEEP = "--keep" in sys.argv
 BASE_X, BASE_Y = 500.0, 0.0   # lejos de cualquier dibujo real
 
+# Una definicion de bloque no se puede pisar ni borrar desde el MCP, asi que
+# un nombre fijo hace que el test solo pase LA PRIMERA VEZ en cada dibujo: la
+# segunda corrida choca con el bloque que dejo la anterior. Con el PID el
+# nombre es distinto en cada corrida y el test se vuelve repetible.
+BLOCK_NAME = f"PRUEBA_CRUZ_{os.getpid()}"
+
+# Lo que t_layout deja para que t_viewport ubique la ventana sobre el papel real.
+LAYOUT: dict[str, object] = {"nombre": "", "ancho": 0.0, "alto": 0.0}
+
 created: list[str] = []
 results: list[tuple[str, bool, str]] = []
 
@@ -166,10 +175,10 @@ def t_define_e_insert_block():
         "x2": BASE_X + 82, "y2": BASE_Y + 2, "z2": 0,
         "layer": "PRUEBA", "lineweight": None, "colorIndex": None})
     acad.call("define_block", {
-        "name": "PRUEBA_CRUZ", "handles": [a["handle"], b["handle"]],
+        "name": BLOCK_NAME, "handles": [a["handle"], b["handle"]],
         "basePointX": BASE_X + 82, "basePointY": BASE_Y, "basePointZ": 0})
     ins = track(acad.call("insert_block", {
-        "name": "PRUEBA_CRUZ", "x": BASE_X + 90, "y": BASE_Y, "z": 0,
+        "name": BLOCK_NAME, "x": BASE_X + 90, "y": BASE_Y, "z": 0,
         "scale": 1.0, "rotationDeg": 0.0, "layer": "PRUEBA",
         "path": None, "attributes": None}))
     return f"bloque definido e insertado -> {ins['handle']}"
@@ -280,17 +289,15 @@ def t_list_styles():
 
 
 def t_layout():
-    nombre = "MCP-PRUEBA"
-    try:
-        acad.call("set_current_layout", {"name": nombre})
-        existe = True
-    except acad.AutoCadError:
-        existe = False
-    if not existe:
-        r = acad.call("create_layout", {
-            "name": nombre, "plotConfig": None, "paperSize": "A3"})
-        return f"layout '{r['name']}' papel {r['paperWidth']}x{r['paperHeight']}"
-    return f"layout '{nombre}' ya existia"
+    """Crea el layout de prueba, con nombre unico para poder repetir el test."""
+    nombre = f"MCP-PRUEBA-{os.getpid()}"
+    r = acad.call("create_layout", {
+        "name": nombre, "plotConfig": None, "paperSize": "A3"})
+    LAYOUT["nombre"] = nombre
+    LAYOUT["ancho"] = r["paperWidth"]
+    LAYOUT["alto"] = r["paperHeight"]
+    return (f"'{r['name']}' papel {r['paperWidth']:.0f}x{r['paperHeight']:.0f} "
+            f"({r.get('orientation')}, {r.get('paperName')})")
 
 
 def t_list_layouts():
@@ -300,12 +307,34 @@ def t_list_layouts():
 
 
 def t_viewport():
+    """El viewport se calcula sobre el papel REAL, con margen de 15mm."""
+    ancho, alto = LAYOUT["ancho"], LAYOUT["alto"]
+    margen = 15.0
     r = acad.call("create_viewport", {
-        "layout": "MCP-PRUEBA", "centerX": 200, "centerY": 150,
-        "width": 250, "height": 180,
+        "layout": LAYOUT["nombre"],
+        "centerX": ancho / 2.0, "centerY": alto / 2.0,
+        "width": ancho - 2 * margen, "height": alto - 2 * margen,
         "viewCenterX": BASE_X + 20, "viewCenterY": BASE_Y + 20,
         "scaleDenominator": 100.0, "modelUnitsPerMm": 1000.0, "locked": True})
-    return f"viewport {r['handle']} escala {r['customScale']}"
+    return (f"{r['width'] if 'width' in r else ancho - 2 * margen:.0f}mm de ancho "
+            f"en hoja de {r['paperWidth']:.0f}, escala {r['customScale']}")
+
+
+def t_viewport_fuera_de_hoja_da_error():
+    """Un viewport que no entra tiene que frenarse, no dibujarse cruzando el borde."""
+    try:
+        acad.call("create_viewport", {
+            "layout": LAYOUT["nombre"],
+            "centerX": LAYOUT["ancho"], "centerY": LAYOUT["alto"] / 2.0,
+            "width": LAYOUT["ancho"], "height": 100.0,
+            "viewCenterX": 0, "viewCenterY": 0,
+            "scaleDenominator": 100.0, "modelUnitsPerMm": 1000.0,
+            "locked": True})
+    except acad.AutoCadError as exc:
+        if "no entra en la hoja" in str(exc):
+            return "lo rechaza y explica por que"
+        raise RuntimeError(f"error poco claro: {exc}")
+    raise RuntimeError("acepto un viewport que se sale de la hoja")
 
 
 def t_list_documents():
@@ -330,7 +359,7 @@ def t_export_block():
     if os.path.exists(out):
         os.remove(out)
     r = acad.call("export_block", {
-        "name": "PRUEBA_CRUZ", "path": out, "overwrite": True})
+        "name": BLOCK_NAME, "path": out, "overwrite": True})
     if not os.path.exists(r["path"]):
         raise RuntimeError("export_block dijo que si pero no hay archivo")
     os.environ.setdefault("ACAD_TEST_DWG", r["path"])
@@ -376,9 +405,39 @@ PRUEBAS = [
     ("create_layout", t_layout),
     ("list_layouts", t_list_layouts),
     ("create_viewport", t_viewport),
+    ("viewport fuera de hoja -> error", t_viewport_fuera_de_hoja_da_error),
     ("list_documents", t_list_documents),
     ("set_active_document", t_set_active_document),
 ]
+
+
+def limpiar() -> None:
+    """Deja el dibujo como estaba: entidades, layout y bloque de esta corrida.
+
+    Sin esto cada pasada acumula un layout y una definicion de bloque nuevos,
+    porque llevan el PID en el nombre para poder repetir el test.
+    """
+    if created:
+        print(f"\nlimpiando {len(created)} entidades...")
+        for h in created:
+            try:
+                acad.call("delete_entity", {"handle": h})
+            except acad.AutoCadError:
+                pass
+
+    if LAYOUT["nombre"]:
+        try:
+            acad.call("delete_layout", {"name": LAYOUT["nombre"]})
+            print(f"layout {LAYOUT['nombre']} borrado")
+        except acad.AutoCadError as exc:
+            print(f"no se pudo borrar el layout: {str(exc)[:80]}")
+
+    # El bloque solo se puede purgar despues de borrar sus inserciones.
+    try:
+        acad.call("purge_block", {"name": BLOCK_NAME})
+        print(f"bloque {BLOCK_NAME} purgado")
+    except acad.AutoCadError as exc:
+        print(f"no se pudo purgar el bloque: {str(exc)[:80]}")
 
 
 def main() -> int:
@@ -398,13 +457,8 @@ def main() -> int:
     ok = sum(1 for _, good, _ in results if good)
     fallas = [(n, d) for n, good, d in results if not good]
 
-    if not KEEP and created:
-        print(f"\nlimpiando {len(created)} entidades de prueba...")
-        for h in created:
-            try:
-                acad.call("delete_entity", {"handle": h})
-            except acad.AutoCadError:
-                pass
+    if not KEEP:
+        limpiar()
 
     print(f"\n{'=' * 60}")
     print(f"{ok}/{len(results)} pruebas OK")

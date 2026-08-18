@@ -30,10 +30,21 @@ LAYER_COLORS = {
 DEFAULT_COLOR = "#444444"
 
 
+# Relacion ancho/altura por caracter medida contra AutoCAD real con arial.
+# El preview la usa para que los textos ocupen aca lo mismo que alla.
+CHAR_W_RATIO = 0.87
+
+
 def fake_call(cmd: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     params = params or {}
     _next_handle[0] += 1
     handle = format(_next_handle[0], "X")
+
+    if cmd == "measure_text":
+        text = str(params.get("text", ""))
+        h = float(params.get("height", 1.0))
+        return {"text": text, "width": len(text) * h * CHAR_W_RATIO,
+                "height": h, "charWidthRatio": CHAR_W_RATIO}
     if cmd in ("create_polyline", "create_line", "create_text",
                "create_circle", "create_arc"):
         DRAWN.append({"cmd": cmd, **params})

@@ -41,6 +41,12 @@ namespace AutoCadMcpPlugin.Commands
 
                 result["paperWidth"] = layout.PlotPaperSize.X;
                 result["paperHeight"] = layout.PlotPaperSize.Y;
+                // 'A3' matchea tanto el horizontal como el vertical: hay que
+                // devolver cual quedo, o quien ubica el viewport lo hace a ciegas.
+                result["paperName"] = layout.CanonicalMediaName;
+                result["orientation"] =
+                    layout.PlotPaperSize.X >= layout.PlotPaperSize.Y
+                        ? "horizontal" : "vertical";
                 result["tabOrder"] = layout.TabOrder;
                 tr.Commit();
             }
@@ -191,6 +197,12 @@ namespace AutoCadMcpPlugin.Commands
                     var btr = (BlockTableRecord)tr.GetObject(
                         layout.BlockTableRecordId, OpenMode.ForWrite);
 
+                    // Un viewport que no entra en la hoja se crea igual y se
+                    // dibuja cruzando el borde: mejor frenarlo acá, porque en
+                    // pantalla parece que "algo salió descuadrado" y no queda
+                    // claro que el problema es el tamaño pedido.
+                    CheckFitsInPaper(layout, cx, cy, w, h);
+
                     var vp = new Viewport();
                     btr.AppendEntity(vp);
                     tr.AddNewlyCreatedDBObject(vp, true);
@@ -212,7 +224,9 @@ namespace AutoCadMcpPlugin.Commands
                         ["handle"] = vp.Handle.ToString(),
                         ["layout"] = layoutName,
                         ["customScale"] = vp.CustomScale,
-                        ["number"] = vp.Number
+                        ["number"] = vp.Number,
+                        ["paperWidth"] = layout.PlotPaperSize.X,
+                        ["paperHeight"] = layout.PlotPaperSize.Y
                     };
 
                     tr.Commit();
@@ -224,6 +238,38 @@ namespace AutoCadMcpPlugin.Commands
                 // Dejamos la vista como estaba: crear un viewport no debería
                 // cambiarle la pestaña al usuario.
                 try { lm.CurrentLayout = previous; } catch { }
+            }
+        }
+
+        /// <summary>
+        /// El viewport se ubica en milímetros de papel con el origen abajo a la
+        /// izquierda de la hoja. Si la ventana pedida se sale, el error dice
+        /// cuánto mide la hoja y por dónde se pasa, que es lo que hace falta
+        /// para corregirlo.
+        /// </summary>
+        private static void CheckFitsInPaper(Layout layout, double cx, double cy,
+                                             double w, double h)
+        {
+            double pw = layout.PlotPaperSize.X;
+            double ph = layout.PlotPaperSize.Y;
+            if (pw <= 0 || ph <= 0)
+                return;   // sin dispositivo de impresión no hay hoja que validar
+
+            double left = cx - w / 2.0;
+            double right = cx + w / 2.0;
+            double bottom = cy - h / 2.0;
+            double top = cy + h / 2.0;
+            const double tol = 0.51;   // medio milímetro de gracia
+
+            if (left < -tol || bottom < -tol || right > pw + tol || top > ph + tol)
+            {
+                string orientation = pw >= ph ? "horizontal" : "vertical";
+                throw new InvalidOperationException(
+                    $"El viewport ({w:0.#}x{h:0.#}mm centrado en {cx:0.#},{cy:0.#}) " +
+                    $"ocupa de {left:0.#},{bottom:0.#} a {right:0.#},{top:0.#} y no " +
+                    $"entra en la hoja de {pw:0.#}x{ph:0.#}mm ({orientation}). " +
+                    $"Achicalo, movelo, o creá el layout con un papel más grande " +
+                    $"o en la otra orientación.");
             }
         }
     }

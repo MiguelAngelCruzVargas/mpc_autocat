@@ -23,9 +23,10 @@ LW_SOFT = 13  # colchones, cojines: aún más liviano que el contorno
 # encima de un mueble. Cada entrada es un bounding box (x0, y0, x1, y1).
 OCCUPIED: list[tuple[float, float, float, float]] = []
 
-# Ancho de caracter respecto de la altura, para la fuente por defecto de
-# AutoCAD. Sirve para estimar cuánto mide un texto sin preguntarle al dibujo.
-CHAR_W = 0.62
+# Ancho de caracter respecto de la altura. Solo se usa como respaldo si el
+# plugin no puede medir: 0.62 se quedaba 40% corto y los rotulos terminaban
+# cruzando los muros; 0.87 es lo medido contra AutoCAD real.
+CHAR_W = 0.87
 
 
 def reset_footprints() -> None:
@@ -354,14 +355,44 @@ def label_rooms(rooms: list[dict[str, Any]], height: float,
 
 # ------------------------------------------------------------------ otros
 
+_MEASURE_CACHE: dict[tuple[str, float], float] = {}
+_MEASURE_OK = [True]
+
+
+def measure(text: str, height: float) -> float:
+    """Ancho real del texto. Le pregunta a AutoCAD y cachea la respuesta.
+
+    La estimación por cantidad de caracteres se queda corta con fuentes anchas
+    y el rótulo termina desbordando el ambiente, asi que solo se usa como
+    respaldo si el plugin no sabe medir (version vieja o sin conexion).
+    """
+    key = (text, round(height, 6))
+    if key in _MEASURE_CACHE:
+        return _MEASURE_CACHE[key]
+
+    width = len(text) * height * CHAR_W
+    if _MEASURE_OK[0]:
+        try:
+            width = acad.call("measure_text", {
+                "text": text, "height": height,
+                "style": None, "widthFactor": None})["width"]
+        except (Exception, KeyError):
+            # Una sola vez: si el plugin no lo soporta, no reintentamos por
+            # cada texto del plano.
+            _MEASURE_OK[0] = False
+
+    _MEASURE_CACHE[key] = width
+    return width
+
+
 def text_block_size(text: str, height: float, area: Optional[float] = None,
                     area_height: float = 0.0) -> tuple[float, float]:
     """Cuánto mide el bloque nombre + superficie, en unidades del modelo."""
-    w = len(text) * height * CHAR_W
+    w = measure(text, height)
     h = height
     if area is not None:
         ah = area_height or height * 0.72
-        w = max(w, len(f"{area:.2f} m2") * ah * CHAR_W)
+        w = max(w, measure(f"{area:.2f} m2", ah))
         h += ah * 1.5
     return w, h
 
@@ -381,7 +412,7 @@ def label(text: str, cx: float, cy: float, height: float,
 
     acad.call("create_text", {
         "text": name,
-        "x": cx - len(name) * height * CHAR_W / 2.0,
+        "x": cx - measure(name, height) / 2.0,
         "y": top - height, "z": 0.0, "height": height,
         "layer": layer, "rotationDeg": 0.0,
         "lineweight": lineweight, "colorIndex": None,
@@ -391,7 +422,7 @@ def label(text: str, cx: float, cy: float, height: float,
         txt = f"{area:.2f} m2"
         acad.call("create_text", {
             "text": txt,
-            "x": cx - len(txt) * ah * CHAR_W / 2.0,
+            "x": cx - measure(txt, ah) / 2.0,
             "y": cy - block_h / 2.0, "z": 0.0,
             "height": ah, "layer": layer, "rotationDeg": 0.0,
             "lineweight": 13, "colorIndex": None,
@@ -437,7 +468,9 @@ def find_label_spot(room: tuple[float, float, float, float],
     room_cx, room_cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
 
     if min_cx > max_cx or min_cy > max_cy:
-        return (room_cx, room_cy), False   # el texto no entra ni vacío
+        # Ni vacío entra: va al centro igual, para que el ambiente no quede sin
+        # rotular, y que la persona lo mueva. Peor seria dejarlo afuera.
+        return (room_cx, room_cy), False
 
     # Solo estorban los muebles que caen dentro de este ambiente.
     obstacles = [o for o in OCCUPIED
@@ -459,5 +492,9 @@ def find_label_spot(room: tuple[float, float, float, float],
                 best = (score, (cx, cy))
 
     if best is None:
-        return (room_cx, room_cy), False
+        # Todo el ambiente esta ocupado: al centro, pero SIEMPRE clampeado
+        # adentro del cuarto — un rotulo cruzando un muro no se entiende.
+        cx = min(max(room_cx, min_cx), max_cx)
+        cy = min(max(room_cy, min_cy), max_cy)
+        return (cx, cy), False
     return best[1], True

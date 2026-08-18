@@ -97,6 +97,16 @@ namespace AutoCadMcpPlugin
                 case "list_styles":
                     return StyleCommands.ListStyles(doc, pars);
 
+                // Medicion
+                case "measure_text":
+                    return MeasureTextCommand.Run(doc, pars);
+
+                // Limpieza
+                case "delete_layout":
+                    return PurgeCommands.DeleteLayout(doc, pars);
+                case "purge_block":
+                    return PurgeCommands.PurgeBlock(doc, pars);
+
                 // Guardado / exportacion
                 case "save_drawing":
                     return SaveCommands.Save(doc, pars);

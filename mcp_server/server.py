@@ -10,8 +10,10 @@ from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
+import annotation as ann_mod
 import arch as arch_mod
 import autocad_client as acad
+import civil as civil_mod
 import furniture as fur_mod
 import sheet as sheet_mod
 
@@ -217,6 +219,145 @@ def label_rooms(rooms: list[dict[str, Any]], height: float,
     metros, un texto de 3mm de papel es 0.15."""
     return fur_mod.label_rooms(rooms, height=height, area_height=area_height,
                                layer=layer, show_area=show_area)
+
+
+# --------------------------------------------------- Obra civil (calles)
+
+@mcp.tool()
+def create_road(points: list[list[float]], width: float = 7.00,
+                 curb_width: float = 0.40, sidewalk_width: float = 0.0,
+                 closed: bool = False, draw_axis: bool = True,
+                 pavement_pattern: Optional[str] = None,
+                 pavement_scale: float = 1.0) -> dict[str, Any]:
+    """Calle en planta desde su eje: calzada, guarniciones y banquetas.
+
+    Es la tool para trazar una vialidad — no dibujes las paralelas a mano, que
+    en curva no cierran. Usa el mismo offset con inglete que los muros.
+
+    points: el eje por donde pasa el CENTRO de la calzada. Para una calle curva
+    poné suficientes puntos como para que el trazo siga la curva.
+    width: ancho de calzada de guarnición a guarnición (7.00 es lo típico en
+    calle urbana de doble sentido).
+    curb_width: ancho de la guarnición a cada lado, por fuera de la calzada.
+    sidewalk_width: banqueta por fuera de la guarnición; 0 la omite.
+    pavement_pattern: rayado de la calzada, p.ej. 'AR-CONC' para concreto
+    hidráulico. Sin patrón queda solo el contorno.
+
+    Devuelve el largo del eje y las cantidades de obra ya calculadas:
+    pavementArea (m2), curbLength (ml de guarnición, contando los dos lados) y
+    sidewalkArea — que es lo que va al resumen de obra."""
+    return civil_mod.create_road(
+        points=points, width=width, curb_width=curb_width,
+        sidewalk_width=sidewalk_width, closed=closed, draw_axis=draw_axis,
+        pavement_pattern=pavement_pattern, pavement_scale=pavement_scale)
+
+
+@mcp.tool()
+def point_on_road(points: list[list[float]], distance: float,
+                   offset: float = 0.0, closed: bool = False) -> dict[str, Any]:
+    """Dónde cae un punto ubicado por cadenamiento sobre un eje.
+
+    distance: metros desde el arranque del eje, siguiendo las curvas.
+    offset: desplazamiento perpendicular (+ es a la izquierda del sentido de
+    avance). Con offset=3.5 caés justo en la guarnición de una calle de 7 m.
+
+    Sirve para ubicar un poste, un registro, el arranque de un ramal o una cota
+    sin recalcular la geometría de la curva."""
+    return civil_mod.point_on_road(points=points, distance=distance,
+                                   offset=offset, closed=closed)
+
+
+# ------------------------------------------- Documentación (obra lineal, etc.)
+
+@mcp.tool()
+def create_table(x: float, y: float, rows: list[list[str]],
+                  col_widths: list[float], row_height: float,
+                  text_height: float, title: str = "",
+                  header: bool = True, layer: str = "TABLAS") -> dict[str, Any]:
+    """Tabla con grilla y texto: resumen de obra, cuadro de acabados,
+    cuantificación, cuadro de construcción.
+
+    (x, y) es la esquina SUPERIOR izquierda; la tabla crece hacia abajo.
+    rows: las filas, con las celdas ya como texto. Con header=True la primera
+    fila va centrada y separada por una línea más gruesa.
+    col_widths: ancho de cada columna en unidades del modelo — define cuántas
+    columnas tiene la tabla.
+    row_height / text_height: en unidades del modelo. A 1:50 en metros, un
+    texto de 2.5mm de papel es 0.125 y una fila cómoda es 0.35.
+
+    Devuelve 'bottom' y 'right' para poder encadenar otra cosa debajo o al lado."""
+    return ann_mod.create_table(x=x, y=y, rows=rows, col_widths=col_widths,
+                                row_height=row_height, text_height=text_height,
+                                title=title, header=header, layer=layer)
+
+
+@mcp.tool()
+def create_legend(x: float, y: float, items: list[dict[str, Any]],
+                   text_height: float, swatch_width: float = 0.0,
+                   swatch_height: float = 0.0, row_height: float = 0.0,
+                   title: str = "LEYENDA",
+                   layer: str = "LEYENDA") -> dict[str, Any]:
+    """Leyenda de simbología: una muestra del rayado y su descripción al lado.
+
+    (x, y) es la esquina superior izquierda; crece hacia abajo.
+    items: [{"label": "PAVIMENTO DE CONCRETO", "pattern": "AR-CONC",
+             "scale": 0.5, "color_index": 8}]
+    - pattern: nombre de acad.pat ('SOLID', 'ANSI31', 'AR-CONC'...). Si se
+      omite, el cuadro queda solo con contorno, que es lo correcto para
+      simbología de línea (ejes, guarniciones).
+    - color_index: color ACI del cuadro y su relleno.
+
+    Los cuadros y textos se dimensionan solos a partir de text_height si no
+    pasás swatch_width/height/row_height."""
+    return ann_mod.create_legend(x=x, y=y, items=items, text_height=text_height,
+                                 swatch_width=swatch_width,
+                                 swatch_height=swatch_height,
+                                 row_height=row_height, title=title, layer=layer)
+
+
+@mcp.tool()
+def create_stationing(points: list[list[float]], interval: float,
+                       text_height: float, tick: float = 0.0,
+                       start_station: float = 0.0, closed: bool = False,
+                       label_every: int = 1,
+                       layer: str = "CADENAMIENTO") -> dict[str, Any]:
+    """Cadenamiento: marcas cada N metros sobre un eje, rotuladas 0+000.
+
+    Es cómo se referencia una obra lineal (calle, carretera, colector): cada
+    marca dice a qué distancia del arranque está. El texto sale paralelo al eje
+    y siempre legible, nunca de cabeza.
+
+    points: el MISMO eje que usaste para trazar la calle.
+    interval: cada cuánto va una marca (20 m es lo habitual en calle urbana).
+    label_every: rotula 1 de cada N marcas, para no saturar cuando el intervalo
+    es corto.
+    start_station: cadenamiento del punto de arranque, por si el tramo no
+    empieza en 0."""
+    return ann_mod.create_stationing(points=points, interval=interval,
+                                     text_height=text_height, tick=tick,
+                                     start_station=start_station, closed=closed,
+                                     label_every=label_every, layer=layer)
+
+
+@mcp.tool()
+def create_layer_section(x: float, y: float, width: float,
+                          layers: list[dict[str, Any]], text_height: float,
+                          title: str = "", leader_length: float = 0.0,
+                          layer: str = "CORTES") -> dict[str, Any]:
+    """Corte transversal por capas, con su rayado y el espesor anotado.
+
+    Es el detalle de un pavimento o un firme: carpeta, base hidráulica,
+    subbase, terreno natural. Cada capa sale con su patrón y una guía a la
+    derecha que dice el nombre y el espesor en centímetros.
+
+    (x, y) es la esquina SUPERIOR izquierda de la primera capa; el corte crece
+    hacia abajo en el orden en que pases las capas.
+    layers: [{"name": "CARPETA ASFÁLTICA", "thickness": 0.05,
+              "pattern": "ANSI31", "scale": 0.3, "color_index": 8}]
+    thickness va en unidades del modelo (0.20 = 20 cm dibujando en metros)."""
+    return ann_mod.create_layer_section(x=x, y=y, width=width, layers=layers,
+                                        text_height=text_height, title=title,
+                                        leader_length=leader_length, layer=layer)
 
 
 # ---------------------------------------------------------------- Geometría
@@ -703,6 +844,40 @@ def set_active_document(name: str) -> dict[str, Any]:
     """Cambia el dibujo activo, sobre el que van a operar las demás tools.
     Alcanza con el nombre de archivo ('Casa.dwg'), sin la ruta completa."""
     return acad.call("set_active_document", {"name": name})
+
+
+@mcp.tool()
+def measure_text(text: str, height: float, style: Optional[str] = None,
+                  width_factor: Optional[float] = None) -> dict[str, Any]:
+    """Cuánto va a medir un texto ANTES de dibujarlo, en unidades del modelo.
+
+    Estimar el ancho por cantidad de caracteres falla: depende de la fuente y
+    de qué letras sean, y un rótulo mal medido termina cruzando un muro. Esto
+    mide con la misma geometría que usa AutoCAD al dibujar.
+
+    Sirve para centrar textos, decidir si un rótulo entra en un espacio, o
+    elegir la altura para que un título quepa en un ancho dado."""
+    return acad.call("measure_text", {
+        "text": text, "height": height, "style": style,
+        "widthFactor": width_factor,
+    })
+
+
+@mcp.tool()
+def delete_layout(name: str) -> dict[str, Any]:
+    """Borra un layout del dibujo. No se puede borrar 'Model' ni dejar el
+    dibujo sin ninguna lámina. Si es el layout activo, primero cambia a Model."""
+    return acad.call("delete_layout", {"name": name})
+
+
+@mcp.tool()
+def purge_block(name: str) -> dict[str, Any]:
+    """Borra una definición de bloque del dibujo.
+
+    Falla si todavía quedan inserciones de ese bloque: hay que borrarlas antes
+    con delete_entity, si no quedarían referencias colgadas. Sirve para limpiar
+    símbolos que se definieron y ya no se usan."""
+    return acad.call("purge_block", {"name": name})
 
 
 @mcp.tool()
