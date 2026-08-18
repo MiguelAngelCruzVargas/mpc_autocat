@@ -15,24 +15,61 @@ namespace AutoCadMcpPlugin
     /// </summary>
     public class TcpServer
     {
-        private readonly int _port;
+        /// <summary>Cuantos puertos probar despues del pedido, si esta ocupado.</summary>
+        private const int PortSearchRange = 20;
+
+        private readonly int _requestedPort;
         private TcpListener _listener;
         private Thread _acceptThread;
         private volatile bool _running;
 
         public TcpServer(int port)
         {
-            _port = port;
+            _requestedPort = port;
         }
 
+        /// <summary>Puerto en el que quedo escuchando de verdad (0 si no arranco).</summary>
+        public int Port { get; private set; }
+
+        /// <summary>
+        /// Arranca en el puerto pedido o, si esta ocupado por otro programa, en
+        /// el primero libre despues de ese. Pasa seguido: cualquier servicio de
+        /// desarrollo (Docker, un dev server) puede haberse quedado con el
+        /// 8765, y antes eso dejaba el plugin mudo sin explicacion.
+        /// </summary>
         public void Start()
         {
-            _listener = new TcpListener(IPAddress.Loopback, _port);
-            _listener.Start();
-            _running = true;
+            SocketException last = null;
 
-            _acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "AutoCadMcp-Accept" };
-            _acceptThread.Start();
+            for (int offset = 0; offset <= PortSearchRange; offset++)
+            {
+                int candidate = _requestedPort + offset;
+                var listener = new TcpListener(IPAddress.Loopback, candidate);
+                try
+                {
+                    listener.Start();
+                    _listener = listener;
+                    Port = candidate;
+                    _running = true;
+
+                    _acceptThread = new Thread(AcceptLoop)
+                    {
+                        IsBackground = true,
+                        Name = "AutoCadMcp-Accept"
+                    };
+                    _acceptThread.Start();
+                    return;
+                }
+                catch (SocketException ex)
+                {
+                    last = ex;
+                    try { listener.Stop(); } catch { }
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"No se pudo escuchar en ningun puerto entre {_requestedPort} y " +
+                $"{_requestedPort + PortSearchRange}. Ultimo error: {last?.Message}");
         }
 
         public void Stop()

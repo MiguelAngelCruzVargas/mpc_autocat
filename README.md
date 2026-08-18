@@ -62,9 +62,9 @@ puntual de AutoCAD necesita su propio paquete NuGet en el `.csproj` en vez de
 compartir el de 2022/2025 — el código de los comandos no cambia, solo las
 referencias del framework correspondiente.
 
-Si querés que se cargue solo al abrir AutoCAD (sin NETLOAD manual cada vez), el
-siguiente paso natural es un *App Bundle* / registro en `acad.rx` — no está en
-este esqueleto todavía.
+**Mejor todavía: no hagas NETLOAD.** `.	ools\install_bundle.ps1` lo instala como
+App Bundle y AutoCAD lo carga solo al arrancar (ver más abajo). El `NETLOAD`
+manual sirve para probar un DLL puntual sin instalar nada.
 
 ## 3. Probar el pipeline plugin↔socket (sin Claude)
 

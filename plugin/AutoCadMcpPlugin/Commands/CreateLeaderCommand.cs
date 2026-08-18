@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Nodes;
+using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -8,9 +8,9 @@ namespace AutoCadMcpPlugin.Commands
     public static class CreateLeaderCommand
     {
         /// <summary>
-        /// LÃ­nea de referencia con flecha + texto (callout), como los que apuntan
+        /// Línea de referencia con flecha + texto (callout), como los que apuntan
         /// al detalle de juntas en un corte.
-        /// params: points ([[x,y], ...], al menos 2 â€” el Ãºltimo es donde arranca el
+        /// params: points ([[x,y], ...], al menos 2 — el último es donde arranca el
         /// texto), text, [textHeight=2.5], [layer]
         /// </summary>
         public static JsonObject Run(Document doc, JsonObject pars)
@@ -18,6 +18,9 @@ namespace AutoCadMcpPlugin.Commands
             var pointsArray = pars["points"].AsArray();
             string content = pars["text"].GetValue<string>();
             double textHeight = pars["textHeight"] != null ? pars["textHeight"].GetValue<double>() : 2.5;
+
+            if (pointsArray.Count < 2)
+                throw new System.ArgumentException("Un leader necesita al menos 2 puntos.");
 
             var db = doc.Database;
             using (var tr = db.TransactionManager.StartTransaction())
@@ -32,6 +35,7 @@ namespace AutoCadMcpPlugin.Commands
                     Location = new Point3d(lastPoint[0].GetValue<double>(), lastPoint[1].GetValue<double>(), 0),
                     TextHeight = textHeight
                 };
+                EntityHelper.ApplyCommon(db, tr, mtext, pars);
                 btr.AppendEntity(mtext);
                 tr.AddNewlyCreatedDBObject(mtext, true);
 
@@ -41,20 +45,24 @@ namespace AutoCadMcpPlugin.Commands
                     var coords = pt.AsArray();
                     leader.AppendVertex(new Point3d(coords[0].GetValue<double>(), coords[1].GetValue<double>(), 0));
                 }
-                leader.Annotation = mtext.ObjectId;
+                EntityHelper.ApplyCommon(db, tr, leader, pars);
 
+                // El leader tiene que estar YA en la base de datos antes de
+                // apuntarlo a su anotación: asignar Annotation sobre una entidad
+                // suelta tira eNotInDatabase.
                 btr.AppendEntity(leader);
                 tr.AddNewlyCreatedDBObject(leader, true);
 
-                EntityHelper.ApplyCommon(db, tr, leader, pars);
-                EntityHelper.ApplyCommon(db, tr, mtext, pars);
+                leader.Annotation = mtext.ObjectId;
+                leader.EvaluateLeader();
 
-                tr.Commit();
-                return new JsonObject
+                var result = new JsonObject
                 {
                     ["handle"] = leader.Handle.ToString(),
                     ["textHandle"] = mtext.Handle.ToString()
                 };
+                tr.Commit();
+                return result;
             }
         }
     }

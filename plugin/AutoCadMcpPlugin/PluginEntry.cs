@@ -38,7 +38,17 @@ namespace AutoCadMcpPlugin
                 MainThreadQueue.EnsureHooked();
                 _server = new TcpServer(port);
                 _server.Start();
-                Log($"[MCP] Plugin cargado. Escuchando en 127.0.0.1:{port}");
+                PublishPort(_server.Port);
+
+                if (_server.Port != port)
+                {
+                    Log($"[MCP] El puerto {port} estaba ocupado por otro programa. " +
+                        $"Plugin cargado escuchando en 127.0.0.1:{_server.Port}");
+                }
+                else
+                {
+                    Log($"[MCP] Plugin cargado. Escuchando en 127.0.0.1:{_server.Port}");
+                }
             }
             catch (System.Exception ex)
             {
@@ -57,6 +67,38 @@ namespace AutoCadMcpPlugin
         {
             Application.DocumentManager.DocumentActivated -= OnDocumentActivated;
             _server?.Stop();
+            try { if (File.Exists(PortFilePath)) File.Delete(PortFilePath); } catch { }
+        }
+
+        /// <summary>
+        /// Archivo donde queda anotado el puerto real, para que el cliente lo
+        /// encuentre sin configurar nada aunque no sea el puerto por defecto.
+        /// </summary>
+        internal static string PortFilePath
+        {
+            get
+            {
+                var dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "AutoCadMcp");
+                return Path.Combine(dir, "port");
+            }
+        }
+
+        private static void PublishPort(int port)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(PortFilePath);
+                if (!Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+                File.WriteAllText(PortFilePath, port.ToString());
+            }
+            catch (System.Exception)
+            {
+                // Que no se pueda anotar el puerto no justifica no arrancar:
+                // con el puerto por defecto el cliente lo encuentra igual.
+            }
         }
 
         private static void OnDocumentActivated(object sender, DocumentCollectionEventArgs e)

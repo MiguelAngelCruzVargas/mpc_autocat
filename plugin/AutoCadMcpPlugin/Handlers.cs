@@ -97,6 +97,12 @@ namespace AutoCadMcpPlugin
                 case "list_styles":
                     return StyleCommands.ListStyles(doc, pars);
 
+                // Guardado / exportacion
+                case "save_drawing":
+                    return SaveCommands.Save(doc, pars);
+                case "export_block":
+                    return SaveCommands.ExportBlock(doc, pars);
+
                 // Documentos abiertos
                 case "list_documents":
                     return DocumentCommands.List(doc, pars);

@@ -88,7 +88,10 @@ def t_leader():
         "text": "DETALLE 1", "textHeight": 1.0, "layer": "PRUEBA",
         "lineweight": None, "colorIndex": None}))
     created.append(r["textHandle"])
-    return f"leader {r['handle']} + texto {r['textHandle']}"
+    texto = acad.call("get_entity", {"handle": r["textHandle"]})
+    if texto.get("text") != "DETALLE 1":
+        raise RuntimeError(f"el texto del leader quedo mal: {texto.get('text')!r}")
+    return f"leader {r['handle']} + texto asociado {r['textHandle']}"
 
 
 def t_offset_line():
@@ -102,15 +105,34 @@ def t_offset_line():
 
 
 def t_offset_circle_ambiguo():
-    """Un circulo ofrece dos offsets (adentro y afuera): side elige cual."""
+    """Un circulo ofrece dos offsets (adentro y afuera): side elige cual.
+
+    Este es el caso que GetOffsetCurves NO resuelve solo: devuelve un lado por
+    llamada, asi que hay que pedir los dos y elegir por el punto de referencia.
+    """
     c = track(acad.call("create_circle", {
         "x": BASE_X + 40, "y": BASE_Y + 30, "z": 0, "radius": 8,
         "layer": "PRUEBA", "lineweight": None, "colorIndex": None}))
-    off = track(acad.call("offset_entity", {
+
+    # side = el centro -> tiene que elegir el de ADENTRO, radio 6.
+    dentro = track(acad.call("offset_entity", {
         "handle": c["handle"], "distance": 2.0,
         "sideX": BASE_X + 40, "sideY": BASE_Y + 30}))
-    info = acad.call("get_entity", {"handle": off["handle"]})
-    return f"radio resultante {info.get('radius')} (esperado 6 = hacia adentro)"
+    r_dentro = acad.call("get_entity", {"handle": dentro["handle"]}).get("radius")
+    if abs(r_dentro - 6.0) > 1e-6:
+        raise RuntimeError(
+            f"con side en el centro esperaba radio 6 (hacia adentro), dio {r_dentro}")
+
+    # side lejos -> tiene que elegir el de AFUERA, radio 10.
+    fuera = track(acad.call("offset_entity", {
+        "handle": c["handle"], "distance": 2.0,
+        "sideX": BASE_X + 100, "sideY": BASE_Y + 30}))
+    r_fuera = acad.call("get_entity", {"handle": fuera["handle"]}).get("radius")
+    if abs(r_fuera - 10.0) > 1e-6:
+        raise RuntimeError(
+            f"con side lejos esperaba radio 10 (hacia afuera), dio {r_fuera}")
+
+    return "adentro 6 / afuera 10, elige por el punto de referencia"
 
 
 def t_offset_arc():
@@ -301,6 +323,33 @@ def t_set_active_document():
 
 # ------------------------------------------------------------------ main
 
+def t_export_block():
+    """Exporta un bloque a DWG; de paso deja el archivo para probar insert."""
+    import tempfile
+    out = os.path.join(tempfile.gettempdir(), "mcp_prueba_bloque.dwg")
+    if os.path.exists(out):
+        os.remove(out)
+    r = acad.call("export_block", {
+        "name": "PRUEBA_CRUZ", "path": out, "overwrite": True})
+    if not os.path.exists(r["path"]):
+        raise RuntimeError("export_block dijo que si pero no hay archivo")
+    os.environ.setdefault("ACAD_TEST_DWG", r["path"])
+    return f"{os.path.basename(r['path'])} ({r['sizeBytes']} bytes)"
+
+
+def t_save_drawing():
+    import tempfile
+    out = os.path.join(tempfile.gettempdir(), "mcp_prueba_dibujo.dwg")
+    if os.path.exists(out):
+        os.remove(out)
+    r = acad.call("save_drawing", {"path": out, "overwrite": True})
+    if not os.path.exists(r["path"]):
+        raise RuntimeError("save_drawing dijo que si pero no hay archivo")
+    size = r["sizeBytes"]
+    os.remove(r["path"])
+    return f"guardado ({size} bytes) y borrado"
+
+
 PRUEBAS = [
     ("ping", t_ping),
     ("create_hatch SOLID", t_hatch_solid),
@@ -312,7 +361,9 @@ PRUEBAS = [
     ("offset_entity arco", t_offset_arc),
     ("offset_entity polilinea", t_offset_polilinea),
     ("define_block + insert_block", t_define_e_insert_block),
+    ("export_block a DWG", t_export_block),
     ("insert_block desde DWG externo", t_insert_block_desde_dwg),
+    ("save_drawing", t_save_drawing),
     ("attach_image", t_attach_image),
     ("create_spline", t_spline),
     ("create_spline cerrado", t_spline_cerrado),

@@ -706,6 +706,34 @@ def set_active_document(name: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def save_drawing(path: Optional[str] = None,
+                  overwrite: bool = False) -> dict[str, Any]:
+    """Guarda el dibujo activo en disco.
+
+    path: ruta .dwg destino. Si se omite, guarda sobre el archivo actual — y si
+    el dibujo nunca se guardó, avisa que hace falta pasarlo.
+    overwrite: hace falta en True para pisar un archivo que ya existe (salvo
+    que sea el archivo del propio dibujo).
+
+    Escribe el archivo por API: AutoCAD puede seguir mostrando el nombre viejo
+    en la pestaña hasta que lo reabras, pero en disco queda bien."""
+    return acad.call("save_drawing", {"path": path, "overwrite": overwrite})
+
+
+@mcp.tool()
+def export_block(name: str, path: str,
+                  overwrite: bool = False) -> dict[str, Any]:
+    """Exporta una definición de bloque de este dibujo a su propio archivo DWG.
+
+    Sirve para armar una biblioteca de símbolos: definís el bloque una vez con
+    define_block, lo exportás, y después lo insertás en cualquier otro dibujo
+    con insert_block(name=..., path=...)."""
+    return acad.call("export_block", {
+        "name": name, "path": path, "overwrite": overwrite,
+    })
+
+
+@mcp.tool()
 def ping() -> dict[str, Any]:
     """Confirma que el plugin responde, sobre qué dibujo está parado y qué
     versión del plugin está cargada en AutoCAD.
