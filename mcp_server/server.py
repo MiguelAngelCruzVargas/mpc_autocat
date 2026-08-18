@@ -34,6 +34,36 @@ def _style(lineweight: Optional[int], color_index: Optional[int]) -> dict[str, A
 # ------------------------------------------------- Lámina (cajón + rotulación)
 
 @mcp.tool()
+def fit_sheet(min_x: float, min_y: float, max_x: float, max_y: float,
+               model_units: str = "m",
+               sheet_format: Optional[str] = None,
+               scale_denominator: Optional[float] = None,
+               margin_mm: float = 15.0,
+               allow_portrait: bool = True) -> dict[str, Any]:
+    """Qué formato, escala y origen hacen falta para que un dibujo entre.
+
+    ES EL PASO PREVIO A create_sheet CUANDO YA HAY ALGO DIBUJADO. El orden
+    correcto es: dibujar -> get_extents -> fit_sheet -> create_sheet con lo que
+    devuelve. Al revés (cajón primero) el dibujo se sale de la hoja en cuanto
+    crece, que es el error más común.
+
+    Sin scale_denominator elige la escala usual para ese tamaño —1:50 para una
+    casa, 1:200 para una calle— y después el formato MÁS CHICO que la contenga,
+    probando también el formato vertical. No es una cuenta: una planta de casa
+    se dibuja a 1:50 aunque entrara a 1:100 en una hoja más chica, porque a
+    1:100 no se leen los espesores ni las cotas de un baño.
+
+    Devuelve sheet_format, orientation, scale_denominator y origin_x/origin_y
+    para pasárselos tal cual a create_sheet. Si no entra en ningún formato, el
+    error dice qué escala haría falta."""
+    return sheet_mod.fit_sheet(
+        min_x=min_x, min_y=min_y, max_x=max_x, max_y=max_y,
+        model_units=model_units, sheet_format=sheet_format,
+        scale_denominator=scale_denominator, margin_mm=margin_mm,
+        allow_portrait=allow_portrait)
+
+
+@mcp.tool()
 def create_sheet(
     sheet_format: str = "A1",
     scale_denominator: float = 100.0,
@@ -105,6 +135,7 @@ def create_walls(
     openings: Optional[list[dict[str, Any]]] = None,
     layer: str = "MUROS",
     lineweight: int = 50,
+    min_segment: float = 0.40,
 ) -> dict[str, Any]:
     """Muros con ESPESOR REAL (doble línea) a lo largo de un eje, con los huecos
     de puertas y ventanas ya recortados. Es la tool para dibujar muros — no uses
@@ -131,10 +162,16 @@ def create_walls(
 
     Devuelve los handles de cada tramo de muro y de cada símbolo. Si un hueco se
     sale del muro o dos huecos se pisan, tira un error explicando el problema en
-    vez de dibujar algo roto."""
+    vez de dibujar algo roto.
+
+    min_segment: avisa (en 'warning') cuando un hueco deja un tramo de muro más
+    corto que esto — un machón de 30 cm entre la esquina y una puerta no se
+    construye, y en el plano se ve como un rectangulito flotando. El muro se
+    dibuja igual; el aviso es para corregir el proyecto."""
     return arch_mod.create_walls(
         points=points, thickness=thickness, closed=closed,
         openings=openings, layer=layer, lineweight=lineweight,
+        min_segment=min_segment,
     )
 
 
@@ -960,17 +997,25 @@ def get_drawing_info() -> dict[str, Any]:
 
 @mcp.tool()
 def set_display_options(lineweight_display: Optional[bool] = None,
-                         default_lineweight_hundredths_mm: Optional[int] = None) -> dict[str, Any]:
+                         default_lineweight_hundredths_mm: Optional[int] = None,
+                         linetype_scale: Optional[float] = None) -> dict[str, Any]:
     """Controla si los grosores de línea se VEN en pantalla (LWDISPLAY) y cuál es
     el grosor por defecto del dibujo (LWDEFAULT, en centésimas de mm).
 
     Es la causa #1 de que un plano se vea "todo con trazos finos": AutoCAD trae
     LWDISPLAY apagado de fábrica y la variable se guarda por dibujo, así que un
     DWG viejo la puede traer apagada aunque el plugin la prenda al cargarse.
+
+    linetype_scale (LTSCALE): cada cuánto se repite el patrón de un tipo de
+    línea. Dibujando en METROS con el valor 1 por defecto, un eje con linetype
+    CENTER se ve CONTINUO, porque el patrón es más largo que el propio eje. Un
+    valor razonable en metros es 0.3 a 0.5; en milímetros, 20 a 50.
+
     Regenera la vista al terminar."""
     return acad.call("set_display_options", {
         "lineweightDisplay": lineweight_display,
         "defaultLineweightHundredthsMm": default_lineweight_hundredths_mm,
+        "linetypeScale": linetype_scale,
     })
 
 
@@ -1125,6 +1170,47 @@ def set_active_document(name: str) -> dict[str, Any]:
     """Cambia el dibujo activo, sobre el que van a operar las demás tools.
     Alcanza con el nombre de archivo ('Casa.dwg'), sin la ruta completa."""
     return acad.call("set_active_document", {"name": name})
+
+
+@mcp.tool()
+def union_regions(handles: list[str],
+                   delete_sources: bool = True) -> dict[str, Any]:
+    """Fusiona contornos cerrados en uno solo (unión booleana).
+
+    Es lo que limpia los encuentros de muros. Cada tramo se dibuja como un
+    contorno cerrado propio, así que donde dos muros se cruzan quedan las
+    líneas de ambos atravesando la unión: se ve un cajón en el cruce en vez de
+    una T o una esquina limpia. Uniendo las regiones, esas líneas interiores
+    desaparecen y queda el perímetro real de la mampostería.
+
+    handles: polilíneas CERRADAS (las que devuelve create_walls en
+    'wallHandles'). Los contornos que no se tocan quedan separados sin error.
+
+    Devuelve el área y el perímetro reales de la mampostería, que sirven para
+    cuantificar. Ojo: el resultado es una Region, no una polilínea, así que ya
+    no se le pueden agregar vértices — conviene hacerlo al final."""
+    return acad.call("union_regions", {
+        "handles": handles, "deleteSources": delete_sources,
+    })
+
+
+@mcp.tool()
+def get_extents(layers: Optional[list[str]] = None,
+                 exclude_layers: Optional[list[str]] = None) -> dict[str, Any]:
+    """Cuánto ocupa lo que ya está dibujado, en unidades del modelo.
+
+    Permite invertir el orden de trabajo: en vez de poner el cajón primero y
+    confiar en que el dibujo entre, se dibuja, se mide y recién entonces se
+    encuadra. Si el dibujo crece, el marco se adapta.
+
+    layers: considerar solo esas capas. exclude_layers: dejar afuera otras —
+    útil para excluir CAJON y ROTULO al reencuadrar una lámina existente.
+
+    Devuelve minX/minY/maxX/maxY, ancho, alto y centro. Si no hay nada,
+    'isEmpty' es True."""
+    return acad.call("get_extents", {
+        "layers": layers, "excludeLayers": exclude_layers,
+    })
 
 
 @mcp.tool()

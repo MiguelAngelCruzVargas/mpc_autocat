@@ -109,7 +109,13 @@ namespace AutoCadMcpPlugin
                 case "create_dimension_arc_length":
                     return DimensionCommands.ArcLength(doc, pars);
 
+                // Limpieza de geometria
+                case "union_regions":
+                    return UnionRegionsCommand.Run(doc, pars);
+
                 // Medicion
+                case "get_extents":
+                    return GetExtentsCommand.Run(doc, pars);
                 case "measure_text":
                     return MeasureTextCommand.Run(doc, pars);
 

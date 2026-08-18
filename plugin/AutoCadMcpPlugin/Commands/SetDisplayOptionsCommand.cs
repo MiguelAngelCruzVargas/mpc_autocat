@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.ApplicationServices;
 
@@ -28,6 +29,20 @@ namespace AutoCadMcpPlugin.Commands
                 short lw = (short)pars["defaultLineweightHundredthsMm"].GetValue<int>();
                 Application.SetSystemVariable("LWDEFAULT", lw);
                 result["defaultLineweightHundredthsMm"] = lw;
+            }
+
+            // LTSCALE decide cada cuanto se repite el patron de un tipo de
+            // linea. Dibujando en metros con el valor 1 por defecto, un CENTER
+            // (trazo-punto) se ve CONTINUO: el patron es mucho mas largo que
+            // el propio eje. Sin esto los ejes no se distinguen de una linea
+            // llena.
+            if (pars["linetypeScale"] != null)
+            {
+                double ls = pars["linetypeScale"].GetValue<double>();
+                if (ls <= 0)
+                    throw new ArgumentException("linetypeScale tiene que ser > 0.");
+                Application.SetSystemVariable("LTSCALE", ls);
+                result["linetypeScale"] = ls;
             }
 
             doc.Editor.Regen();

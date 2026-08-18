@@ -228,3 +228,132 @@ def create_sheet(
         "frameHandle": frame_handle,
         "titleBlockHandle": title_handle,
     }
+
+
+# ------------------------------------------- encuadre sobre lo ya dibujado
+
+# Formatos ordenados de menor a mayor, para elegir el primero que alcance.
+FORMATOS_ORDENADOS = ["A4", "A3", "A2", "A1", "A0"]
+
+# Escalas de dibujo usuales; se prueban de la mas detallada a la mas chica.
+ESCALAS_USUALES = [10, 20, 25, 50, 75, 100, 150, 200, 250, 500, 1000]
+
+
+def escala_sugerida(tamano_max: float, model_units: str = "m") -> float:
+    """Escala usual segun lo que mide el dibujo.
+
+    No es una cuenta: es la convencion de la profesion. Una planta de casa se
+    dibuja a 1:50 aunque entrara a 1:100 en una hoja mas chica, porque a 1:100
+    no se leen los espesores ni las cotas de un baño.
+    """
+    metros = tamano_max * MM_PER_MODEL_UNIT[model_units] / 1000.0
+    for limite, escala in ((6, 20.0), (20, 50.0), (45, 100.0),
+                           (120, 200.0), (300, 500.0)):
+        if metros <= limite:
+            return escala
+    return 1000.0
+
+
+def fit_sheet(min_x: float, min_y: float, max_x: float, max_y: float,
+              model_units: str = "m",
+              sheet_format: Optional[str] = None,
+              scale_denominator: Optional[float] = None,
+              margin_mm: float = 15.0,
+              allow_portrait: bool = True) -> dict[str, Any]:
+    """Qué formato y escala hacen falta para que el dibujo entre, y dónde va
+    la esquina de la hoja.
+
+    No dibuja nada: solo calcula. Es el paso que permite invertir el orden —
+    dibujar primero, medir, y recién entonces encuadrar. Al revés, un dibujo
+    más grande de lo previsto se sale de la hoja.
+
+    Sin `scale_denominator` elige la escala usual para ese tamaño (1:50 para
+    una casa, 1:200 para una calle) y después el formato MÁS CHICO que la
+    contenga. Fijando el formato, busca la escala que entre en él.
+
+    allow_portrait: además del formato apaisado prueba el vertical, que es lo
+    que corresponde cuando el dibujo es más alto que ancho.
+    """
+    ancho = max_x - min_x
+    alto = max_y - min_y
+    if ancho <= 0 or alto <= 0:
+        raise ValueError(
+            f"La extensión del dibujo es vacía ({ancho:g} x {alto:g}). "
+            "¿Hay algo dibujado?")
+    if model_units not in MM_PER_MODEL_UNIT:
+        raise ValueError(f"model_units inválido: {model_units!r}.")
+
+    mm_por_unidad = MM_PER_MODEL_UNIT[model_units]
+
+    def candidatos_formato():
+        """(nombre, ancho_mm, alto_mm) en apaisado y, si se permite, vertical."""
+        nombres = [sheet_format.upper()] if sheet_format else FORMATOS_ORDENADOS
+        for n in nombres:
+            if n not in SHEET_FORMATS:
+                raise ValueError(f"Formato {n!r} desconocido.")
+            w, h = SHEET_FORMATS[n]
+            yield n, w, h, "horizontal"
+            if allow_portrait:
+                yield n, h, w, "vertical"
+
+    def entra(w_hoja, h_hoja, esc):
+        libre_w = w_hoja - MARGIN_LEFT_MM - MARGIN_MM - 2 * margin_mm
+        libre_h = h_hoja - 2 * MARGIN_MM - 2 * margin_mm
+        return (ancho * mm_por_unidad / esc <= libre_w
+                and alto * mm_por_unidad / esc <= libre_h)
+
+    if scale_denominator:
+        escalas = [float(scale_denominator)]
+    elif sheet_format:
+        # Formato fijo: la escala más detallada que entre en él.
+        escalas = [float(e) for e in ESCALAS_USUALES]
+    else:
+        # Escala de la profesión y, si no alcanza, se va abriendo.
+        sugerida = escala_sugerida(max(ancho, alto), model_units)
+        escalas = [e for e in ESCALAS_USUALES if e >= sugerida] or [1000.0]
+        escalas = [float(e) for e in escalas]
+
+    elegido = None
+    for esc in escalas:
+        for nombre, w_hoja, h_hoja, orient in candidatos_formato():
+            if entra(w_hoja, h_hoja, esc):
+                elegido = (nombre, w_hoja, h_hoja, orient, esc)
+                break
+        if elegido:
+            break
+
+    if elegido is None:
+        mayor = SHEET_FORMATS[FORMATOS_ORDENADOS[-1]]
+        libre_w = max(mayor) - MARGIN_LEFT_MM - MARGIN_MM - 2 * margin_mm
+        libre_h = min(mayor) - 2 * MARGIN_MM - 2 * margin_mm
+        necesaria = max(ancho * mm_por_unidad / libre_w,
+                        alto * mm_por_unidad / libre_h)
+        raise ValueError(
+            f"El dibujo mide {ancho:.2f} x {alto:.2f} {model_units} y no entra "
+            f"en ningún formato con las escalas usuales: haría falta al menos "
+            f"1:{necesaria:.0f}. Pasá una escala explícita.")
+
+    nombre, w_hoja, h_hoja, orient, esc = elegido
+    factor = esc / mm_por_unidad          # mm de papel -> unidades de modelo
+    hoja_w_modelo, hoja_h_modelo = w_hoja * factor, h_hoja * factor
+
+    cx, cy = (min_x + max_x) / 2.0, (min_y + max_y) / 2.0
+    origin_x = cx - hoja_w_modelo / 2.0 + (MARGIN_LEFT_MM - MARGIN_MM) / 2.0 * factor
+    origin_y = cy - hoja_h_modelo / 2.0
+
+    return {
+        "sheet_format": nombre,
+        "orientation": orient,
+        "width_mm": w_hoja,
+        "height_mm": h_hoja,
+        "scale_denominator": esc,
+        "origin_x": origin_x,
+        "origin_y": origin_y,
+        "model_units": model_units,
+        "drawingWidth": ancho,
+        "drawingHeight": alto,
+        "sheetWidthModel": hoja_w_modelo,
+        "sheetHeightModel": hoja_h_modelo,
+        "paperWidthUsed": ancho * mm_por_unidad / esc,
+        "paperHeightUsed": alto * mm_por_unidad / esc,
+    }

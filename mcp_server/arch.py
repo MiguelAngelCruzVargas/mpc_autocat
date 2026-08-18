@@ -77,6 +77,13 @@ def _wall_segment(axis: Axis, d_start: float, d_end: float, half: float,
     return _polyline(left + list(reversed(right)), layer, lineweight, closed=True)
 
 
+# Tramo de muro por debajo del cual no hay mamposteria posible: queda un
+# machon suelto que en obra no se levanta y en el plano se ve como un
+# rectangulito flotando al lado de una puerta. 0.40 es el minimo
+# con el que vale la pena levantar mamposteria.
+MIN_TRAMO = 0.40
+
+
 def create_walls(
     points: list[list[float]],
     thickness: float = 0.15,
@@ -85,6 +92,7 @@ def create_walls(
     layer: str = LAYER_WALLS,
     lineweight: int = LW_WALL,
     draw_symbols: bool = True,
+    min_segment: float = MIN_TRAMO,
 ) -> dict[str, Any]:
     """Muros de espesor real a lo largo de un eje, con sus huecos."""
     if thickness <= 0:
@@ -160,18 +168,42 @@ def create_walls(
             if handle:
                 wall_handles.append(handle)
 
+    # Tramos que quedaron demasiado cortos para construirse.
+    machones = []
+    if holes:
+        limites = [(0.0, holes[0]["start"])]
+        for a, b in zip(holes, holes[1:]):
+            limites.append((a["end"], b["start"]))
+        limites.append((holes[-1]["end"], total))
+        for d0, d1 in limites:
+            largo = d1 - d0
+            if 1e-6 < largo < min_segment:
+                machones.append({"from": round(d0, 3), "to": round(d1, 3),
+                                 "length": round(largo, 3)})
+
     opening_handles: list[dict[str, Any]] = []
     if draw_symbols and holes:
         _ensure_layer(LAYER_OPENINGS, 7, LW_OPENING)
         for hole in holes:
             opening_handles.append(_draw_opening(axis, hole, thickness))
 
-    return {
+    resultado = {
         "wallHandles": wall_handles,
         "openings": opening_handles,
         "axisLength": total,
         "thickness": thickness,
     }
+    if machones:
+        # No se falla: el muro se dibuja igual. Pero hay que decirlo, porque un
+        # machon de 30 cm entre la esquina y una puerta no es un detalle de
+        # dibujo, es un problema de proyecto.
+        resultado["shortSegments"] = machones
+        resultado["warning"] = (
+            f"{len(machones)} tramo(s) de muro por debajo de {min_segment} m: "
+            + ", ".join(f"{m['length']:.2f} m entre {m['from']:.2f} y {m['to']:.2f}"
+                        for m in machones)
+            + ". Corre el hueco o llevalo hasta la esquina.")
+    return resultado
 
 
 def _draw_opening(axis: Axis, hole: dict[str, Any],
