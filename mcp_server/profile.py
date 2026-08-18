@@ -193,9 +193,10 @@ def create_profile(x: float, y: float, length: float,
 
     # --- Grilla ---
     ancho, alto = PX(length) - PX(0), PY(techo) - PY(base)
+    # 18 y no LW_GRID+8: AutoCAD solo acepta ciertos grosores y 17 no es uno.
     _poly([(PX(0), PY(base)), (PX(0) + ancho, PY(base)),
            (PX(0) + ancho, PY(base) + alto), (PX(0), PY(base) + alto)],
-          LAYER_GRID, LW_GRID + 8, closed=True)
+          LAYER_GRID, 18, closed=True)
 
     est = 0.0
     while est <= length + 1e-9:

@@ -592,8 +592,6 @@ def create_intersection(main_points: list[list[float]],
         # Punto de tangencia sobre la principal: se aleja del cruce lo
         # suficiente como para que el arco entre.
         avance = radius + hb
-        for direccion in (1.0, -1.0):
-            pass
         d_tan = d_nace + signo * avance
         d_tan = max(0.0, min(main.total_length, d_tan))
 

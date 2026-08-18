@@ -56,8 +56,8 @@ namespace AutoCadMcpPlugin.Commands
 
                 if (pars["lineweightHundredthsMm"] != null)
                 {
-                    int lw = pars["lineweightHundredthsMm"].GetValue<int>();
-                    ltr.LineWeight = (LineWeight)lw;
+                    ltr.LineWeight = EntityHelper.ParseLineWeight(
+                        pars["lineweightHundredthsMm"].GetValue<int>());
                 }
 
                 tr.Commit();

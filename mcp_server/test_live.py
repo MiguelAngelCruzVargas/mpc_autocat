@@ -17,7 +17,14 @@ import os
 import sys
 import traceback
 
+import math
+
+import annotation as ann
 import autocad_client as acad
+import civil
+import furniture as fur
+import profile as prof
+import sheet
 
 KEEP = "--keep" in sys.argv
 BASE_X, BASE_Y = 500.0, 0.0   # lejos de cualquier dibujo real
@@ -379,6 +386,336 @@ def t_save_drawing():
     return f"guardado ({size} bytes) y borrado"
 
 
+# ================================================ geometria con arcos
+
+def t_polilinea_con_bulge():
+    """Un cuarto de circulo de R=10: el largo tiene que ser el del ARCO."""
+    # bulge = tan(90/4) = 0.41421...
+    b = math.tan(math.radians(90) / 4.0)
+    r = track(acad.call("create_polyline", {
+        "points": [[BASE_X, BASE_Y + 150], [BASE_X + 10, BASE_Y + 160]],
+        "bulges": [b, 0.0], "closed": False, "layer": "PRUEBA",
+        "lineweight": 25, "colorIndex": None}))
+    esperado = math.pi * 10 / 2.0            # 15.708, no la cuerda de 14.142
+    got = r.get("length", 0)
+    if abs(got - esperado) > 0.05:
+        raise RuntimeError(
+            f"largo {got:.3f}, esperaba el arco {esperado:.3f} "
+            f"(la cuerda seria {math.dist((0,0),(10,10)):.3f})")
+    return f"arco de 90 grados: largo {got:.3f} (cuerda {14.142:.3f})"
+
+
+def t_leer_bulges():
+    """get_entity tiene que devolver el bulge con el que se dibujo."""
+    b = 0.3
+    r = track(acad.call("create_polyline", {
+        "points": [[BASE_X + 20, BASE_Y + 150], [BASE_X + 30, BASE_Y + 150],
+                   [BASE_X + 40, BASE_Y + 160]],
+        "bulges": [b, 0.0, 0.0], "closed": False, "layer": "PRUEBA",
+        "lineweight": 25, "colorIndex": None}))
+    d = acad.call("get_entity", {"handle": r["handle"]})
+    if "bulges" not in d:
+        raise RuntimeError("get_entity no devolvio 'bulges'")
+    if abs(d["bulges"][0] - b) > 1e-6:
+        raise RuntimeError(f"bulge leido {d['bulges'][0]}, se dibujo {b}")
+    if not d.get("hasArcs"):
+        raise RuntimeError("hasArcs deberia ser True")
+    return f"bulges {[round(x, 3) for x in d['bulges']]} hasArcs={d['hasArcs']}"
+
+
+def t_leer_patron_de_hatch():
+    pl = track(acad.call("create_polyline", {
+        "points": [[BASE_X + 60, BASE_Y + 150], [BASE_X + 70, BASE_Y + 150],
+                   [BASE_X + 70, BASE_Y + 160], [BASE_X + 60, BASE_Y + 160]],
+        "bulges": None, "closed": True, "layer": "PRUEBA",
+        "lineweight": 25, "colorIndex": None}))
+    h = track(acad.call("create_hatch", {
+        "boundaryHandle": pl["handle"], "pattern": "ANSI31", "scale": 0.5,
+        "angleDeg": 0.0, "layer": "PRUEBA",
+        "lineweight": None, "colorIndex": None}))
+    d = acad.call("get_entity", {"handle": h["handle"]})
+    if d.get("patternName", "").upper() != "ANSI31":
+        raise RuntimeError(f"patron leido {d.get('patternName')!r}, se puso ANSI31")
+    return f"{d['patternName']} escala {d.get('patternScale')}"
+
+
+# ============================================================ cotas nuevas
+
+def t_cota_rotada():
+    """Proyectada a 0 grados mide la componente horizontal, no la diagonal."""
+    r = track(acad.call("create_dimension_rotated", {
+        "x1": BASE_X, "y1": BASE_Y + 170, "x2": BASE_X + 30, "y2": BASE_Y + 180,
+        "dimLineX": BASE_X + 15, "dimLineY": BASE_Y + 190, "angleDeg": 0.0,
+        "layer": "PRUEBA", "style": None, "scale": None, "text": None,
+        "lineweight": 13, "colorIndex": None}))
+    m = r.get("measurement", 0)
+    if abs(m - 30.0) > 0.01:
+        raise RuntimeError(f"midio {m:.3f}, la horizontal es 30 "
+                           f"(la diagonal seria {math.hypot(30, 10):.3f})")
+    return f"horizontal {m:.2f} (diagonal {math.hypot(30, 10):.2f})"
+
+
+def t_cota_radial():
+    c = track(acad.call("create_circle", {
+        "x": BASE_X + 60, "y": BASE_Y + 180, "z": 0, "radius": 12,
+        "layer": "PRUEBA", "lineweight": None, "colorIndex": None}))
+    r = track(acad.call("create_dimension_radial", {
+        "handle": c["handle"], "leaderLengthFactor": 1.5, "layer": "PRUEBA",
+        "style": None, "scale": None, "text": None,
+        "lineweight": 13, "colorIndex": None}))
+    if abs(r.get("radius", 0) - 12.0) > 1e-6:
+        raise RuntimeError(f"radio {r.get('radius')}, esperaba 12")
+    return f"R={r['radius']}"
+
+
+def t_cota_diametral():
+    c = track(acad.call("create_circle", {
+        "x": BASE_X + 95, "y": BASE_Y + 180, "z": 0, "radius": 8,
+        "layer": "PRUEBA", "lineweight": None, "colorIndex": None}))
+    r = track(acad.call("create_dimension_diametric", {
+        "handle": c["handle"], "leaderLengthFactor": 1.5, "layer": "PRUEBA",
+        "style": None, "scale": None, "text": None,
+        "lineweight": 13, "colorIndex": None}))
+    if abs(r.get("diameter", 0) - 16.0) > 1e-6:
+        raise RuntimeError(f"diametro {r.get('diameter')}, esperaba 16")
+    return f"D={r['diameter']}"
+
+
+def t_cota_angular():
+    r = track(acad.call("create_dimension_angular", {
+        "vertexX": BASE_X, "vertexY": BASE_Y + 200,
+        "x1": BASE_X + 20, "y1": BASE_Y + 200,
+        "x2": BASE_X, "y2": BASE_Y + 220,
+        "arcX": BASE_X + 8, "arcY": BASE_Y + 208,
+        "layer": "PRUEBA", "style": None, "scale": None, "text": None,
+        "lineweight": 13, "colorIndex": None}))
+    grados = r.get("measurementDeg", 0)
+    if abs(grados - 90.0) > 0.1:
+        raise RuntimeError(f"midio {grados:.2f} grados, esperaba 90")
+    return f"{grados:.1f} grados"
+
+
+def t_cota_desarrollo():
+    """El desarrollo de un arco es R*theta, no la cuerda."""
+    a = track(acad.call("create_arc", {
+        "x": BASE_X + 130, "y": BASE_Y + 180, "z": 0, "radius": 20,
+        "startAngleDeg": 0, "endAngleDeg": 90,
+        "layer": "PRUEBA", "lineweight": None, "colorIndex": None}))
+    r = track(acad.call("create_dimension_arc_length", {
+        "handle": a["handle"], "arcX": BASE_X + 155, "arcY": BASE_Y + 205,
+        "layer": "PRUEBA", "style": None, "scale": None, "text": None,
+        "lineweight": 13, "colorIndex": None}))
+    esperado = math.pi * 20 / 2.0
+    got = r.get("developedLength", 0)
+    if abs(got - esperado) > 0.01:
+        raise RuntimeError(f"desarrollo {got:.3f}, esperaba {esperado:.3f}")
+    return f"{got:.2f} m con R=20 y 90 grados"
+
+
+# ====================================================== obra civil
+
+def t_alineamiento():
+    a = civil.create_alignment(BASE_X + 200, BASE_Y, -90, [
+        {"type": "tangent", "length": 40},
+        {"type": "curve", "radius": 90, "length": 107, "direction": "left"}])
+    if abs(a["length"] - 147.0) > 1e-6:
+        raise RuntimeError(f"largo {a['length']}, esperaba 147")
+    return f"147.00 m, {len(a['stations'])} puntos notables"
+
+
+def t_alineamiento_con_espiral():
+    a = civil.create_alignment(BASE_X + 320, BASE_Y, -90, [
+        {"type": "tangent", "length": 20},
+        {"type": "spiral", "radius": 60, "length": 24, "direction": "left"},
+        {"type": "curve", "radius": 60, "length": 40, "direction": "left"}])
+    if abs(a["length"] - 84.0) > 1e-6:
+        raise RuntimeError(f"largo {a['length']}, esperaba 84")
+    esp = [s for s in a["stations"] if s["type"] == "fin de espiral"][0]
+    esperado_a = math.sqrt(60 * 24)
+    if abs(esp["parameter"] - esperado_a) > 1e-6:
+        raise RuntimeError(f"parametro A={esp['parameter']}, esperaba {esperado_a}")
+    return f"84.00 m, espiral A={esp['parameter']:.2f}"
+
+
+def t_calle_ancho_variable():
+    a = civil.create_alignment(BASE_X + 420, BASE_Y, -90, [
+        {"type": "tangent", "length": 100}])
+    r = civil.create_road(points=a["points"], bulges=a["bulges"],
+                          widths=[[0, 8.0], [100, 4.0]], curb_width=0.35)
+    # Ancho medio de 8 a 4 sobre 100 m = 6 -> 600 m2.
+    if abs(r["pavementArea"] - 600.0) > 5.0:
+        raise RuntimeError(f"area {r['pavementArea']:.2f}, esperaba ~600")
+    for h in r.get("curbHandles", []):
+        created.append(h)
+    created.append(r["pavementHandle"])
+    return f"area {r['pavementArea']:.2f} m2 con ancho 8->4"
+
+
+def t_guarnicion_por_tramo():
+    a = civil.create_alignment(BASE_X + 460, BASE_Y, -90, [
+        {"type": "tangent", "length": 100}])
+    r = civil.create_road(points=a["points"], bulges=a["bulges"], width=7.0,
+                          curb_width=0.35,
+                          curb_segments=[{"side": "left"},
+                                         {"side": "right", "from": 0, "to": 40}])
+    if abs(r["curbLength"] - 140.0) > 0.5:
+        raise RuntimeError(f"guarnicion {r['curbLength']:.2f} ml, esperaba 140")
+    for h in r.get("curbHandles", []):
+        created.append(h)
+    created.append(r["pavementHandle"])
+    return f"{r['curbLength']:.2f} ml (100 izq + 40 der)"
+
+
+def t_interseccion():
+    principal = civil.create_alignment(BASE_X + 520, BASE_Y, -90, [
+        {"type": "tangent", "length": 80}])
+    nace = civil.point_on_road(principal["points"], 40.0)
+    ramal = civil.create_alignment(nace["x"], nace["y"], 0.0, [
+        {"type": "tangent", "length": 30}])
+    r = civil.create_intersection(
+        main_points=principal["points"], branch_points=ramal["points"],
+        main_width=7.0, branch_width=5.5, radius=6.0)
+    if abs(r["branchStation"] - 40.0) > 2.0:
+        raise RuntimeError(
+            f"detecto el ramal en est {r['branchStation']}, nace en 40")
+    for arc in r["arcs"]:
+        created.append(arc["handle"])
+    return (f"ramal en est {r['branchStation']}, "
+            f"{len(r['arcs'])} acuerdos, {r['curbLength']:.2f} ml")
+
+
+# ================================================ perfil y secciones
+
+def t_rasante_en_pvi():
+    """En un PVI sin curva vertical la cota tiene que ser exacta."""
+    pvis = [{"station": 0, "elevation": 100.0},
+            {"station": 100, "elevation": 105.0}]
+    got = prof.grade_elevation(pvis, 50.0)
+    if abs(got - 102.5) > 1e-9:
+        raise RuntimeError(f"cota en est 50 = {got}, esperaba 102.5")
+    if abs(prof.grade_elevation(pvis, 0.0) - 100.0) > 1e-9:
+        raise RuntimeError("la cota en el PVI inicial no coincide")
+    return "interpolacion lineal correcta"
+
+
+def t_perfil():
+    r = prof.create_profile(
+        x=BASE_X + 200, y=BASE_Y + 240, length=100.0,
+        pvis=[{"station": 0, "elevation": 100.0},
+              {"station": 50, "elevation": 103.0, "curve_length": 20},
+              {"station": 100, "elevation": 101.0}],
+        ground=[[0, 99.5], [50, 103.5], [100, 100.5]],
+        h_scale=1.0, v_exag=5.0, grid_station=25.0, grid_elevation=1.0,
+        text_height=0.8)
+    if len(r["grades"]) != 2:
+        raise RuntimeError(f"{len(r['grades'])} tramos de pendiente, esperaba 2")
+    p1 = r["grades"][0]["gradePercent"]
+    if abs(p1 - 6.0) > 0.01:
+        raise RuntimeError(f"primera pendiente {p1:.2f}%, esperaba 6.00")
+    return (f"{len(r['grades'])} pendientes ({p1:+.2f}% y "
+            f"{r['grades'][1]['gradePercent']:+.2f}%), datum {r['datum']}")
+
+
+def t_secciones():
+    r = prof.create_cross_section_series(
+        x=BASE_X + 200, y=BASE_Y + 300, stations=[0, 50, 100], width=7.0,
+        pvis=[{"station": 0, "elevation": 100.0},
+              {"station": 100, "elevation": 102.0}],
+        ground=[[0, 99.0], [50, 102.0], [100, 101.0]],
+        columns=3, depth=0.30, text_height=0.6)
+    if r["count"] != 3:
+        raise RuntimeError(f"{r['count']} secciones, esperaba 3")
+    # est 0: terreno 99 < rasante 100 -> terraplen; est 50: 102 > 101 -> corte
+    if r["sections"][0]["type"] != "terraplen":
+        raise RuntimeError(f"est 0 salio {r['sections'][0]['type']}, es terraplen")
+    if r["sections"][1]["type"] != "corte":
+        raise RuntimeError(f"est 50 salio {r['sections'][1]['type']}, es corte")
+    esperado_vol = 7.0 * 0.30 * 100.0
+    if abs(r["volume"] - esperado_vol) > 1.0:
+        raise RuntimeError(f"volumen {r['volume']}, esperaba {esperado_vol}")
+    return f"{r['count']} secciones, volumen {r['volume']} m3"
+
+
+# ============================================== documentacion y lamina
+
+def t_tabla():
+    r = ann.create_table(
+        x=BASE_X + 200, y=BASE_Y + 130, text_height=1.0, row_height=2.5,
+        col_widths=[10.0, 20.0, 8.0], title="RESUMEN",
+        rows=[["CLAVE", "CONCEPTO", "CANT"],
+              ["01", "Pavimento", "925"],
+              ["02", "Guarnicion", "210"]])
+    if r["rows"] != 3:
+        raise RuntimeError(f"{r['rows']} filas, esperaba 3")
+    return f"{r['rows']} filas, ancho {r['width']:.1f}"
+
+
+def t_leyenda():
+    r = ann.create_legend(
+        x=BASE_X + 260, y=BASE_Y + 130, text_height=1.0,
+        items=[{"label": "PAVIMENTO", "pattern": "AR-CONC", "scale": 0.5},
+               {"label": "BASE", "pattern": "ANSI31", "scale": 0.5},
+               {"label": "EJE", "color_index": 1}])
+    if r["items"] != 3:
+        raise RuntimeError(f"{r['items']} items, esperaba 3")
+    return f"{r['items']} items"
+
+
+def t_cadenamiento_plain():
+    a = civil.create_alignment(BASE_X + 600, BASE_Y, -90, [
+        {"type": "tangent", "length": 60}])
+    r = ann.create_stationing(points=a["points"], interval=20.0,
+                              text_height=1.0, station_format="plain")
+    etiquetas = [m["station"] for m in r["stations"]]
+    if "20.00" not in etiquetas:
+        raise RuntimeError(f"formato plain deberia dar '20.00', dio {etiquetas}")
+    return f"{r['marks']} marcas: {etiquetas[:4]}"
+
+
+def t_corte_por_capas():
+    """El espesor rotulado es el REAL aunque el dibujo este exagerado."""
+    r = ann.create_layer_section(
+        x=BASE_X + 320, y=BASE_Y + 130, width=12.0, text_height=0.8,
+        draw_scale=20.0,
+        layers=[{"name": "CONCRETO", "thickness": 0.15, "pattern": "AR-CONC",
+                 "scale": 0.3},
+                {"name": "BASE", "thickness": 0.10, "pattern": "ANSI31",
+                 "scale": 0.5}])
+    if abs(r["totalThickness"] - 0.25) > 1e-9:
+        raise RuntimeError(
+            f"espesor real {r['totalThickness']}, esperaba 0.25 "
+            "(draw_scale no debe afectar el valor rotulado)")
+    return f"espesor real {r['totalThickness'] * 100:.0f} cm, dibujado 20x"
+
+
+def t_lamina():
+    r = sheet.create_sheet(
+        sheet_format="A3", scale_denominator=100.0, model_units="m",
+        project="PRUEBA", location="", client="", content="TEST",
+        drawn_by="", reviewed_by="", date="", sheet_number="X-01",
+        origin_x=BASE_X + 700, origin_y=BASE_Y)
+    a = r["drawArea"]
+    if a["x2"] <= a["x1"] or a["y2"] <= a["y1"]:
+        raise RuntimeError("el area util salio invertida o vacia")
+    return f"{r['format']} {r['scale']}, util {a['x2']-a['x1']:.1f} m"
+
+
+def t_mobiliario_y_rotulos():
+    fur.reset_footprints()
+    cuarto = (BASE_X + 700, BASE_Y + 100, BASE_X + 710, BASE_Y + 108)
+    fur.place([{"type": "bed", "x": cuarto[0] + 0.3, "y": cuarto[1] + 0.3,
+                "width": 1.6, "length": 2.0}])
+    r = fur.label_rooms(
+        [{"name": "RECAMARA", "x0": cuarto[0], "y0": cuarto[1],
+          "x1": cuarto[2], "y1": cuarto[3]}], height=0.5)
+    et = r["labeled"][0]
+    dentro = (cuarto[0] <= et["x"] <= cuarto[2]
+              and cuarto[1] <= et["y"] <= cuarto[3])
+    if not dentro:
+        raise RuntimeError(f"el rotulo cayo fuera del cuarto: {et}")
+    return f"rotulo dentro del ambiente, area {et['area']} m2"
+
+
 PRUEBAS = [
     ("ping", t_ping),
     ("create_hatch SOLID", t_hatch_solid),
@@ -408,7 +745,47 @@ PRUEBAS = [
     ("viewport fuera de hoja -> error", t_viewport_fuera_de_hoja_da_error),
     ("list_documents", t_list_documents),
     ("set_active_document", t_set_active_document),
+
+    # --- geometria con arcos ---
+    ("polilinea con bulge (arco real)", t_polilinea_con_bulge),
+    ("get_entity lee bulges", t_leer_bulges),
+    ("get_entity lee patron de hatch", t_leer_patron_de_hatch),
+
+    # --- cotas que no son la alineada ---
+    ("cota rotada (proyectada)", t_cota_rotada),
+    ("cota radial", t_cota_radial),
+    ("cota diametral", t_cota_diametral),
+    ("cota angular", t_cota_angular),
+    ("cota de desarrollo de arco", t_cota_desarrollo),
+
+    # --- obra civil ---
+    ("alineamiento tangente+curva", t_alineamiento),
+    ("alineamiento con espiral", t_alineamiento_con_espiral),
+    ("calle de ancho variable", t_calle_ancho_variable),
+    ("guarnicion por lado y tramo", t_guarnicion_por_tramo),
+    ("interseccion con acuerdos", t_interseccion),
+
+    # --- perfil y secciones ---
+    ("rasante en un cadenamiento", t_rasante_en_pvi),
+    ("perfil longitudinal", t_perfil),
+    ("secciones transversales", t_secciones),
+
+    # --- documentacion ---
+    ("tabla", t_tabla),
+    ("leyenda", t_leyenda),
+    ("cadenamiento formato plain", t_cadenamiento_plain),
+    ("corte por capas a escala", t_corte_por_capas),
+    ("lamina con cajon y rotulo", t_lamina),
+    ("mobiliario + rotulo que esquiva", t_mobiliario_y_rotulos),
 ]
+
+
+def hay_conexion() -> bool:
+    try:
+        acad.call("ping", {})
+        return True
+    except acad.AutoCadError:
+        return False
 
 
 def limpiar() -> None:
@@ -417,6 +794,13 @@ def limpiar() -> None:
     Sin esto cada pasada acumula un layout y una definicion de bloque nuevos,
     porque llevan el PID en el nombre para poder repetir el test.
     """
+    # Si AutoCAD se cayo a mitad no hay nada que limpiar, y hacerlo igual
+    # llena la salida de errores de conexion que tapan la falla de verdad.
+    if not hay_conexion():
+        print("\nAutoCAD no responde: no se limpia "
+              "(lo que quedo dibujado se va con el proceso).")
+        return
+
     if created:
         print(f"\nlimpiando {len(created)} entidades...")
         for h in created:
@@ -456,6 +840,16 @@ def main() -> int:
 
     ok = sum(1 for _, good, _ in results if good)
     fallas = [(n, d) for n, good, d in results if not good]
+
+    # Una cascada de "no se pudo conectar" no son N fallas: es UNA, y es que
+    # AutoCAD se murio. Conviene decirlo asi para no perder tiempo mirando las
+    # equivocadas.
+    caidas = [n for n, good, d in results
+              if not good and "no se pudo conectar" in d.lower()]
+    if caidas:
+        print(f"\n*** AutoCAD dejo de responder durante la corrida. "
+              f"Las {len(caidas)} pruebas desde '{caidas[0]}' no llegaron a "
+              f"ejecutarse; la falla real es la anterior. ***")
 
     if not KEEP:
         limpiar()
