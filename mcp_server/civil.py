@@ -370,6 +370,35 @@ def point_on_road(points: list[list[float]], distance: float,
 
 # ------------------------------------------------- alineamiento horizontal
 
+def _spiral_points(radius: float, length: float, samples: int = 24
+                   ) -> tuple[list[tuple[float, float]], float]:
+    """Puntos de una clotoide en coordenadas locales, y su angulo final.
+
+    La clotoide (o espiral de Euler) es la curva cuyo radio disminuye de forma
+    lineal con el recorrido: es lo que permite entrar a una curva girando el
+    volante de a poco en vez de de golpe. Arranca en el origen tangente al eje
+    X, con radio infinito, y termina con radio 'radius' tras recorrer 'length'.
+
+    Se usa la serie de la clotoide; con dos terminos alcanza de sobra para los
+    angulos de una vialidad (el error queda muy por debajo del milimetro).
+    """
+    if radius <= 0 or length <= 0:
+        raise ValueError("La espiral necesita radius y length > 0.")
+
+    pts: list[tuple[float, float]] = []
+    for i in range(samples + 1):
+        l = length * i / samples
+        l2 = l * l
+        rl = radius * length
+        x = l - (l2 * l2 * l) / (40.0 * rl * rl)
+        y = (l2 * l) / (6.0 * rl) - (l2 * l2 * l2 * l) / (336.0 * rl * rl * rl)
+        pts.append((x, y))
+
+    # Angulo que gira el rumbo a lo largo de toda la espiral.
+    theta = length / (2.0 * radius)
+    return pts, theta
+
+
 def create_alignment(start_x: float, start_y: float, start_bearing_deg: float,
                      elements: list[dict[str, Any]]) -> dict[str, Any]:
     """Eje definido como se PROYECTA una vialidad: tangentes y curvas de radio.
@@ -462,12 +491,49 @@ def create_alignment(start_x: float, start_y: float, start_bearing_deg: float,
                 "chordLength": 2 * radio * math.sin(barrido / 2.0),
             })
 
+        elif kind in ("spiral", "espiral", "clothoid", "clotoide"):
+            radio = float(el["radius"])
+            largo = float(el["length"])
+            izquierda = str(el.get("direction", "left")).lower() in (
+                "left", "izq", "izquierda")
+            signo = 1.0 if izquierda else -1.0
+            # 'exit' invierte la espiral: de la curva de vuelta a la recta.
+            salida = bool(el.get("exit", False))
+
+            locales, theta = _spiral_points(radio, largo)
+            if salida:
+                # La de salida es la de entrada recorrida al reves: se refleja
+                # y se reordena para que arranque tangente al rumbo actual.
+                xf, yf = locales[-1]
+                locales = [(xf - x0, -(yf - y0)) for x0, y0 in reversed(locales)]
+
+            cos_b, sin_b = math.cos(bearing), math.sin(bearing)
+            for lx, ly in locales[1:]:
+                ly_s = ly * signo
+                px = x + lx * cos_b - ly_s * sin_b
+                py = y + lx * sin_b + ly_s * cos_b
+                points.append([px, py])
+                bulges.append(0.0)
+            x, y = points[-1][0], points[-1][1]
+
+            bearing += signo * theta
+            estacion += largo
+            puntos_notables.append({
+                "type": "fin de espiral", "station": estacion, "x": x, "y": y,
+                "radius": radio, "spiralLength": largo,
+                "spiralAngleDeg": math.degrees(theta),
+                "parameter": math.sqrt(radio * largo),
+            })
+
         else:
             raise ValueError(
                 f"Elemento #{i}: tipo {kind!r} desconocido. "
-                "Usá 'tangent' o 'curve'.")
+                "Usá 'tangent', 'curve' o 'spiral'.")
 
-    bulges.append(0.0)   # el ultimo vertice no arrastra arco
+    # Un bulge por vertice: el ultimo no arrastra arco.
+    while len(bulges) < len(points):
+        bulges.append(0.0)
+    bulges = bulges[:len(points)]
 
     return {
         "points": points,
@@ -476,3 +542,128 @@ def create_alignment(start_x: float, start_y: float, start_bearing_deg: float,
         "endBearingDeg": math.degrees(bearing) % 360.0,
         "stations": puntos_notables,
     }
+
+
+# ----------------------------------------------------------- intersecciones
+
+def create_intersection(main_points: list[list[float]],
+                        branch_points: list[list[float]],
+                        main_width: float, branch_width: float,
+                        radius: float = 6.0,
+                        main_bulges: Optional[list[float]] = None,
+                        branch_bulges: Optional[list[float]] = None,
+                        layer: str = LAYER_CURB,
+                        samples: int = 16) -> dict[str, Any]:
+    """Radios de acuerdo en el encuentro de dos calles.
+
+    Dos calles trazadas por separado se cruzan y sus guarniciones quedan
+    chocando en escuadra, que no es como se construye ni por donde puede pasar
+    un vehiculo. El acuerdo es el arco que empalma el borde de una con el de la
+    otra.
+
+    main_points / branch_points: los ejes de cada calle. El ramal tiene que
+    ARRANCAR en el punto donde nace de la principal.
+    radius: radio de giro del acuerdo (6 m en calle urbana; 10 o mas si entran
+    camiones).
+
+    Devuelve los handles de los dos arcos y su desarrollo, que se suma a los
+    metros lineales de guarnicion.
+    """
+    if radius <= 0:
+        raise ValueError("El radio de acuerdo tiene que ser > 0.")
+
+    main = Axis([(p[0], p[1]) for p in (
+        _densify(main_points, main_bulges) if main_bulges else main_points)])
+    branch = Axis([(p[0], p[1]) for p in (
+        _densify(branch_points, branch_bulges) if branch_bulges else branch_points)])
+
+    # Donde nace el ramal, medido sobre la principal.
+    origen = branch.points[0]
+    d_nace = _closest_station(main, origen)
+
+    _ensure(layer, 4, LW_CURB)
+    arcos = []
+    desarrollo_total = 0.0
+
+    hm, hb = main_width / 2.0, branch_width / 2.0
+
+    # Un acuerdo de cada lado del ramal.
+    for signo in (1.0, -1.0):
+        # Punto de tangencia sobre la principal: se aleja del cruce lo
+        # suficiente como para que el arco entre.
+        avance = radius + hb
+        for direccion in (1.0, -1.0):
+            pass
+        d_tan = d_nace + signo * avance
+        d_tan = max(0.0, min(main.total_length, d_tan))
+
+        lado = _side_of(main, branch, d_nace)
+        p_main = main.offset_point_at(d_tan, hm * lado)
+
+        # Punto de tangencia sobre el ramal, a la misma distancia del cruce.
+        d_b = min(branch.total_length, radius + hm)
+        p_branch = branch.offset_point_at(d_b, hb * signo)
+
+        arco = _fillet_arc(p_main, p_branch, radius, samples)
+        handle = acad.call("create_polyline", {
+            "points": [[p[0], p[1]] for p in arco],
+            "bulges": None, "closed": False, "layer": layer,
+            "lineweight": LW_CURB, "colorIndex": None,
+        })["handle"]
+        largo = sum(math.dist(arco[i], arco[i + 1])
+                    for i in range(len(arco) - 1))
+        arcos.append({"handle": handle, "developedLength": round(largo, 2)})
+        desarrollo_total += largo
+
+    return {"arcs": arcos, "radius": radius,
+            "branchStation": round(d_nace, 2),
+            "curbLength": round(desarrollo_total, 2)}
+
+
+def _closest_station(axis: Axis, point: Point) -> float:
+    """A que distancia del arranque del eje cae el punto mas cercano."""
+    mejor_d, mejor_dist = 0.0, float("inf")
+    n = max(60, len(axis.points) * 6)
+    for i in range(n + 1):
+        d = axis.total_length * i / n
+        p = axis.offset_point_at(d, 0.0)
+        dist = math.dist(p, point)
+        if dist < mejor_dist:
+            mejor_dist, mejor_d = dist, d
+    return mejor_d
+
+
+def _side_of(main: Axis, branch: Axis, d: float) -> float:
+    """De que lado de la principal se va el ramal: +1 izquierda, -1 derecha."""
+    if len(branch.points) < 2:
+        return 1.0
+    i, _ = main.segment_at(d)
+    u = main.dirs[i]
+    p0 = branch.points[0]
+    p1 = branch.points[min(2, len(branch.points) - 1)]
+    vx, vy = p1[0] - p0[0], p1[1] - p0[1]
+    cruz = u[0] * vy - u[1] * vx
+    return 1.0 if cruz >= 0 else -1.0
+
+
+def _fillet_arc(p0: Point, p1: Point, radius: float,
+                samples: int) -> list[Point]:
+    """Arco de radio dado que empalma dos puntos, por el lado corto."""
+    cuerda = math.dist(p0, p1)
+    if cuerda < 1e-9:
+        return [p0, p1]
+
+    # Si el radio no alcanza para unirlos, se usa el minimo posible.
+    r = max(radius, cuerda / 2.0 + 1e-9)
+    mx, my = (p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0
+    dx, dy = (p1[0] - p0[0]) / cuerda, (p1[1] - p0[1]) / cuerda
+    h = math.sqrt(max(r * r - (cuerda / 2.0) ** 2, 0.0))
+    cx, cy = mx - dy * h, my + dx * h
+
+    a0 = math.atan2(p0[1] - cy, p0[0] - cx)
+    a1 = math.atan2(p1[1] - cy, p1[0] - cx)
+    barrido = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi   # el lado corto
+
+    return [(cx + r * math.cos(a0 + barrido * k / samples),
+             cy + r * math.sin(a0 + barrido * k / samples))
+            for k in range(samples + 1)]

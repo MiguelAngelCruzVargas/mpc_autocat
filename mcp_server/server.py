@@ -14,6 +14,7 @@ import annotation as ann_mod
 import arch as arch_mod
 import autocad_client as acad
 import civil as civil_mod
+import profile as profile_mod
 import furniture as fur_mod
 import sheet as sheet_mod
 
@@ -285,6 +286,14 @@ def create_alignment(start_x: float, start_y: float, start_bearing_deg: float,
       {"type": "tangent", "length": 40}
       {"type": "curve", "radius": 90, "length": 107, "direction": "left"}
       {"type": "curve", "radius": 90, "angle_deg": 68, "direction": "right"}
+      {"type": "spiral", "radius": 90, "length": 30, "direction": "left"}
+      {"type": "spiral", "radius": 90, "length": 30, "direction": "left",
+       "exit": True}
+
+    Una 'spiral' es una curva de transición (clotoide): el radio baja de forma
+    gradual de infinito hasta 'radius' a lo largo de 'length'. Es lo que
+    permite entrar a una curva girando el volante de a poco; se pone una a la
+    entrada y otra con exit=True a la salida. Devuelve su parámetro A.
 
     Devuelve 'points' y 'bulges' para pasarle a create_road o create_polyline,
     el largo total, y el cadenamiento de cada punto notable con el radio, el
@@ -308,6 +317,104 @@ def point_on_road(points: list[list[float]], distance: float,
     sin recalcular la geometría de la curva."""
     return civil_mod.point_on_road(points=points, distance=distance,
                                    offset=offset, closed=closed)
+
+
+@mcp.tool()
+def create_intersection(main_points: list[list[float]],
+                         branch_points: list[list[float]],
+                         main_width: float, branch_width: float,
+                         radius: float = 6.0,
+                         main_bulges: Optional[list[float]] = None,
+                         branch_bulges: Optional[list[float]] = None
+                         ) -> dict[str, Any]:
+    """Radios de acuerdo donde una calle nace de otra.
+
+    Dos calles trazadas por separado se cruzan y sus guarniciones quedan
+    chocando en escuadra — ni se construye así ni podría girar un vehículo. El
+    acuerdo es el arco que empalma el borde de una con el de la otra.
+
+    branch_points tiene que ARRANCAR en el punto donde el ramal nace de la
+    principal. radius: 6 m en calle urbana, 10 o más si entran camiones.
+
+    Devuelve el desarrollo de los arcos, que se suma a los metros lineales de
+    guarnición del resumen de obra."""
+    return civil_mod.create_intersection(
+        main_points=main_points, branch_points=branch_points,
+        main_width=main_width, branch_width=branch_width, radius=radius,
+        main_bulges=main_bulges, branch_bulges=branch_bulges)
+
+
+# ------------------------------------------- Perfil y secciones transversales
+
+@mcp.tool()
+def create_profile(x: float, y: float, length: float,
+                    pvis: list[dict[str, Any]],
+                    ground: Optional[list[list[float]]] = None,
+                    h_scale: float = 1.0, v_exag: float = 10.0,
+                    datum: Optional[float] = None,
+                    grid_station: float = 20.0, grid_elevation: float = 1.0,
+                    text_height: float = 0.5, step: float = 2.0
+                    ) -> dict[str, Any]:
+    """Perfil longitudinal: terreno natural, rasante de proyecto y grilla.
+
+    La planta dice por dónde va la obra; el perfil dice a qué altura. Sin él no
+    hay cotas de rasante ni volúmenes de corte y terraplén.
+
+    (x, y) es la esquina inferior izquierda del cuadro.
+    pvis: los puntos de inflexión vertical, o sea la rasante:
+      [{"station": 0, "elevation": 100.0},
+       {"station": 60, "elevation": 103.2, "curve_length": 30},
+       {"station": 147, "elevation": 101.0}]
+    Entre dos PVI la rasante es recta; con 'curve_length' se mete una curva
+    vertical parabólica que suaviza el cambio de pendiente.
+    ground: terreno natural [[estacion, cota], ...]; opcional.
+    v_exag: exageración vertical (10 = 10:1). Sin exagerar, una pendiente del
+    2% es invisible en el dibujo.
+
+    Devuelve la cota de rasante y de terreno en cada estación de la grilla, y
+    el desnivel entre ambas — de ahí salen los volúmenes."""
+    return profile_mod.create_profile(
+        x=x, y=y, length=length, pvis=pvis, ground=ground, h_scale=h_scale,
+        v_exag=v_exag, datum=datum, grid_station=grid_station,
+        grid_elevation=grid_elevation, text_height=text_height, step=step)
+
+
+@mcp.tool()
+def grade_elevation(pvis: list[dict[str, Any]], station: float) -> dict[str, Any]:
+    """Cota de la rasante en un cadenamiento, con las curvas verticales.
+
+    Sirve para ubicar cualquier cosa a la altura correcta —un registro, un
+    brocal, el arranque de una obra de drenaje— sin dibujar el perfil entero."""
+    return {"station": station,
+            "elevation": profile_mod.grade_elevation(pvis, station)}
+
+
+@mcp.tool()
+def create_cross_sections(x: float, y: float, stations: list[float],
+                           width: float, pvis: list[dict[str, Any]],
+                           ground: Optional[list[list[float]]] = None,
+                           columns: int = 3, spacing_x: float = 0.0,
+                           spacing_y: float = 0.0, crown: float = 0.02,
+                           side_slope: float = 1.5, depth: float = 0.33,
+                           scale: float = 1.0, text_height: float = 0.3
+                           ) -> dict[str, Any]:
+    """Secciones transversales en una tanda de cadenamientos, en cuadrícula.
+
+    Cada sección sale con su calzada, el bombeo, el paquete estructural y los
+    taludes, y con el corte o terraplén ya resuelto a partir de la rasante
+    (pvis) y el terreno (ground).
+
+    crown: bombeo, la pendiente transversal que saca el agua al borde (0.02 =
+    2%, lo normal). side_slope: talud expresado H:V (1.5 = 1.5 horizontal por
+    1 vertical). depth: espesor del paquete estructural.
+
+    Devuelve el volumen estimado por el método de las áreas medias, que es con
+    el que se cuantifica el movimiento de tierras."""
+    return profile_mod.create_cross_section_series(
+        x=x, y=y, stations=stations, width=width, pvis=pvis, ground=ground,
+        columns=columns, spacing_x=spacing_x, spacing_y=spacing_y, crown=crown,
+        side_slope=side_slope, depth=depth, scale=scale,
+        text_height=text_height)
 
 
 # ------------------------------------------- Documentación (obra lineal, etc.)
