@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App Bundle: hace que AutoCAD cargue el plugin solo al arrancar, sin NETLOAD
+  manual cada vez. Se instala copiando la carpeta .bundle entera a
+  %APPDATA%\Autodesk\ApplicationPlugins\ (lo hace tools\install_bundle.ps1).
+
+  Hay dos bloques <Components> porque el DLL cambia según la generación de
+  AutoCAD: el de .NET Framework para 2019-2024 y el de .NET 8 para 2025+.
+  AutoCAD elige el que corresponde por el rango de SeriesMin/SeriesMax y
+  simplemente ignora el otro.
+
+  Códigos de versión: R23.0=2019, R23.1=2020, R24.0=2021, R24.1=2022,
+  R24.2=2023, R24.3=2024, R25.0=2025.
+-->
+<ApplicationPackage
+    SchemaVersion="1.0"
+    AutodeskProduct="AutoCAD"
+    Name="AutoCAD MCP"
+    AppVersion="0.3.0"
+    Description="Puente MCP: deja que Claude dibuje sobre el dibujo abierto"
+    ProductType="Application">
+
+  <CompanyDetails Name="AutoCAD MCP" />
+
+  <Components Description="AutoCAD 2019-2024 (.NET Framework 4.8)">
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD*"
+                         SeriesMin="R23.0" SeriesMax="R24.3" />
+    <ComponentEntry
+        AppName="AutoCadMcpPlugin"
+        Version="0.3.0"
+        ModuleName="./Contents/net48/AutoCadMcpPlugin.dll"
+        AppDescription="Servidor MCP embebido en AutoCAD"
+        LoadOnAutoCADStartup="True" />
+  </Components>
+
+  <Components Description="AutoCAD 2025 en adelante (.NET 8)">
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD*"
+                         SeriesMin="R25.0" />
+    <ComponentEntry
+        AppName="AutoCadMcpPlugin"
+        Version="0.3.0"
+        ModuleName="./Contents/net8/AutoCadMcpPlugin.dll"
+        AppDescription="Servidor MCP embebido en AutoCAD"
+        LoadOnAutoCADStartup="True" />
+  </Components>
+
+</ApplicationPackage>

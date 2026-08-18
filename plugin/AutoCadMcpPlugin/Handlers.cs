@@ -75,6 +75,36 @@ namespace AutoCadMcpPlugin
                 case "get_drawing_info":
                     return GetDrawingInfoCommand.Run(doc, pars);
 
+                // Curvas libres
+                case "create_spline":
+                    return CreateSplineCommand.Run(doc, pars);
+
+                // Layouts / espacio papel
+                case "create_layout":
+                    return LayoutCommands.Create(doc, pars);
+                case "list_layouts":
+                    return LayoutCommands.List(doc, pars);
+                case "set_current_layout":
+                    return LayoutCommands.SetCurrent(doc, pars);
+                case "create_viewport":
+                    return LayoutCommands.CreateViewport(doc, pars);
+
+                // Estilos con nombre
+                case "set_text_style":
+                    return StyleCommands.SetTextStyle(doc, pars);
+                case "set_dim_style":
+                    return StyleCommands.SetDimStyle(doc, pars);
+                case "list_styles":
+                    return StyleCommands.ListStyles(doc, pars);
+
+                // Documentos abiertos
+                case "list_documents":
+                    return DocumentCommands.List(doc, pars);
+                case "set_active_document":
+                    return DocumentCommands.SetActive(doc, pars);
+                case "ping":
+                    return DocumentCommands.Ping(doc, pars);
+
                 // Vista / visualizacion
                 case "set_display_options":
                     return SetDisplayOptionsCommand.Run(doc, pars);

@@ -8,13 +8,24 @@ reparto interior está derivado de las proporciones del render y redondeado a
 medidas de obra. Todas las cotas quedan dibujadas en el plano para poder
 ajustarlas con el cliente.
 
+EJEMPLO, no biblioteca. Esta guardado porque es un plano real y sirve de
+referencia de como se compone uno entero, pero NO es la forma normal de
+trabajar: para dibujar un plano nuevo se llaman las tools del MCP
+(create_sheet, create_walls, place_furniture, label_rooms) directamente, sin
+escribir un archivo por cada plano.
+
 Uso:
-  python casa_9x12.py --preview salida.svg   # sin AutoCAD, renderiza a SVG
-  python casa_9x12.py                        # dibuja en el AutoCAD abierto
+  python examples/casa_9x12.py --preview salida.svg   # sin AutoCAD, a SVG
+  python examples/casa_9x12.py                        # dibuja en AutoCAD
 """
 from __future__ import annotations
 
+import os
 import sys
+
+# Vive en examples/, pero usa la biblioteca de mcp_server/.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "mcp_server"))
 
 # --preview tiene que instalar el mock ANTES de importar los módulos que
 # resuelven acad.call, si no se quedan con el cliente real.

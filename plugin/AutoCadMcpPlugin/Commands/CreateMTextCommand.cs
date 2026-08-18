@@ -30,6 +30,7 @@ namespace AutoCadMcpPlugin.Commands
                     TextHeight = height,
                     Width = width
                 };
+                StyleHelper.ApplyTextStyle(db, tr, mtext, pars);
                 EntityHelper.ApplyCommon(db, tr, mtext, pars);
 
                 btr.AppendEntity(mtext);

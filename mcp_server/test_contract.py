@@ -24,7 +24,7 @@ def main() -> int:
     # sheet.py compone tools basicas, asi que tambien invoca comandos.
     composed = "".join(
         io.open(os.path.join(HERE, name), encoding="utf-8").read()
-        for name in ("sheet.py", "arch.py")
+        for name in ("sheet.py", "arch.py", "furniture.py")
     )
 
     called = set(re.findall(r'acad\.call\(\s*"([a-z_]+)"', server_src + composed))
@@ -49,7 +49,7 @@ def main() -> int:
 
     # Toda tool MCP deberia terminar en al menos un acad.call.
     silent = sorted(t for t in exposed if not re.search(
-        r"def\s+" + t + r"\b[\s\S]{0,2000}?(acad\.call|sheet_mod\.|arch_mod\.)",
+        r"def\s+" + t + r"\b[\s\S]{0,2000}?(acad\.call|sheet_mod\.|arch_mod\.|fur_mod\.)",
         server_src))
     if silent:
         problems.append("Tools que no llaman al plugin: " + ", ".join(silent))

@@ -38,10 +38,11 @@ namespace AutoCadMcpPlugin.Commands
                     new Point3d(x2, y2, 0),
                     new Point3d(dimLineX, dimLineY, 0),
                     null,
-                    db.Dimstyle);
+                    StyleHelper.ResolveDimStyle(db, tr, pars));
 
                 EntityHelper.ApplyCommon(db, tr, dim, pars);
-                dim.Dimscale = dimScale;
+                if (pars["scale"] != null)
+                    dim.Dimscale = dimScale;
 
                 btr.AppendEntity(dim);
                 tr.AddNewlyCreatedDBObject(dim, true);

@@ -30,6 +30,7 @@ namespace AutoCadMcpPlugin.Commands
                     Height = height,
                     Rotation = rotationDeg * System.Math.PI / 180.0
                 };
+                StyleHelper.ApplyTextStyle(db, tr, text, pars);
                 EntityHelper.ApplyCommon(db, tr, text, pars);
 
                 btr.AppendEntity(text);

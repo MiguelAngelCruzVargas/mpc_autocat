@@ -124,6 +124,8 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | Bloques / imágenes | `insert_block` | Inserta un símbolo (bloque), con atributos e importación desde un `.dwg` externo si hace falta |
 | | `define_block` | Captura entidades ya dibujadas (por handle) como un bloque reutilizable — sin archivo externo, sirve para armar símbolos propios (norte, registros, etc.) una vez y repetirlos |
 | | `attach_image` | Inserta una imagen raster ya existente en disco (logo, mapa de microlocalización) — no genera el contenido, solo la coloca |
+| Mobiliario | `place_furniture` | Camas, sillones, comedor, cocina y sanitarios en planta; varias piezas por llamada |
+| | `label_rooms` | Rotula ambientes con nombre y superficie, esquivando el mobiliario |
 | Capas | `set_layer` | Crea/configura una capa: color ACI, tipo de línea, grosor (simbología/normas) |
 | | `list_layers` | Lista capas con sus propiedades |
 | Edición | `move_entity` / `copy_entity` / `rotate_entity` / `scale_entity` / `delete_entity` | Transformaciones básicas sobre una entidad existente, por handle |
@@ -132,6 +134,15 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | | `get_entity` | Propiedades completas de una entidad por handle |
 | | `calculate_area` | Área de una Polyline cerrada / Region / Circle |
 | | `get_drawing_info` | Nombre de archivo, unidades, capa actual, cantidad de entidades |
+| Curvas | `create_spline` | Curva suave que pasa por los puntos dados (curvas de nivel, trazos irregulares) |
+| Layouts | `create_layout` | Crea una lámina de espacio papel, con dispositivo y tamaño de papel |
+| | `create_viewport` | Ventana del layout que muestra el modelo a escala fija |
+| | `list_layouts` / `set_current_layout` | Lista las láminas y cambia la activa |
+| Estilos | `set_text_style` | Estilo de texto con nombre (fuente, ancho, oblicuidad) |
+| | `set_dim_style` | Estilo de cota con nombre (texto, flechas, decimales, factor de unidades) |
+| | `list_styles` | Lista estilos de texto y cota, marcando los activos |
+| Documentos | `list_documents` / `set_active_document` | Varios dibujos abiertos: lista y elige sobre cuál operar |
+| | `ping` | Confirma que el plugin responde y con qué versión está cargado |
 | Vista | `zoom_extents` | Zoom a extensión completa (stub simple vía línea de comandos) |
 | | `set_display_options` | Activa/desactiva la visualización de grosores (LWDISPLAY) y fija el grosor por defecto (LWDEFAULT) |
 
@@ -215,6 +226,27 @@ dibujar algo roto.
 `create_axis_grid` agrega los ejes estructurales con sus globos, en línea de eje
 y trazo.
 
+## Cómo se dibuja un plano
+
+Con las tools, no escribiendo un script por plano. El orden es siempre el mismo:
+
+1. `create_sheet` — el cajón y el rótulo; devuelve el área útil.
+2. `create_walls` — un llamado por muro o tramo de muros, con sus huecos.
+3. `place_furniture` — todas las piezas de una vez.
+4. `label_rooms` — los nombres, que esquivan lo ya dibujado.
+5. `create_dimension` — las cotas.
+
+Una casa de tres recámaras sale en unas quince llamadas, porque cada tool
+resuelve una pieza entera: `create_walls` con cinco huecos es *un* llamado, no
+cuarenta líneas de geometría.
+
+Si algo obliga a escribir un script, es señal de que **falta una tool**: la
+capacidad va a `arch.py` / `furniture.py` / `sheet.py` y se expone. Lo que no
+va al repo es el plano puntual de un cliente — eso se dibuja y queda en el DWG.
+
+[`examples/casa_9x12.py`](examples/casa_9x12.py) está como referencia de cómo se
+compone un plano completo, no como la forma de trabajar.
+
 ## Grosores de línea (por qué se veía todo fino)
 
 Dos cosas distintas, y las dos hacen falta:
@@ -242,29 +274,87 @@ Ojo con la unidad del dibujo: los grosores son absolutos en mm de papel, no
 escalan con el dibujo. Lo que sí escala es el texto/cotas — para eso está el
 parámetro `scale` de `create_dimension`.
 
-## Próximos pasos (no implementados todavía)
+## Espacio papel: layouts y viewports
 
-- Layouts / viewports reales para cortes y vistas con nombre (`zoom_extents` es
-  un placeholder de esto).
-- Estilos de texto/cota con nombre (hoy usan el estilo por defecto del dibujo).
-- Splines (para trazos curvos que no sean arcos circulares).
-- Reconexión / múltiples documentos abiertos a la vez.
-- Autocarga del plugin (App Bundle) en vez de `NETLOAD` manual.
+Hay dos formas de armar una lámina y conviene saber cuál se está usando:
 
-**Sin probar contra AutoCAD real todavía** (compilan, pero no hay forma de
-correrlas sin AutoCAD instalado acá — probar estas primero cuando llegues a la
-otra máquina):
-- `insert_block` con importación desde DWG externo (usa `Database.Insert`).
-- `attach_image` (API de `RasterImageDef`/`RasterImage`, la más áspera de toda la tanda).
-- `create_hatch` y `create_leader`.
-- `offset_entity` en curvas con más de un resultado posible (arcos cerrados, etc.).
+- **`create_sheet`** dibuja el cajón y el rótulo *en el espacio modelo*, a la
+  escala que le pases. Es lo más simple y alcanza para una lámina única.
+- **`create_layout` + `create_viewport`** usa espacio papel de verdad: el
+  dibujo vive una sola vez en el modelo y cada viewport lo muestra a la escala
+  que corresponda. Es lo que hace falta cuando una misma lámina lleva la planta
+  a 1:100 y un detalle a 1:20, o cuando querés varias láminas del mismo modelo.
 
-## Convenciones de dibujo
+Dentro de un layout se trabaja en **milímetros de papel**, con el origen en la
+esquina inferior izquierda de la hoja. La escala del viewport necesita saber
+cuánto mide una unidad del modelo:
 
-[`CLAUDE.md`](CLAUDE.md) tiene las reglas que sigue Claude al dibujar: empezar
-siempre por `create_sheet`, respetar el área útil, la jerarquía de grosores, una
-capa por tipo de elemento y cómo dimensionar textos y cotas según la escala.
-Claude Code lo lee solo al abrir el proyecto.
+```python
+create_layout(name="PLANTA", paper_size="A2")
+create_viewport(
+    layout="PLANTA",
+    center_x=290, center_y=200, width=520, height=360,   # mm de papel
+    view_center_x=4.5, view_center_y=6.0,                # punto del modelo
+    scale_denominator=50,
+    model_units_per_mm=1000,   # 1 unidad = 1 metro = 1000mm
+)
+```
+
+`locked=True` (el default) deja el viewport bloqueado para que un zoom
+accidental no le cambie la escala.
+
+## Estilos con nombre
+
+Sin estilos propios, textos y cotas salen con el `Standard` de la plantilla,
+que cambia de un DWG a otro: el mismo plano se ve distinto según con qué
+archivo arrancaste. `set_text_style` y `set_dim_style` los crean, y después se
+usan pasando `style="<nombre>"` a `create_text`, `create_mtext` o
+`create_dimension`. Si el estilo no existe, el error lo dice y sugiere crearlo
+en vez de dibujar con otro por lo bajo.
+
+## Autocarga: instalar como App Bundle
+
+Para que AutoCAD cargue el plugin solo al arrancar, sin `NETLOAD` cada vez:
+
+```powershell
+.\tools\install_bundle.ps1
+```
+
+Compila y copia el bundle a
+`%APPDATA%\Autodesk\ApplicationPlugins\AutoCadMcp.bundle`, con los dos DLLs
+adentro — AutoCAD elige el que corresponde a su versión. **Los bundles se leen
+solo al arrancar**, así que hay que cerrar y volver a abrir AutoCAD; y como
+.NET no permite descargar un assembly ya cargado, cualquier cambio en el plugin
+también obliga a reiniciar.
+
+Para sacarlo: `.\tools\install_bundle.ps1 -Uninstall`.
+
+## Probar contra AutoCAD real
+
+```powershell
+python mcp_server\test_live.py          # prueba y limpia lo que dibujo
+python mcp_server\test_live.py --keep   # deja el resultado para mirarlo
+```
+
+Ejercita lo que no se puede verificar sin AutoCAD: achurados, leaders, offsets
+en curvas ambiguas, bloques, imágenes raster, splines, layouts, viewports,
+estilos y documentos. Dibuja lejos del origen (x=500) para no pisar tu trabajo.
+
+Dos pruebas necesitan archivos que dependen de la máquina y se saltean si no
+están:
+
+```powershell
+$env:ACAD_TEST_DWG   = "C:\ruta\a\un\bloque.dwg"
+$env:ACAD_TEST_IMAGE = "C:\ruta\a\una\imagen.png"
+```
+
+## Próximos pasos
+
+- Cotas encadenadas y por coordenadas (hoy `create_dimension` hace una alineada
+  por vez).
+- Tablas (cuadro de acabados, cuantificación) como objeto `Table` nativo.
+- Exportar a PDF desde un layout (`PLOT` por API).
+- Bloques dinámicos y atributos multilínea.
 
 ## Notas de diseño
 

@@ -12,6 +12,7 @@ from mcp.server.fastmcp import FastMCP
 
 import arch as arch_mod
 import autocad_client as acad
+import furniture as fur_mod
 import sheet as sheet_mod
 
 mcp = FastMCP("autocad")
@@ -166,6 +167,58 @@ def create_axis_grid(
     )
 
 
+@mcp.tool()
+def place_furniture(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Dibuja mobiliario en planta: varias piezas en UNA sola llamada.
+
+    items: lista de {"type": ..., "x": ..., "y": ..., "rotation_deg": 0, ...}.
+    (x, y) es la esquina inferior izquierda de la pieza antes de rotar, salvo
+    dining_table que se ubica por su centro. rotation_deg gira alrededor de ese
+    punto, para apoyar el mueble contra cualquier muro (180 = cabecera arriba).
+
+    Tipos y sus medidas propias (todas opcionales, en unidades del modelo):
+      bed / single_bed  width, length      cama matrimonial / individual
+      nightstand        size               buró
+      closet            width, depth       clóset con puertas corredizas
+      sofa              width, depth       sillón
+      armchair          size               sillón individual
+      coffee_table      width, depth       mesa de centro
+      dining_table      width, depth, seats_per_side   comedor con sillas
+      counter           width, depth       mesada de cocina
+      stove             width, depth       estufa con quemadores
+      kitchen_sink      width, depth       fregadero
+      fridge            width, depth       refrigerador
+      wc                -                  inodoro
+      lavatory          width, depth       lavabo
+      shower            width, depth       regadera
+
+    Todo va a la capa MOBILIARIO con trazo fino, para poder apagarla y quedarse
+    con la arquitectura sola. Cada pieza registra su huella, así que llamar
+    después a label_rooms ubica los textos sin taparlos."""
+    return fur_mod.place(items)
+
+
+@mcp.tool()
+def label_rooms(rooms: list[dict[str, Any]], height: float,
+                 area_height: float = 0.0, show_area: bool = True,
+                 layer: str = "TEXTOS") -> dict[str, Any]:
+    """Rotula ambientes con su nombre y superficie, ESQUIVANDO el mobiliario.
+
+    rooms: lista de {"name": "SALA", "x0":..., "y0":..., "x1":..., "y1":...},
+    donde el rectángulo son los bordes útiles del ambiente (cara interior de
+    los muros). El área se calcula sola a partir de esas medidas.
+
+    Busca dentro de cada ambiente la posición con más aire alrededor en vez de
+    poner el texto en el centro geométrico, que suele ser justo donde está la
+    cama. Llamala DESPUÉS de place_furniture. Si a un ambiente no le entra el
+    bloque completo, cae a solo el nombre en chico y lo marca como 'cramped'.
+
+    height: altura del nombre en unidades del modelo — en un plano 1:50 en
+    metros, un texto de 3mm de papel es 0.15."""
+    return fur_mod.label_rooms(rooms, height=height, area_height=area_height,
+                               layer=layer, show_area=show_area)
+
+
 # ---------------------------------------------------------------- Geometría
 
 @mcp.tool()
@@ -239,6 +292,7 @@ def create_text(
     text: str, x: float, y: float, height: float, z: float = 0.0,
     layer: Optional[str] = None, rotation_deg: float = 0.0,
     lineweight: Optional[int] = None, color_index: Optional[int] = None,
+    style: Optional[str] = None,
 ) -> dict[str, Any]:
     """Crea texto de una línea (DBText).
 
@@ -247,7 +301,7 @@ def create_text(
     de la capa. color_index: color ACI 1-255."""
     return acad.call("create_text", {
         "text": text, "x": x, "y": y, "z": z, "height": height,
-        "layer": layer, "rotationDeg": rotation_deg,
+        "layer": layer, "rotationDeg": rotation_deg, "style": style,
         **_style(lineweight, color_index),
     })
 
@@ -257,6 +311,7 @@ def create_mtext(
     text: str, x: float, y: float, height: float, width: float = 0.0,
     z: float = 0.0, layer: Optional[str] = None,
     lineweight: Optional[int] = None, color_index: Optional[int] = None,
+    style: Optional[str] = None,
 ) -> dict[str, Any]:
     """Crea texto multilínea (MText) que ajusta dentro de un ancho dado.
 
@@ -264,7 +319,7 @@ def create_mtext(
     hereda el de la capa. color_index: color ACI 1-255."""
     return acad.call("create_mtext", {
         "text": text, "x": x, "y": y, "z": z, "height": height, "width": width,
-        "layer": layer, **_style(lineweight, color_index),
+        "layer": layer, "style": style, **_style(lineweight, color_index),
     })
 
 
@@ -272,8 +327,9 @@ def create_mtext(
 def create_dimension(
     x1: float, y1: float, x2: float, y2: float,
     dim_line_x: float, dim_line_y: float,
-    layer: Optional[str] = None, scale: float = 1.0,
+    layer: Optional[str] = None, scale: Optional[float] = None,
     lineweight: Optional[int] = None, color_index: Optional[int] = None,
+    style: Optional[str] = None,
 ) -> dict[str, Any]:
     """Crea una cota alineada entre dos puntos. dim_line_x/y ubica la línea de cota
     (define a qué distancia y de qué lado se dibuja). 'scale' multiplica el
@@ -286,7 +342,8 @@ def create_dimension(
     finas, 13-18, para no competir con los muros). color_index: color ACI."""
     return acad.call("create_dimension", {
         "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-        "dimLineX": dim_line_x, "dimLineY": dim_line_y, "layer": layer, "scale": scale,
+        "dimLineX": dim_line_x, "dimLineY": dim_line_y, "layer": layer,
+        "scale": scale, "style": style,
         **_style(lineweight, color_index),
     })
 
@@ -493,6 +550,170 @@ def set_display_options(lineweight_display: Optional[bool] = None,
         "lineweightDisplay": lineweight_display,
         "defaultLineweightHundredthsMm": default_lineweight_hundredths_mm,
     })
+
+
+@mcp.tool()
+def create_spline(points: list[list[float]], closed: bool = False,
+                   layer: Optional[str] = None,
+                   lineweight: Optional[int] = None,
+                   color_index: Optional[int] = None) -> dict[str, Any]:
+    """Curva suave que pasa por los puntos dados (spline por puntos de ajuste).
+
+    Para trazos curvos que no son arcos de círculo: curvas de nivel, ejes de
+    calle, límites irregulares de terreno. Si el trazo es un arco de radio
+    constante usá create_arc, que es más liviano y acotable."""
+    return acad.call("create_spline", {
+        "points": points, "closed": closed, "layer": layer,
+        **_style(lineweight, color_index),
+    })
+
+
+# ------------------------------------------------- Layouts / espacio papel
+
+@mcp.tool()
+def create_layout(name: str, plot_config: Optional[str] = None,
+                   paper_size: Optional[str] = None) -> dict[str, Any]:
+    """Crea un layout (espacio papel): una lámina imprimible de verdad, donde la
+    escala la controla el viewport en vez de dibujar el marco en el modelo.
+
+    plot_config: dispositivo de impresión, p.ej. 'DWG To PDF.pc3' (el default).
+    paper_size: parte del nombre del papel, p.ej. 'A2' o 'A3' — busca el
+    primero que lo contenga entre los del dispositivo. Si no encuentra ninguno,
+    el error lista los disponibles.
+
+    Después: create_viewport para poner la ventana al modelo."""
+    return acad.call("create_layout", {
+        "name": name, "plotConfig": plot_config, "paperSize": paper_size,
+    })
+
+
+@mcp.tool()
+def list_layouts() -> dict[str, Any]:
+    """Lista los layouts del dibujo con su tamaño de papel, y cuál está activo."""
+    return acad.call("list_layouts", {})
+
+
+@mcp.tool()
+def set_current_layout(name: str) -> dict[str, Any]:
+    """Cambia la pestaña activa a ese layout (o 'Model' para el espacio modelo)."""
+    return acad.call("set_current_layout", {"name": name})
+
+
+@mcp.tool()
+def create_viewport(layout: str, center_x: float, center_y: float,
+                     width: float, height: float,
+                     view_center_x: float = 0.0, view_center_y: float = 0.0,
+                     scale_denominator: float = 50.0,
+                     model_units_per_mm: float = 1.0,
+                     locked: bool = True) -> dict[str, Any]:
+    """Ventana dentro de un layout que muestra una zona del espacio modelo a
+    escala fija. Es la forma correcta de armar una lámina: el dibujo vive una
+    sola vez en el modelo y cada viewport lo muestra a la escala que necesita.
+
+    center_x/center_y, width, height: posición y tamaño de la ventana en
+    MILÍMETROS DE PAPEL, con origen en la esquina inferior izquierda de la hoja.
+    view_center_x/y: qué punto del MODELO queda en el centro de la ventana.
+    scale_denominator: 50 para 1:50, 100 para 1:100.
+    model_units_per_mm: cuántos milímetros reales mide 1 unidad del modelo —
+    1000 si dibujás en metros, 10 en centímetros, 1 en milímetros. Sin esto la
+    escala del viewport sale mil veces mal.
+    locked: deja el viewport bloqueado para que un zoom accidental no le cambie
+    la escala. Es lo que querés casi siempre."""
+    return acad.call("create_viewport", {
+        "layout": layout, "centerX": center_x, "centerY": center_y,
+        "width": width, "height": height,
+        "viewCenterX": view_center_x, "viewCenterY": view_center_y,
+        "scaleDenominator": scale_denominator,
+        "modelUnitsPerMm": model_units_per_mm, "locked": locked,
+    })
+
+
+# ----------------------------------------------------- Estilos con nombre
+
+@mcp.tool()
+def set_text_style(name: str, font: Optional[str] = None, height: float = 0.0,
+                    width_factor: float = 1.0, oblique: float = 0.0,
+                    set_current: bool = False) -> dict[str, Any]:
+    """Crea o configura un estilo de texto con nombre, y opcionalmente lo deja
+    como el activo del dibujo.
+
+    font: 'arial.ttf' / 'romans.shx' / 'txt.shx'. Las .ttf se aplican como
+    TrueType y las .shx como fuente vectorial de AutoCAD.
+    height: 0 deja la altura libre (la fija cada texto), que es lo habitual —
+    poner un valor acá la clava para todos los textos del estilo.
+    width_factor: <1 comprime las letras, útil en rótulos angostos.
+
+    Sin estilos con nombre todo sale con el 'Standard' de la plantilla, que
+    cambia de un DWG a otro: el mismo plano se ve distinto según con qué
+    archivo arrancaste."""
+    return acad.call("set_text_style", {
+        "name": name, "font": font, "height": height,
+        "widthFactor": width_factor, "oblique": oblique,
+        "setCurrent": set_current,
+    })
+
+
+@mcp.tool()
+def set_dim_style(name: str, text_height: Optional[float] = None,
+                   arrow_size: Optional[float] = None,
+                   scale: Optional[float] = None,
+                   decimal_places: Optional[int] = None,
+                   text_style: Optional[str] = None,
+                   units_factor: Optional[float] = None,
+                   extension_offset: Optional[float] = None,
+                   extension_beyond: Optional[float] = None,
+                   set_current: bool = False) -> dict[str, Any]:
+    """Crea o configura un estilo de cota con nombre.
+
+    text_height / arrow_size: en unidades del modelo.
+    scale: DIMSCALE, multiplica texto y flechas de una sola vez.
+    decimal_places: decimales del número (2 para '3.45', 0 para '3').
+    units_factor: DIMLFAC, multiplica el valor medido — dibujando en metros,
+    poné 100 para que la cota diga centímetros o 1000 para milímetros.
+    text_style: nombre de un estilo creado con set_text_style.
+
+    Después pasá style='<nombre>' a create_dimension para usarlo."""
+    return acad.call("set_dim_style", {
+        "name": name, "textHeight": text_height, "arrowSize": arrow_size,
+        "scale": scale, "decimalPlaces": decimal_places,
+        "textStyle": text_style, "unitsFactor": units_factor,
+        "extensionOffset": extension_offset, "extensionBeyond": extension_beyond,
+        "setCurrent": set_current,
+    })
+
+
+@mcp.tool()
+def list_styles() -> dict[str, Any]:
+    """Lista los estilos de texto y de cota del dibujo, marcando los activos."""
+    return acad.call("list_styles", {})
+
+
+# ------------------------------------------------------ Documentos abiertos
+
+@mcp.tool()
+def list_documents() -> dict[str, Any]:
+    """Lista los dibujos abiertos en AutoCAD y marca cuál está activo.
+
+    Todas las demás tools trabajan sobre el ACTIVO."""
+    return acad.call("list_documents", {})
+
+
+@mcp.tool()
+def set_active_document(name: str) -> dict[str, Any]:
+    """Cambia el dibujo activo, sobre el que van a operar las demás tools.
+    Alcanza con el nombre de archivo ('Casa.dwg'), sin la ruta completa."""
+    return acad.call("set_active_document", {"name": name})
+
+
+@mcp.tool()
+def ping() -> dict[str, Any]:
+    """Confirma que el plugin responde, sobre qué dibujo está parado y qué
+    versión del plugin está cargada en AutoCAD.
+
+    Útil para saber si el DLL cargado es el mismo que el código actual: si
+    agregaste comandos y el plugin devuelve 'Comando no soportado', la versión
+    que devuelve esto te lo confirma."""
+    return acad.call("ping", {})
 
 
 @mcp.tool()

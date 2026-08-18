@@ -242,6 +242,116 @@ def shower(x: float, y: float, width: float = 0.90, depth: float = 0.90,
     _line((x + width, y), (x, y + depth), base, rotation_deg, LW_SOFT)
 
 
+# --------------------------------------------------------------- despacho
+
+# Que puede dibujar place_furniture, y con que medidas por defecto (en metros).
+CATALOG = {
+    "bed":          (bed,          {"width": 1.60, "length": 2.00}),
+    "single_bed":   (bed,          {"width": 1.00, "length": 1.90}),
+    "nightstand":   (nightstand,   {"size": 0.45}),
+    "closet":       (closet,       {"width": 1.50, "depth": 0.60}),
+    "sofa":         (sofa,         {"width": 1.90, "depth": 0.85}),
+    "armchair":     (armchair,     {"size": 0.85}),
+    "coffee_table": (coffee_table, {"width": 1.10, "depth": 0.55}),
+    "dining_table": (dining_table, {"width": 1.60, "depth": 0.90,
+                                    "seats_per_side": 3}),
+    "counter":      (counter,      {"width": 2.40, "depth": 0.60}),
+    "stove":        (stove,        {"width": 0.60, "depth": 0.60}),
+    "kitchen_sink": (kitchen_sink, {"width": 0.80, "depth": 0.60}),
+    "fridge":       (fridge,       {"width": 0.70, "depth": 0.70}),
+    "wc":           (wc,           {}),
+    "lavatory":     (lavatory,     {"width": 0.60, "depth": 0.45}),
+    "shower":       (shower,       {"width": 0.90, "depth": 0.90}),
+}
+
+# dining_table se ubica por su CENTRO; el resto por su esquina inferior
+# izquierda antes de rotar.
+CENTERED = {"dining_table"}
+
+
+def place(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Dibuja varias piezas de mobiliario de una sola pasada.
+
+    Cada item es {"type": ..., "x": ..., "y": ..., "rotation_deg": ...} mas los
+    parametros propios del tipo. Los que no se pasen toman el valor del
+    CATALOG.
+    """
+    ensure_layer()
+    placed = []
+
+    for i, item in enumerate(items):
+        kind = str(item.get("type", "")).lower()
+        if kind not in CATALOG:
+            raise ValueError(
+                f"Mueble #{i + 1}: tipo {kind!r} desconocido. "
+                f"Disponibles: {', '.join(sorted(CATALOG))}."
+            )
+        fn, defaults = CATALOG[kind]
+
+        if "x" not in item or "y" not in item:
+            raise ValueError(f"Mueble #{i + 1} ({kind}): faltan 'x' y/o 'y'.")
+
+        kwargs = dict(defaults)
+        for key, value in item.items():
+            if key in ("type", "x", "y"):
+                continue
+            if key == "rotation_deg":
+                kwargs["rotation_deg"] = value
+            elif key in defaults:
+                kwargs[key] = value
+            else:
+                raise ValueError(
+                    f"Mueble #{i + 1} ({kind}): no acepta {key!r}. "
+                    f"Acepta: {', '.join(sorted(defaults) + ['rotation_deg'])}."
+                )
+
+        fn(float(item["x"]), float(item["y"]), **kwargs)
+        placed.append({"type": kind, "x": item["x"], "y": item["y"]})
+
+    return {"placed": placed, "count": len(placed)}
+
+
+def label_rooms(rooms: list[dict[str, Any]], height: float,
+                area_height: float = 0.0, layer: str = "TEXTOS",
+                show_area: bool = True) -> dict[str, Any]:
+    """Rotula ambientes esquivando el mobiliario ya dibujado.
+
+    Cada room es {"name":..., "x0":..., "y0":..., "x1":..., "y1":...}. Usa las
+    huellas registradas por place() para no poner el texto encima de una cama.
+    """
+    acad.call("set_layer", {"name": layer, "colorIndex": 7, "linetype": None,
+                            "lineweightHundredthsMm": 25})
+    out = []
+    ah = area_height or height * 0.72
+
+    for i, room in enumerate(rooms):
+        try:
+            name = str(room["name"])
+            box = (float(room["x0"]), float(room["y0"]),
+                   float(room["x1"]), float(room["y1"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Ambiente #{i + 1}: hace falta name, x0, y0, x1, y1. ({exc})")
+
+        area = (box[2] - box[0]) * (box[3] - box[1]) if show_area else None
+        spot, fitted = find_label_spot(box, name, height, area, ah)
+        if not fitted and area is not None:
+            # No entraba con la superficie: probamos solo el nombre, chico.
+            spot, fitted = find_label_spot(box, name, ah)
+            label(name, spot[0], spot[1], height=ah, layer=layer)
+            out.append({"name": name, "x": spot[0], "y": spot[1],
+                        "area": None, "cramped": True})
+            continue
+
+        label(name, spot[0], spot[1], height=height, layer=layer,
+              area=area, area_height=ah)
+        out.append({"name": name, "x": spot[0], "y": spot[1],
+                    "area": round(area, 2) if area else None,
+                    "cramped": not fitted})
+
+    return {"labeled": out, "count": len(out)}
+
+
 # ------------------------------------------------------------------ otros
 
 def text_block_size(text: str, height: float, area: Optional[float] = None,

@@ -2,6 +2,28 @@
 
 Reglas de trabajo cuando alguien pide dibujar algo en AutoCAD con estas tools.
 
+## 0. Dibujar con las tools, NO escribiendo un script por plano
+
+Un plano se dibuja llamando las tools del MCP (`create_sheet`, `create_walls`,
+`place_furniture`, `label_rooms`, `create_dimension`) **directamente**. No crear
+un `casa_tal.py` por cada pedido: por ese camino el repo termina con un archivo
+por plano y el servidor MCP no sirvió de nada.
+
+La divisoria es esta:
+
+- **Va al repo** lo *reutilizable*: una capacidad nueva que sirva para cualquier
+  plano (un tipo de mueble, un símbolo, una forma de acotar). Se agrega a
+  `arch.py` / `furniture.py` / `sheet.py` y se expone como tool.
+- **No va al repo** lo *puntual*: el plano de un cliente concreto. Se dibuja con
+  las tools. Si hace falta un script intermedio para calcular algo, va al
+  directorio temporal, no al proyecto.
+
+Si dibujar algo obliga a escribir un script, eso es la señal de que **falta una
+tool**: agregala a la biblioteca y exponela, en vez de dejar el script.
+
+`examples/casa_9x12.py` es la única excepción, y está ahí como referencia de
+cómo se compone un plano entero, no como forma de trabajo.
+
 ## 1. Siempre empezar por la lámina
 
 **Antes de trazar una sola línea, llamar a `create_sheet`.** Define el formato,
@@ -70,21 +92,30 @@ Un plano se lee por el contraste de trazos. Toda tool de creación acepta
 Si todo sale con el mismo grosor, el plano no se lee. Cuando el usuario diga
 que "se ve todo fino", revisar primero `set_display_options(lineweight_display=True)`.
 
-## 5. Capas
+## 5. Mobiliario y rótulos
+
+`place_furniture` dibuja todas las piezas en UNA llamada: pasarle la lista
+entera del ambiente o de la casa, no una llamada por mueble.
+
+`label_rooms` va DESPUÉS de `place_furniture`: usa las huellas que dejaron los
+muebles para ubicar cada nombre donde no tape nada. Rotular antes de amueblar
+deja los textos encima de las camas.
+
+## 6. Capas
 
 Una capa por tipo de elemento, creada con `set_layer` antes de dibujar (color y
 grosor propios): `MUROS`, `EJES`, `COTAS`, `TEXTOS`, `MOBILIARIO`, `TERRENO`.
 `create_sheet` ya crea `CAJON` y `ROTULO` — no dibujar nada del plano en esas
 dos, para poder apagarlas y ver solo el dibujo.
 
-## 6. Texto y cotas a escala
+## 7. Texto y cotas a escala
 
 El texto se dimensiona en mm de papel × escala. En un plano 1:100 dibujado en
 metros, un texto de 2.5mm de papel se crea con `height = 0.25`. Para cotas, el
 parámetro `scale` de `create_dimension` cumple ese rol (en metros a 1:100,
 arrancar en `0.1`).
 
-## 7. Verificar antes de dar por terminado
+## 8. Verificar antes de dar por terminado
 
 Después de dibujar, `zoom_extents` y `get_drawing_info` para confirmar la
 cantidad de entidades. Si se creó geometría cerrada, `calculate_area` sobre las
@@ -102,9 +133,35 @@ Antes de dar por buena cualquier cambio en la geometría, correr `test_geom.py` 
 `test_arch.py` — cubren el inglete de las esquinas, el partido de los huecos y
 que los abatimientos barran 90°.
 
+## Espacio papel vs espacio modelo
+
+`create_sheet` dibuja el cajón en el espacio modelo y alcanza para una lámina
+única. Cuando el pedido implique **varias escalas en la misma lámina** o
+**varias láminas del mismo modelo**, usar `create_layout` + `create_viewport`:
+el dibujo queda una sola vez en el modelo y cada viewport lo muestra a su
+escala. Dentro del layout las coordenadas son milímetros de papel, y
+`create_viewport` necesita `model_units_per_mm` (1000 dibujando en metros) o la
+escala sale mil veces mal.
+
+## Estilos antes que valores sueltos
+
+Para un plano con más de un par de textos, crear primero `set_text_style` y
+`set_dim_style` y después pasar `style="<nombre>"`. Cambiar el estilo reajusta
+todo el plano de una; ir texto por texto no.
+
 ## Antes de tocar el plugin C#
 
 `python mcp_server/test_contract.py` chequea que cada tool tenga su `case` en
-`Handlers.cs`. Cualquier cambio en `plugin/` obliga a recompilar **y volver a
-hacer `NETLOAD` en la máquina con AutoCAD**; los cambios que se puedan hacer
-del lado Python (como `sheet.py`) evitan ese viaje.
+`Handlers.cs`.
+
+Cualquier cambio en `plugin/` obliga a **recompilar y reiniciar AutoCAD**: .NET
+no permite descargar un assembly ya cargado, así que ni `NETLOAD` ni el bundle
+toman una versión nueva sin cerrar el programa. Por eso, lo que se pueda
+resolver del lado Python (`sheet.py`, `arch.py`, `furniture.py`) se resuelve
+ahí: se prueba con los previews y no cuesta un reinicio.
+
+`ping` devuelve la versión del plugin cargado — si un comando nuevo responde
+"Comando no soportado", es que AutoCAD sigue con el DLL viejo.
+
+Después de tocar el plugin, correr `python mcp_server/test_live.py` con AutoCAD
+abierto: ejercita todo contra el dibujo real y limpia lo que dibujó.
