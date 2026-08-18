@@ -10,7 +10,9 @@ from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
+import arch as arch_mod
 import autocad_client as acad
+import sheet as sheet_mod
 
 mcp = FastMCP("autocad")
 
@@ -23,6 +25,145 @@ def _style(lineweight: Optional[int], color_index: Optional[int]) -> dict[str, A
     15,18,20,25,30,35,40,50,53,60,70,80,90,100,106,120,140,158,200,211.
     """
     return {"lineweight": lineweight, "colorIndex": color_index}
+
+
+# ------------------------------------------------- Lámina (cajón + rotulación)
+
+@mcp.tool()
+def create_sheet(
+    sheet_format: str = "A1",
+    scale_denominator: float = 100.0,
+    model_units: str = "m",
+    origin_x: float = 0.0,
+    origin_y: float = 0.0,
+    project: str = "",
+    location: str = "",
+    client: str = "",
+    content: str = "",
+    drawn_by: str = "",
+    reviewed_by: str = "",
+    date: str = "",
+    sheet_number: str = "",
+    width_mm: float = 0.0,
+    height_mm: float = 0.0,
+) -> dict[str, Any]:
+    """PRIMER PASO DE TODO PLANO: dibuja el cajón (marco de la hoja con sus
+    márgenes) y el cuadro de rotulación con los datos de la obra, y devuelve el
+    área útil donde va el dibujo. Llamala ANTES que cualquier otra tool de
+    dibujo, y después ubicá todo adentro del 'drawArea' que devuelve.
+
+    sheet_format: A0, A1, A2, A3 o A4 (apaisado). Para un formato a medida pasá
+    width_mm y height_mm.
+    scale_denominator: el denominador de la escala — 100 para 1:100, 50 para
+    1:50. Decide qué tan grande sale el cajón en unidades del modelo.
+    model_units: en qué unidad está dibujado el modelo, 'm' (lo normal en
+    arquitectura), 'cm' o 'mm' (detalle/despiece). Un A1 a 1:100 en metros mide
+    84.1 x 59.4 unidades; el mismo A1 a 1:100 en mm mide 84100 x 59400.
+    origin_x/origin_y: esquina inferior izquierda de la hoja. Usá orígenes
+    separados para poner varias láminas una al lado de la otra.
+
+    Datos del rótulo: project (nombre de la obra), location (ubicación), client
+    (propietario), content (qué muestra esta lámina, p.ej. 'PLANTA BAJA'),
+    drawn_by (dibujó), reviewed_by (revisó), date (fecha), sheet_number
+    (clave/número de lámina, p.ej. 'A-01'). Los que se dejen vacíos salen como
+    celda en blanco para llenar a mano.
+
+    Devuelve 'drawArea' con dos rectángulos: el conservador (x1,y1,x2,y2), que
+    es la franja arriba del rótulo, y el completo (full_*), que además usa la
+    banda a la izquierda del rótulo. Dibujá siempre dentro de alguno de los dos.
+    """
+    return sheet_mod.create_sheet(
+        sheet_format=sheet_format,
+        scale_denominator=scale_denominator,
+        model_units=model_units,
+        origin_x=origin_x,
+        origin_y=origin_y,
+        project=project,
+        location=location,
+        client=client,
+        content=content,
+        drawn_by=drawn_by,
+        reviewed_by=reviewed_by,
+        date=date,
+        sheet_number=sheet_number,
+        width_mm=width_mm or None,
+        height_mm=height_mm or None,
+    )
+
+
+# ------------------------------------------------------- Arquitectura
+
+@mcp.tool()
+def create_walls(
+    points: list[list[float]],
+    thickness: float = 0.15,
+    closed: bool = False,
+    openings: Optional[list[dict[str, Any]]] = None,
+    layer: str = "MUROS",
+    lineweight: int = 50,
+) -> dict[str, Any]:
+    """Muros con ESPESOR REAL (doble línea) a lo largo de un eje, con los huecos
+    de puertas y ventanas ya recortados. Es la tool para dibujar muros — no uses
+    create_line, que da una línea sola sin espesor.
+
+    points: el eje por donde pasa el CENTRO del muro, [[x,y], ...]. Las esquinas
+    se resuelven a inglete, así que dos tramos que se cruzan cierran limpio.
+    thickness: espesor en unidades del modelo (dibujando en metros, un muro de
+    15cm es 0.15; un muro de tabique de 28cm, 0.28).
+    closed: True para un perímetro cerrado (el último punto se une con el primero).
+    layer / lineweight: los muros cortados son el trazo más grueso del plano
+    después del cajón; 50 es lo normal.
+
+    openings: lista de huecos, cada uno un dict:
+      {"distance": 1.2, "width": 0.9, "type": "door", "swing": "left", "side": "left"}
+      - distance: a qué distancia del ARRANQUE del eje está el CENTRO del hueco,
+        medida a lo largo del muro (si el muro dobla, la distancia sigue la
+        vuelta). Poné "centered": false para que sea el borde en vez del centro.
+      - width: ancho del hueco (puerta de 0.90, ventana de 1.50...).
+      - type: "door" dibuja hoja + arco de abatimiento; "window" dibuja el
+        vidrio; "pass" deja el vano limpio sin símbolo.
+      - swing: de qué jamba cuelga la puerta, "left" (la del arranque) o "right".
+      - side: hacia qué lado abre, "left" o "right" respecto del sentido del eje.
+
+    Devuelve los handles de cada tramo de muro y de cada símbolo. Si un hueco se
+    sale del muro o dos huecos se pisan, tira un error explicando el problema en
+    vez de dibujar algo roto."""
+    return arch_mod.create_walls(
+        points=points, thickness=thickness, closed=closed,
+        openings=openings, layer=layer, lineweight=lineweight,
+    )
+
+
+@mcp.tool()
+def create_axis_grid(
+    x_positions: Optional[list[float]] = None,
+    y_positions: Optional[list[float]] = None,
+    x_min: float = 0.0, y_min: float = 0.0,
+    x_max: float = 0.0, y_max: float = 0.0,
+    extension: float = 0.0,
+    bubble_radius: float = 0.0,
+    text_height: float = 0.0,
+    layer: str = "EJES",
+) -> dict[str, Any]:
+    """Ejes estructurales con sus globos: los verticales numerados 1, 2, 3... y
+    los horizontales con letras A, B, C..., en línea de eje y trazo.
+
+    x_positions: coordenadas X de los ejes verticales. y_positions: coordenadas
+    Y de los horizontales. Se dibujan pasados del dibujo, con globo en los dos
+    extremos.
+    x_min/x_max/y_min/y_max: extensión del dibujo, si querés que los ejes lleguen
+    más allá de lo que abarcan los propios ejes.
+    extension, bubble_radius, text_height: en unidades del modelo. Si los dejás
+    en 0 se calculan proporcionales al tamaño de la grilla, que suele estar bien.
+
+    Llamala DESPUÉS de create_walls, con las coordenadas de los ejes de los
+    muros portantes."""
+    return arch_mod.create_axis_grid(
+        x_positions=x_positions, y_positions=y_positions,
+        x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max,
+        extension=extension, bubble_radius=bubble_radius,
+        text_height=text_height, layer=layer,
+    )
 
 
 # ---------------------------------------------------------------- Geometría

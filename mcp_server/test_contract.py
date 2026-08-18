@@ -21,8 +21,13 @@ HANDLERS = os.path.join(HERE, "..", "plugin", "AutoCadMcpPlugin", "Handlers.cs")
 def main() -> int:
     server_src = io.open(SERVER, encoding="utf-8").read()
     handlers_src = io.open(HANDLERS, encoding="utf-8").read()
+    # sheet.py compone tools basicas, asi que tambien invoca comandos.
+    composed = "".join(
+        io.open(os.path.join(HERE, name), encoding="utf-8").read()
+        for name in ("sheet.py", "arch.py")
+    )
 
-    called = set(re.findall(r'acad\.call\(\s*"([a-z_]+)"', server_src))
+    called = set(re.findall(r'acad\.call\(\s*"([a-z_]+)"', server_src + composed))
     handled = set(re.findall(r'case\s+"([a-z_]+)"\s*:', handlers_src))
     exposed = set(re.findall(r"@mcp\.tool\(\)\s*\ndef\s+([a-z_]+)", server_src))
 
@@ -44,7 +49,8 @@ def main() -> int:
 
     # Toda tool MCP deberia terminar en al menos un acad.call.
     silent = sorted(t for t in exposed if not re.search(
-        r"def\s+" + t + r"\b[\s\S]{0,2000}?acad\.call", server_src))
+        r"def\s+" + t + r"\b[\s\S]{0,2000}?(acad\.call|sheet_mod\.|arch_mod\.)",
+        server_src))
     if silent:
         problems.append("Tools que no llaman al plugin: " + ", ".join(silent))
 

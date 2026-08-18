@@ -76,7 +76,10 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 python test_contract.py   # no necesita AutoCAD: chequea server.py <-> Handlers.cs
+python test_geom.py       # tampoco: geometria de muros (inglete, tramos)
+python test_arch.py       # tampoco: muros, huecos, abatimientos, ejes
 python smoke_test.py      # este si: dibuja sobre el dibujo abierto
+python demo_plan.py       # este tambien: plano completo de punta a punta
 ```
 
 > **El `.venv` no se copia entre máquinas.** Adentro guarda la ruta absoluta al
@@ -106,6 +109,9 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 
 | Categoría | Tool | Qué hace |
 |---|---|---|
+| **Lámina** | **`create_sheet`** | **Cajón (marco + márgenes) y cuadro de rotulación con los datos de la obra. Es el primer paso de todo plano: devuelve el área útil donde va el dibujo** |
+| **Arquitectura** | **`create_walls`** | **Muros con espesor real (doble línea), esquinas a inglete y huecos de puertas/ventanas ya recortados** |
+| | `create_axis_grid` | Ejes estructurales con globos: verticales 1,2,3 y horizontales A,B,C |
 | Geometría | `create_line` | Línea entre dos puntos 3D |
 | | `create_polyline` | Polilínea 2D a partir de una lista de puntos, abierta o cerrada |
 | | `create_circle` | Círculo por centro y radio |
@@ -128,6 +134,86 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | | `get_drawing_info` | Nombre de archivo, unidades, capa actual, cantidad de entidades |
 | Vista | `zoom_extents` | Zoom a extensión completa (stub simple vía línea de comandos) |
 | | `set_display_options` | Activa/desactiva la visualización de grosores (LWDISPLAY) y fija el grosor por defecto (LWDEFAULT) |
+
+## La lámina: cajón y rotulación
+
+Todo plano arranca con `create_sheet`, que dibuja el **cajón** (borde de hoja +
+marco con márgenes, 25mm a la izquierda para encuadernar) y el **cuadro de
+rotulación** abajo a la derecha:
+
+```
+OBRA            <nombre de la obra>
+UBICACIÓN       <dirección>
+PROPIETARIO     <cliente>
+CONTENIDO       <qué muestra esta lámina>
+ESCALA │ FECHA │ DIBUJÓ │ REVISÓ │ LÁMINA
+```
+
+Los campos vacíos salen como celda en blanco para llenar a mano.
+
+El formato se piensa en **milímetros de papel** (un A1 son 841x594mm impresos) y
+la tool los convierte a unidades del modelo según la escala y la unidad en la
+que dibujás:
+
+```
+unidades_modelo = mm_papel × escala ÷ mm_por_unidad
+```
+
+Un A1 a 1:100 dibujando en metros mide 84.1 x 59.4 unidades; el mismo A1 a 1:100
+en milímetros mide 84100 x 59400. Por eso `create_sheet` pide `model_units`
+(`m`, `cm` o `mm`) — sin eso el cajón sale mil veces más grande o más chico que
+el dibujo.
+
+Devuelve el **área útil** (`drawArea`): el rectángulo donde entra el dibujo, ya
+descontando márgenes y rótulo. Para varias láminas, repetir la llamada con
+`origin_x` corrido.
+
+Está implementado en Python ([`mcp_server/sheet.py`](mcp_server/sheet.py))
+componiendo las tools básicas, no como comando del plugin — así el diseño del
+rótulo se cambia sin recompilar el DLL. Para iterarlo sin AutoCAD:
+
+```powershell
+python mcp_server\preview_sheet.py salida.svg   # solo el cajon + rotulo
+python mcp_server\preview_plan.py  salida.svg   # un plano completo
+```
+
+que mockean el socket y renderizan a un SVG.
+
+## Muros, puertas y ventanas
+
+`create_walls` es la tool para dibujar muros — no `create_line`, que da una
+línea sola sin espesor. Recibe el eje por donde pasa el **centro** del muro y su
+espesor, y resuelve:
+
+- **Las esquinas a inglete**: dos tramos que se cruzan cierran limpio, sin
+  escalón ni superposición. La matemática está en
+  [`mcp_server/geom.py`](mcp_server/geom.py) y tiene sus tests.
+- **Los huecos**: cada puerta o ventana parte el muro en tramos, así que el vano
+  queda realmente abierto en vez de tener el símbolo dibujado encima.
+- **Los símbolos**: la puerta sale con su hoja y su arco de abatimiento (que
+  barre 90°, no 270 — hay un test para eso); la ventana, con el vidrio.
+
+```python
+create_walls(
+    points=[[0,0], [9,0], [9,7], [0,7]],
+    thickness=0.15,
+    closed=True,
+    openings=[
+        {"distance": 2.0, "width": 0.90, "type": "door",
+         "swing": "left", "side": "left"},
+        {"distance": 5.5, "width": 1.50, "type": "window"},
+    ],
+)
+```
+
+`distance` se mide **a lo largo del eje** desde el arranque: si el muro dobla,
+la distancia sigue la vuelta. En un perímetro cerrado, el tramo que cruza el
+punto de arranque se fusiona para que no quede una junta falsa ahí. Si un hueco
+se sale del muro o dos se pisan, tira un error explicando qué pasó en vez de
+dibujar algo roto.
+
+`create_axis_grid` agrega los ejes estructurales con sus globos, en línea de eje
+y trazo.
 
 ## Grosores de línea (por qué se veía todo fino)
 
@@ -172,6 +258,13 @@ otra máquina):
 - `attach_image` (API de `RasterImageDef`/`RasterImage`, la más áspera de toda la tanda).
 - `create_hatch` y `create_leader`.
 - `offset_entity` en curvas con más de un resultado posible (arcos cerrados, etc.).
+
+## Convenciones de dibujo
+
+[`CLAUDE.md`](CLAUDE.md) tiene las reglas que sigue Claude al dibujar: empezar
+siempre por `create_sheet`, respetar el área útil, la jerarquía de grosores, una
+capa por tipo de elemento y cómo dimensionar textos y cotas según la escala.
+Claude Code lo lee solo al abrir el proyecto.
 
 ## Notas de diseño
 
