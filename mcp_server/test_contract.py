@@ -47,9 +47,11 @@ def main() -> int:
             + ", ".join(orphan)
         )
 
-    # Toda tool MCP deberia terminar en al menos un acad.call.
+    # Toda tool MCP deberia terminar en al menos un acad.call. La ventana
+    # es amplia a proposito: un docstring largo es deseable y no tiene
+    # por que hacer fallar el chequeo.
     silent = sorted(t for t in exposed if not re.search(
-        r"def\s+" + t + r"\b[\s\S]{0,2000}?(acad\.call|sheet_mod\.|arch_mod\.|fur_mod\.|ann_mod\.|civil_mod\.)",
+        r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|sheet_mod\.|arch_mod\.|fur_mod\.|ann_mod\.|civil_mod\.)",
         server_src))
     if silent:
         problems.append("Tools que no llaman al plugin: " + ", ".join(silent))

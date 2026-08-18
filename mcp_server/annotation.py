@@ -200,7 +200,7 @@ def create_legend(x: float, y: float, items: list[dict[str, Any]],
 def create_stationing(points: list[list[float]], interval: float,
                       text_height: float, tick: float = 0.0,
                       start_station: float = 0.0, closed: bool = False,
-                      label_every: int = 1,
+                      label_every: int = 1, station_format: str = "km",
                       layer: str = LAYER_STATION) -> dict[str, Any]:
     """Marcas de cadenamiento cada 'interval' metros sobre un eje.
 
@@ -228,7 +228,11 @@ def create_stationing(points: list[list[float]], interval: float,
 
         if i % max(1, label_every) == 0:
             estacion = start_station + d
-            etiqueta = f"{int(estacion // 1000)}+{estacion % 1000:06.2f}"
+            if station_format == "plain":
+                # Como se rotula una calle corta: 0.00, 20.00, 40.00...
+                etiqueta = f"{estacion:.2f}"
+            else:
+                etiqueta = f"{int(estacion // 1000)}+{estacion % 1000:06.2f}"
             seg, _ = axis.segment_at(d)
             u = axis.dirs[seg]
             ang = math.degrees(math.atan2(u[1], u[0]))
@@ -255,6 +259,7 @@ def create_stationing(points: list[list[float]], interval: float,
 def create_layer_section(x: float, y: float, width: float,
                          layers: list[dict[str, Any]], text_height: float,
                          title: str = "", leader_length: float = 0.0,
+                         draw_scale: float = 1.0, dimension_side: bool = True,
                          layer: str = LAYER_SECTION) -> dict[str, Any]:
     """Corte transversal por capas, de arriba hacia abajo.
 
@@ -264,14 +269,22 @@ def create_layer_section(x: float, y: float, width: float,
     (x, y) es la esquina SUPERIOR izquierda de la primera capa.
     layers: [{"name": "CARPETA ASFÁLTICA", "thickness": 0.05,
               "pattern": "ANSI31", "scale": 0.3, "color_index": 8}]
+
+    thickness va SIEMPRE en medidas reales de obra (0.15 = 15 cm). draw_scale
+    agranda el dibujo sin tocar lo que dicen los rótulos: en una lámina a 1:200
+    un firme de 33 cm sería invisible, así que se dibuja con draw_scale=10 y
+    igual queda rotulado "e=15 cm".
     """
     if not layers:
         raise ValueError("El corte necesita al menos una capa.")
+    if draw_scale <= 0:
+        raise ValueError("draw_scale tiene que ser > 0.")
 
     _layer(layer)
     lead = leader_length or width * 0.25
     cursor = y
     dibujadas = []
+    dim_x = x - text_height * 0.8
 
     for capa in layers:
         try:
@@ -282,7 +295,7 @@ def create_layer_section(x: float, y: float, width: float,
         if espesor <= 0:
             raise ValueError(f"La capa '{capa.get('name')}' tiene espesor <= 0.")
 
-        base = cursor - espesor
+        base = cursor - espesor * draw_scale
         handle = _rect(x, base, x + width, cursor, layer, LW_BOX,
                        capa.get("color_index"))
         pattern = capa.get("pattern")
@@ -290,18 +303,31 @@ def create_layer_section(x: float, y: float, width: float,
             _hatch(handle, str(pattern), float(capa.get("scale", 1.0)), layer,
                    capa.get("color_index"))
 
-        # Línea guía y rótulo a la derecha, con el espesor en centímetros.
+        # Línea guía y rótulo a la derecha, con el espesor real en centímetros.
         medio = (cursor + base) / 2.0
         _line((x + width, medio), (x + width + lead, medio), layer, LW_GRID)
         etiqueta = f"{nombre}  e={espesor * 100:.0f} cm"
         _text(etiqueta, x + width + lead + text_height * 0.5,
               medio - text_height / 2.0, text_height, layer, LW_TEXT)
 
+        # Espesor acotado del lado izquierdo, como en un detalle de obra.
+        if dimension_side:
+            _line((dim_x, cursor), (x, cursor), layer, LW_GRID, 1)
+            _line((dim_x, base), (x, base), layer, LW_GRID, 1)
+            _line((dim_x, cursor), (dim_x, base), layer, LW_GRID, 1)
+            acad.call("create_text", {
+                "text": f"e={espesor * 100:.0f} cm",
+                "x": dim_x - text_height * 0.4,
+                "y": medio - text_height * 2.0, "z": 0.0,
+                "height": text_height * 0.8, "layer": layer,
+                "rotationDeg": 90.0, "lineweight": LW_TEXT, "colorIndex": 1,
+            })
+
         dibujadas.append({"name": nombre, "thickness": espesor,
                           "top": cursor, "bottom": base})
         cursor = base
 
-    total = y - cursor
+    total = sum(float(c["thickness"]) for c in layers)
     if title:
         _text(title.upper(), x, y + text_height * 1.2,
               text_height * 1.2, layer, LW_BOX)

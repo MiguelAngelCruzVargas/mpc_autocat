@@ -97,6 +97,18 @@ namespace AutoCadMcpPlugin
                 case "list_styles":
                     return StyleCommands.ListStyles(doc, pars);
 
+                // Cotas que no son la alineada
+                case "create_dimension_rotated":
+                    return DimensionCommands.Rotated(doc, pars);
+                case "create_dimension_radial":
+                    return DimensionCommands.Radial(doc, pars);
+                case "create_dimension_diametric":
+                    return DimensionCommands.Diametric(doc, pars);
+                case "create_dimension_angular":
+                    return DimensionCommands.Angular(doc, pars);
+                case "create_dimension_arc_length":
+                    return DimensionCommands.ArcLength(doc, pars);
+
                 // Medicion
                 case "measure_text":
                     return MeasureTextCommand.Run(doc, pars);

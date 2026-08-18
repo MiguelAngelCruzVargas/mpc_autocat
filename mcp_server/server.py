@@ -225,7 +225,11 @@ def label_rooms(rooms: list[dict[str, Any]], height: float,
 
 @mcp.tool()
 def create_road(points: list[list[float]], width: float = 7.00,
-                 curb_width: float = 0.40, sidewalk_width: float = 0.0,
+                 widths: Optional[list[list[float]]] = None,
+                 bulges: Optional[list[float]] = None,
+                 curb_width: float = 0.40,
+                 curb_segments: Optional[list[dict[str, Any]]] = None,
+                 sidewalk_width: float = 0.0,
                  closed: bool = False, draw_axis: bool = True,
                  pavement_pattern: Optional[str] = None,
                  pavement_scale: float = 1.0) -> dict[str, Any]:
@@ -235,10 +239,23 @@ def create_road(points: list[list[float]], width: float = 7.00,
     en curva no cierran. Usa el mismo offset con inglete que los muros.
 
     points: el eje por donde pasa el CENTRO de la calzada. Para una calle curva
-    poné suficientes puntos como para que el trazo siga la curva.
-    width: ancho de calzada de guarnición a guarnición (7.00 es lo típico en
-    calle urbana de doble sentido).
+    lo correcto es sacarlo de create_alignment y pasar también sus 'bulges', en
+    vez de aproximar la curva con muchos puntos.
+    bulges: un valor por vértice (de create_alignment). Con bulges el eje se
+    dibuja con arcos reales y el largo es el verdadero, no el de la poligonal.
+    width: ancho de calzada constante (7.00 es lo típico en calle urbana).
+    widths: para calle que se angosta, [[distancia, ancho], ...] medido a lo
+    largo del eje — p.ej. [[0, 7.0], [100, 4.5], [147, 4.0]] interpola entre
+    esos puntos. Si lo pasás, ignora 'width' y el área se integra de verdad en
+    vez de multiplicar largo por ancho.
     curb_width: ancho de la guarnición a cada lado, por fuera de la calzada.
+    curb_segments: qué tramo lleva guarnición y de qué lado, cuando no va
+    completa de los dos — lo normal si de un lado hay un predio, un talud o una
+    obra existente:
+      [{"side": "left"}, {"side": "right", "from": 0, "to": 105}]
+    'side' es 'left', 'right' o 'both'; 'from'/'to' son cadenamientos sobre el
+    eje y por defecto abarcan todo. Sin esto los metros lineales del resumen
+    salen siempre 2 x largo, que casi nunca es lo que se construye.
     sidewalk_width: banqueta por fuera de la guarnición; 0 la omite.
     pavement_pattern: rayado de la calzada, p.ej. 'AR-CONC' para concreto
     hidráulico. Sin patrón queda solo el contorno.
@@ -247,9 +264,35 @@ def create_road(points: list[list[float]], width: float = 7.00,
     pavementArea (m2), curbLength (ml de guarnición, contando los dos lados) y
     sidewalkArea — que es lo que va al resumen de obra."""
     return civil_mod.create_road(
-        points=points, width=width, curb_width=curb_width,
+        points=points, width=width, widths=widths, bulges=bulges,
+        curb_width=curb_width, curb_segments=curb_segments,
         sidewalk_width=sidewalk_width, closed=closed, draw_axis=draw_axis,
         pavement_pattern=pavement_pattern, pavement_scale=pavement_scale)
+
+
+@mcp.tool()
+def create_alignment(start_x: float, start_y: float, start_bearing_deg: float,
+                      elements: list[dict[str, Any]]) -> dict[str, Any]:
+    """Eje definido como se PROYECTA una vialidad: tangentes y curvas de radio.
+
+    No hace falta saber las coordenadas de los vértices. Se describe el
+    recorrido y el alineamiento calcula la geometría exacta, con arcos reales
+    (bulges), no una poligonal aproximada a ojo.
+
+    start_bearing_deg: rumbo inicial en grados matemáticos (0 = hacia +X,
+    90 = hacia +Y, -90 = hacia abajo), antihorario.
+    elements, en orden:
+      {"type": "tangent", "length": 40}
+      {"type": "curve", "radius": 90, "length": 107, "direction": "left"}
+      {"type": "curve", "radius": 90, "angle_deg": 68, "direction": "right"}
+
+    Devuelve 'points' y 'bulges' para pasarle a create_road o create_polyline,
+    el largo total, y el cadenamiento de cada punto notable con el radio, el
+    desarrollo, la tangente y la cuerda de cada curva — que es lo que se
+    replantea en obra."""
+    return civil_mod.create_alignment(
+        start_x=start_x, start_y=start_y,
+        start_bearing_deg=start_bearing_deg, elements=elements)
 
 
 @mcp.tool()
@@ -319,7 +362,7 @@ def create_legend(x: float, y: float, items: list[dict[str, Any]],
 def create_stationing(points: list[list[float]], interval: float,
                        text_height: float, tick: float = 0.0,
                        start_station: float = 0.0, closed: bool = False,
-                       label_every: int = 1,
+                       label_every: int = 1, station_format: str = "km",
                        layer: str = "CADENAMIENTO") -> dict[str, Any]:
     """Cadenamiento: marcas cada N metros sobre un eje, rotuladas 0+000.
 
@@ -332,17 +375,21 @@ def create_stationing(points: list[list[float]], interval: float,
     label_every: rotula 1 de cada N marcas, para no saturar cuando el intervalo
     es corto.
     start_station: cadenamiento del punto de arranque, por si el tramo no
-    empieza en 0."""
+    empieza en 0.
+    station_format: 'km' rotula 0+020.00 (carretera); 'plain' rotula 20.00, que
+    es como se marca una calle corta."""
     return ann_mod.create_stationing(points=points, interval=interval,
                                      text_height=text_height, tick=tick,
                                      start_station=start_station, closed=closed,
-                                     label_every=label_every, layer=layer)
+                                     label_every=label_every,
+                                     station_format=station_format, layer=layer)
 
 
 @mcp.tool()
 def create_layer_section(x: float, y: float, width: float,
                           layers: list[dict[str, Any]], text_height: float,
                           title: str = "", leader_length: float = 0.0,
+                          draw_scale: float = 1.0, dimension_side: bool = True,
                           layer: str = "CORTES") -> dict[str, Any]:
     """Corte transversal por capas, con su rayado y el espesor anotado.
 
@@ -354,10 +401,18 @@ def create_layer_section(x: float, y: float, width: float,
     hacia abajo en el orden en que pases las capas.
     layers: [{"name": "CARPETA ASFÁLTICA", "thickness": 0.05,
               "pattern": "ANSI31", "scale": 0.3, "color_index": 8}]
-    thickness va en unidades del modelo (0.20 = 20 cm dibujando en metros)."""
+    thickness va SIEMPRE en medidas reales de obra (0.15 = 15 cm).
+    draw_scale agranda el dibujo sin tocar los rótulos: en una lámina a 1:200
+    un firme de 33 cm sería invisible, así que se dibuja con draw_scale=10 y
+    los textos igual dicen "e=15 cm". Es la forma de meter un detalle a 1:20 en
+    una lámina a 1:200 sin usar viewports.
+    dimension_side: acota el espesor de cada capa del lado izquierdo, como en
+    un detalle constructivo."""
     return ann_mod.create_layer_section(x=x, y=y, width=width, layers=layers,
                                         text_height=text_height, title=title,
-                                        leader_length=leader_length, layer=layer)
+                                        leader_length=leader_length,
+                                        draw_scale=draw_scale,
+                                        dimension_side=dimension_side, layer=layer)
 
 
 # ---------------------------------------------------------------- Geometría
@@ -383,13 +438,20 @@ def create_line(
 def create_polyline(
     points: list[list[float]], closed: bool = False, layer: Optional[str] = None,
     lineweight: Optional[int] = None, color_index: Optional[int] = None,
+    bulges: Optional[list[float]] = None,
 ) -> dict[str, Any]:
     """Crea una polilínea 2D a partir de una lista de puntos [[x, y], ...].
+
+    bulges: opcional, UN valor por vértice — la tangente de un cuarto del ángulo
+    del arco que va de ese vértice al siguiente; 0 es tramo recto. Es la forma
+    de trazar una polilínea con curvas reales (un eje de calle, una curva de
+    nivel) en lugar de aproximarla con muchos segmentos rectos. El bulge de un
+    arco de 90° es 0.4142 (tan(90/4)); positivo gira antihorario.
 
     lineweight: grosor SOLO de esta polilínea, en centésimas de mm (50 = 0.50mm);
     si se omite hereda el de la capa. color_index: color ACI 1-255."""
     return acad.call("create_polyline", {
-        "points": points, "closed": closed, "layer": layer,
+        "points": points, "closed": closed, "layer": layer, "bulges": bulges,
         **_style(lineweight, color_index),
     })
 
@@ -486,6 +548,109 @@ def create_dimension(
         "dimLineX": dim_line_x, "dimLineY": dim_line_y, "layer": layer,
         "scale": scale, "style": style,
         **_style(lineweight, color_index),
+    })
+
+
+@mcp.tool()
+def create_dimension_rotated(x1: float, y1: float, x2: float, y2: float,
+                              dim_line_x: float, dim_line_y: float,
+                              angle_deg: float = 0.0,
+                              layer: Optional[str] = None,
+                              style: Optional[str] = None,
+                              scale: Optional[float] = None,
+                              text: Optional[str] = None,
+                              lineweight: Optional[int] = None) -> dict[str, Any]:
+    """Cota lineal PROYECTADA sobre una dirección: mide solo la componente en
+    ese ángulo, no la distancia recta entre los puntos.
+
+    angle_deg=0 mide la separación horizontal, 90 la vertical. Es la que se usa
+    para acotar anchos y separaciones en planta cuando los puntos no están
+    alineados con el eje que interesa — create_dimension (alineada) daría la
+    hipotenusa.
+
+    text: sobrescribe el número medido, para poner "VARIABLE" o un valor de
+    proyecto."""
+    return acad.call("create_dimension_rotated", {
+        "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+        "dimLineX": dim_line_x, "dimLineY": dim_line_y, "angleDeg": angle_deg,
+        "layer": layer, "style": style, "scale": scale, "text": text,
+        "lineweight": lineweight, "colorIndex": None,
+    })
+
+
+@mcp.tool()
+def create_dimension_radial(handle: str, leader_length_factor: float = 1.5,
+                             layer: Optional[str] = None,
+                             style: Optional[str] = None,
+                             scale: Optional[float] = None,
+                             text: Optional[str] = None,
+                             lineweight: Optional[int] = None) -> dict[str, Any]:
+    """Cota de radio sobre un Arc o Circle existente, por su handle.
+
+    En un eje de calle o una curva de nivel el radio es EL dato de proyecto:
+    sin él, el plano no se puede replantear en obra."""
+    return acad.call("create_dimension_radial", {
+        "handle": handle, "leaderLengthFactor": leader_length_factor,
+        "layer": layer, "style": style, "scale": scale, "text": text,
+        "lineweight": lineweight, "colorIndex": None,
+    })
+
+
+@mcp.tool()
+def create_dimension_diametric(handle: str, leader_length_factor: float = 1.5,
+                                layer: Optional[str] = None,
+                                style: Optional[str] = None,
+                                scale: Optional[float] = None,
+                                text: Optional[str] = None,
+                                lineweight: Optional[int] = None) -> dict[str, Any]:
+    """Cota de diámetro sobre un Circle o Arc existente. Es como se acota un
+    tubo, un registro o una perforación — por diámetro, no por radio."""
+    return acad.call("create_dimension_diametric", {
+        "handle": handle, "leaderLengthFactor": leader_length_factor,
+        "layer": layer, "style": style, "scale": scale, "text": text,
+        "lineweight": lineweight, "colorIndex": None,
+    })
+
+
+@mcp.tool()
+def create_dimension_angular(vertex_x: float, vertex_y: float,
+                              x1: float, y1: float, x2: float, y2: float,
+                              arc_x: float, arc_y: float,
+                              layer: Optional[str] = None,
+                              style: Optional[str] = None,
+                              scale: Optional[float] = None,
+                              text: Optional[str] = None,
+                              lineweight: Optional[int] = None) -> dict[str, Any]:
+    """Cota angular entre dos rectas que salen de un vértice común.
+
+    vertex_x/y es el vértice; (x1,y1) y (x2,y2) un punto sobre cada recta;
+    arc_x/y por dónde pasa el arco de la cota (define el lado y el radio).
+    Es el ángulo entre tangentes de una curva, o la deflexión de un eje."""
+    return acad.call("create_dimension_angular", {
+        "vertexX": vertex_x, "vertexY": vertex_y,
+        "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+        "arcX": arc_x, "arcY": arc_y,
+        "layer": layer, "style": style, "scale": scale, "text": text,
+        "lineweight": lineweight, "colorIndex": None,
+    })
+
+
+@mcp.tool()
+def create_dimension_arc_length(handle: str, arc_x: float, arc_y: float,
+                                 layer: Optional[str] = None,
+                                 style: Optional[str] = None,
+                                 scale: Optional[float] = None,
+                                 text: Optional[str] = None,
+                                 lineweight: Optional[int] = None) -> dict[str, Any]:
+    """Cota de DESARROLLO de un arco: cuánto mide recorrido, no en línea recta.
+
+    Es el dato con el que se cuantifica una curva — los metros de guarnición de
+    una curva de calle son su desarrollo, no la cuerda. Devuelve además el radio
+    y el ángulo de barrido."""
+    return acad.call("create_dimension_arc_length", {
+        "handle": handle, "arcX": arc_x, "arcY": arc_y,
+        "layer": layer, "style": style, "scale": scale, "text": text,
+        "lineweight": lineweight, "colorIndex": None,
     })
 
 
@@ -658,7 +823,16 @@ def list_entities(entity_type: Optional[str] = None, limit: int = 200) -> dict[s
 @mcp.tool()
 def get_entity(handle: str) -> dict[str, Any]:
     """Devuelve las propiedades completas de una entidad (geometría, capa, color,
-    texto/atributos si aplica) a partir de su handle."""
+    texto/atributos si aplica) a partir de su handle.
+
+    En una Polyline devuelve además 'bulges' (uno por vértice), 'hasArcs' y
+    'length'. Sin los bulges una polilínea curva se leería como una quebrada y
+    el largo no daría — que es lo que pasa al leer casi cualquier plano de obra
+    civil hecho por otra persona.
+
+    En un Hatch devuelve 'patternName', 'patternScale' y 'patternAngleDeg', que
+    es lo que hace falta para replicar con qué textura está resuelto un material
+    en un plano ajeno."""
     return acad.call("get_entity", {"handle": handle})
 
 
