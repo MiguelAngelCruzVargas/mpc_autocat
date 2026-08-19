@@ -732,6 +732,37 @@ def create_flow_arrow(points: list[list[float]], positions: list[float],
 
 
 @mcp.tool()
+def place_labels(labels: list[dict[str, Any]], height: float,
+                 layer: str = "TEXTOS", gap: float = 0.0,
+                 obstacles: Optional[list[list[float]]] = None,
+                 lineweight: int = 18,
+                 style: Optional[str] = None) -> dict[str, Any]:
+    """Rotula elementos ubicando cada texto donde NO pise lo ya dibujado.
+
+    ES LA TOOL PARA ROTULAR CUALQUIER COSA que no sea un ambiente (para eso
+    está label_rooms). Usala en vez de calcular la posición del texto a mano:
+    el rótulo encimado —el cadenamiento sobre la línea de eje, el dato de la
+    tubería sobre el cadenamiento, la etiqueta de la zapata cruzada con la
+    trabe— no es un error de cálculo, es no haber mirado lo que ya estaba.
+
+    labels: cada uno
+      {"text": "Z-2 / D-1", "box": [x0, y0, x1, y1]}  rotula al lado del elemento
+      {"text": "0+020", "x": 20.0, "y": 0.0}          rotula al lado del punto
+      Opcionales: "rotation" (grados) y "prefer" ('right', 'left', 'top',
+      'bottom'...) para probar ese lado primero.
+    gap: aire mínimo entre el texto y lo que esquiva; 0 usa medio alto de texto.
+    obstacles: cajas extra a esquivar, además de los muros y muebles que las
+    tools ya registraron solas.
+
+    Cada rótulo colocado queda registrado, así que el siguiente tampoco se le
+    encima. Los que no encuentren lugar salen igual —un elemento sin rotular es
+    peor— y se listan en 'cramped' con un aviso."""
+    return ann_mod.place_labels(
+        labels=labels, height=height, layer=layer, gap=gap,
+        obstacles=obstacles, lineweight=lineweight, style=style)
+
+
+@mcp.tool()
 def create_layer_section(x: float, y: float, width: float,
                           layers: list[dict[str, Any]], text_height: float,
                           title: str = "", leader_length: float = 0.0,

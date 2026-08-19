@@ -19,12 +19,47 @@ from typing import Optional
 import autocad_client as acad
 
 _EXISTING: Optional[set[str]] = None
+_TEXT_CHECKED = [False]
+
+# Fuente de fabrica de AutoCAD. No mapea acentos ni el simbolo de diametro:
+# "SECCION" sale bien pero "SECCIÓN" y "Ø 30" salen con cuadraditos, y no se
+# nota hasta abrir el DWG. Cualquier .ttf lo resuelve.
+FUENTE_DEFECTO = "txt"
+ESTILO_TEXTO = "MCP-ARIAL"
 
 
 def reset() -> None:
     """Olvida lo cacheado. Al cambiar de dibujo, o si se crearon capas afuera."""
     global _EXISTING
     _EXISTING = None
+    _TEXT_CHECKED[0] = False
+
+
+def ensure_text_style() -> Optional[str]:
+    """Si el dibujo sigue con la fuente de fabrica, pasa a una TrueType.
+
+    Se corre una sola vez por dibujo y NO pisa un estilo elegido a proposito:
+    solo actua cuando el estilo activo es el 'txt' que trae AutoCAD de fabrica,
+    que es el que rompe los acentos. Devuelve el estilo que dejo activo, o None
+    si no toco nada.
+    """
+    if _TEXT_CHECKED[0]:
+        return None
+    _TEXT_CHECKED[0] = True
+    try:
+        estilos = acad.call("list_styles", {}).get("textStyles", [])
+    except (acad.AutoCadError, KeyError, TypeError, AttributeError):
+        return None
+    activo = next((e for e in estilos if e.get("isCurrent")), None)
+    if not activo:
+        return None
+    fuente = str(activo.get("font", "")).lower().replace(".shx", "")
+    if fuente != FUENTE_DEFECTO:
+        return None      # alguien ya eligio; no se toca
+    acad.call("set_text_style", {
+        "name": ESTILO_TEXTO, "font": "arial.ttf", "height": 0.0,
+        "widthFactor": 1.0, "oblique": 0.0, "setCurrent": True})
+    return ESTILO_TEXTO
 
 
 def _existing() -> set[str]:

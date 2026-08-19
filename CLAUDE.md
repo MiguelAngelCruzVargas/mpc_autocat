@@ -187,6 +187,27 @@ un solo contorno y los cruces quedan en T y no en cajón. Devuelve además el á
 y el perímetro de mampostería. Hacerlo AL FINAL: el resultado es una Region y ya
 no admite editar vértices.
 
+## 6.bis Rotular: `place_labels`, nunca calculando la posición a mano
+
+Todo rótulo que no sea de ambiente va con **`place_labels`**, que busca a
+alrededor del elemento el primer lugar libre y registra el texto para que el
+siguiente tampoco se encime:
+
+```
+place_labels(labels=[{"text": "Z-2 / D-1", "box": [x0, y0, x1, y1]},
+                     {"text": "TL-1 (20x35)", "x": .., "y": .., "rotation": 90}],
+             height=<mm de papel x escala>)
+```
+
+Ubicar el texto con una cuenta —"el eje más 0.15"— es el error que se repitió
+en tres planos seguidos: el cadenamiento sobre la línea de eje, el dato de la
+tubería encima del cadenamiento, la etiqueta de la zapata cruzada con la
+trabe. Ninguno era un error de cálculo: era escribir sin mirar lo que ya
+estaba. `create_walls` y `place_furniture` registran su huella solos; lo demás
+se le pasa en `obstacles`.
+
+Revisá `cramped` en lo que devuelve: ahí van los que no encontraron lugar.
+
 ## 6. Mobiliario y rótulos
 
 `place_furniture` dibuja todas las piezas en UNA llamada: pasarle la lista
@@ -287,6 +308,14 @@ el dibujo queda una sola vez en el modelo y cada viewport lo muestra a su
 escala. Dentro del layout las coordenadas son milímetros de papel, y
 `create_viewport` necesita `model_units_per_mm` (1000 dibujando en metros) o la
 escala sale mil veces mal.
+
+## La fuente: nunca dejar `txt.shx`
+
+AutoCAD trae `txt` de fábrica y esa fuente **no mapea acentos ni el símbolo de
+diámetro**: "SECCIÓN" y "Ø 30 cm" salen con cuadraditos y no se nota hasta
+abrir el DWG. Las tools de anotación lo detectan y pasan a una TrueType solas
+la primera vez que escriben, pero **no pisan un estilo elegido a propósito** —
+si vas a usar uno propio, creálo con `set_text_style` antes de dibujar.
 
 ## Estilos antes que valores sueltos
 

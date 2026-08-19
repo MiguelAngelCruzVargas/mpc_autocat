@@ -32,6 +32,8 @@ LW_TEXT = 18
 def _layer(name: str, color: int = 7, lineweight: int = LW_BOX) -> None:
     # Solo si no existe: ver layers.py.
     layers.ensure(name, color, lineweight)
+    # Y de paso, que el dibujo no siga con la fuente que rompe los acentos.
+    layers.ensure_text_style()
 
 
 def _rect(x0: float, y0: float, x1: float, y1: float, layer: str,
@@ -464,6 +466,16 @@ def create_dimension_chain(
 
     _layer(layer, color=7, lineweight=lineweight)
 
+    # Que dos cadenas del mismo lado abarquen tramos distintos es el error que
+    # el lector detecta sumando: la de panos da 9.30 y la de ejes 9.00, y no
+    # hay forma de saber cual manda. Cada nivel tiene que cerrar contra el
+    # mismo total o decir explicitamente que mide otra cosa.
+    span = round(cortes[-1] - cortes[0], 3)
+    otros = [b for b in space.bands()
+             if b.get("what", "").startswith(f"cotas {side}")]
+    desacuerdo = [b for b in otros
+                  if abs(round(b.get("span", span), 3) - span) > 1e-3]
+
     handles, tramos, apretados = [], [], []
     minimo = space.paper(MIN_TRAMO_MM, upm)
     for a, b in pares:
@@ -483,7 +495,9 @@ def create_dimension_chain(
                               "length": round(largo, 3)})
 
     caja = space.band_box(side, reference, inicio, banda, cortes[0], cortes[-1])
-    space.reserve(*caja, what=f"cotas {side} ({len(handles)} tramos)")
+    banda_reservada = space.reserve(
+        *caja, what=f"cotas {side} ({len(handles)} tramos)")
+    banda_reservada["span"] = span
 
     resultado: dict[str, Any] = {
         "side": side, "offset": round(linea, 4),
@@ -499,6 +513,20 @@ def create_dimension_chain(
             scale=upm, style=style, layer=layer, lineweight=lineweight)  # noqa: E501
         resultado["totalChain"] = general
         resultado["total"] = round(cortes[-1] - cortes[0], 3)
+
+    if desacuerdo:
+        resultado["spanMismatch"] = [
+            {"otra": b["what"], "abarca": b["span"]} for b in desacuerdo]
+        resultado.setdefault("warning", "")
+        resultado["warning"] = (
+            (resultado["warning"] + " ") if resultado["warning"] else ""
+        ) + (
+            f"Esta cadena abarca {span:g} y en el lado '{side}' ya hay otra que "
+            "abarca "
+            + ", ".join(f"{b['span']:g}" for b in desacuerdo)
+            + ". Los tramos de una no van a sumar lo que dice la otra y el "
+            "lector no sabe cual manda: acota los dos niveles entre los mismos "
+            "extremos, o ponele su propia cota total a cada uno.")
 
     if apretados:
         # No se falla: la cota se dibuja igual, porque el dato es correcto.
@@ -579,3 +607,162 @@ def create_flow_arrow(points: list[list[float]], positions: list[float],
 
     return {"arrows": dibujadas, "size": s, "axisLength": largo,
             "reversed": bool(reverse)}
+
+
+# ------------------------------------------------- rotulos de elemento
+
+LAYER_LABELS = "TEXTOS"
+
+# Alrededor de que punto se prueba, en orden de preferencia. Cada uno es
+# (dx, dy) en fracciones del elemento mas el aire: derecha primero porque el
+# texto crece hacia la derecha y ahi es donde menos estorba.
+_LADOS = (("right", 1, 0), ("left", -1, 0), ("top", 0, 1), ("bottom", 0, -1),
+          ("top-right", 1, 1), ("bottom-right", 1, -1),
+          ("top-left", -1, 1), ("bottom-left", -1, -1))
+
+
+def place_labels(labels: list[dict[str, Any]], height: float,
+                 layer: str = LAYER_LABELS, gap: float = 0.0,
+                 obstacles: Optional[list[list[float]]] = None,
+                 lineweight: int = LW_TEXT,
+                 style: Optional[str] = None) -> dict[str, Any]:
+    """Rotula elementos ubicando cada texto donde NO pise lo ya dibujado.
+
+    Es lo que faltaba y por lo que los rotulos se venian calculando a mano,
+    plano por plano: el numero de cadenamiento sobre la linea de eje, el dato
+    de la tuberia encima del cadenamiento, la etiqueta de la zapata cruzada
+    con la trabe. Ninguno de esos era un error de calculo: era que nadie
+    miraba lo que ya estaba dibujado antes de escribir.
+
+    label_rooms hace esto mismo para ambientes. Esta es la version para
+    cualquier elemento: se le pasa la caja del elemento y su texto, y busca a
+    su alrededor el primer lugar libre.
+
+    labels: cada uno
+      {"text": "Z-2 / D-1", "box": [x0, y0, x1, y1]}   rotula al lado de la caja
+      {"text": "0+020", "x": 20.0, "y": 0.0}           rotula al lado del punto
+      Opcionales por rotulo: "rotation" (grados, el texto sale girado y la
+      busqueda se hace en el marco girado), "prefer" (uno de 'right', 'left',
+      'top', 'bottom'... para probar ese lado primero).
+    gap: aire minimo entre el texto y lo que esquiva. 0 = medio alto de texto.
+    obstacles: cajas extra a esquivar, ademas de lo que ya esta registrado.
+
+    Cada rotulo que se coloca queda registrado, asi que el siguiente tampoco
+    se le encima. Los que no encontraron lugar salen igual —un elemento sin
+    rotular es peor— pero se listan en 'cramped' para poder moverlos.
+    """
+    if not labels:
+        raise ValueError("No hay nada que rotular.")
+    if height <= 0:
+        raise ValueError("height tiene que ser > 0.")
+
+    aire = gap if gap > 0 else height * 0.5
+    extra = [{"x0": min(b[0], b[2]), "y0": min(b[1], b[3]),
+              "x1": max(b[0], b[2]), "y1": max(b[1], b[3]), "what": "obstaculo"}
+             for b in (obstacles or [])]
+
+    _layer(layer, color=7, lineweight=lineweight)
+
+    puestos, apretados = [], []
+    for i, item in enumerate(labels, start=1):
+        texto = str(item.get("text", ""))
+        if not texto:
+            continue
+        rot = float(item.get("rotation", 0.0))
+        ancho, alto = _w(texto, height), height
+
+        if "box" in item:
+            b = item["box"]
+            caja = (min(b[0], b[2]), min(b[1], b[3]),
+                    max(b[0], b[2]), max(b[1], b[3]))
+        else:
+            x, y = float(item["x"]), float(item["y"])
+            caja = (x, y, x, y)
+            # Un punto que cae ADENTRO de algo ya dibujado -el cadenamiento
+            # sobre el eje, el rotulo de la trabe sobre la trabe- no tiene
+            # salida si las alternativas se miden desde el punto: todas caen
+            # dentro del mismo elemento. Se busca desde el borde de lo que lo
+            # contiene, que es de donde hay que despegarse.
+            dentro = space.hits(x, y, x, y)
+            for h in dentro:
+                caja = (min(caja[0], h["x0"]), min(caja[1], h["y0"]),
+                        max(caja[2], h["x1"]), max(caja[3], h["y1"]))
+
+        elegido, libre = None, False
+        orden = list(_LADOS)
+        preferido = item.get("prefer")
+        if preferido:
+            orden.sort(key=lambda l: l[0] != preferido)
+
+        for _, sx, sy in orden:
+            base = _anclar(caja, sx, sy, ancho, alto, aire, rot)
+            bbox = _caja_texto(base, ancho, alto, rot)
+            estorbos = space.hits(*bbox, margin=0.0)
+            estorbos += [h for h in extra
+                         if h["x0"] < bbox[2] and h["x1"] > bbox[0]
+                         and h["y0"] < bbox[3] and h["y1"] > bbox[1]]
+            if not estorbos:
+                elegido, libre = (base, bbox), True
+                break
+            if elegido is None:
+                elegido = (base, bbox)
+
+        (bx, by), bbox = elegido
+        acad.call("create_text", {
+            "text": texto, "x": bx, "y": by, "z": 0.0, "height": height,
+            "layer": layer, "rotationDeg": rot, "style": style,
+            "lineweight": lineweight, "colorIndex": None,
+        })
+        space.track(*bbox, what=f"rotulo {texto}")
+        registro = {"text": texto, "x": round(bx, 4), "y": round(by, 4),
+                    "rotation": rot, "fits": libre}
+        puestos.append(registro)
+        if not libre:
+            apretados.append(registro)
+
+    resultado: dict[str, Any] = {"labels": puestos, "count": len(puestos)}
+    if apretados:
+        resultado["cramped"] = apretados
+        resultado["warning"] = (
+            f"{len(apretados)} de {len(puestos)} rotulo(s) no encontraron lugar "
+            "libre y quedaron encima de algo: "
+            + ", ".join(f"{a['text']!r}" for a in apretados)
+            + ". Hay que darles mas aire, achicar el texto o sacarlos con leader.")
+    return resultado
+
+
+def _anclar(caja, sx: int, sy: int, ancho: float, alto: float,
+            aire: float, rot: float) -> tuple[float, float]:
+    """Punto de insercion del texto para el lado (sx, sy) de la caja."""
+    x0, y0, x1, y1 = caja
+    # En el marco del texto: 'ancho' corre segun la rotacion y 'alto' es
+    # perpendicular. Con rot=90 el texto sube y ocupa hacia -x.
+    horizontal = abs(math.cos(math.radians(rot))) > 0.5
+    largo_x, largo_y = (ancho, alto) if horizontal else (alto, ancho)
+
+    if sx > 0:
+        bx = x1 + aire
+    elif sx < 0:
+        bx = x0 - aire - largo_x
+    else:
+        bx = (x0 + x1) / 2.0 - largo_x / 2.0
+    if sy > 0:
+        by = y1 + aire
+    elif sy < 0:
+        by = y0 - aire - largo_y
+    else:
+        by = (y0 + y1) / 2.0 - largo_y / 2.0
+
+    # create_text ancla en la base izquierda del texto sin girar; con rot=90
+    # el cuerpo crece hacia -x, asi que hay que correr la insercion.
+    if not horizontal:
+        bx += alto
+    return (bx, by)
+
+
+def _caja_texto(base: tuple[float, float], ancho: float, alto: float,
+                rot: float) -> tuple[float, float, float, float]:
+    bx, by = base
+    if abs(math.cos(math.radians(rot))) > 0.5:
+        return (bx, by, bx + ancho, by + alto)
+    return (bx - alto, by, bx, by + ancho)

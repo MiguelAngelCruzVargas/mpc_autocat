@@ -34,6 +34,34 @@ _UNITS_PER_PAPER_MM = [0.1]
 
 SIDES = ("bottom", "top", "left", "right")
 
+# Huella de lo que YA esta dibujado adentro del plano: muros, zapatas, muebles,
+# rotulos ya puestos. Es lo que mira place_labels para no escribir encima. Es
+# el mismo registro que furniture usaba solo para los rotulos de ambiente,
+# subido aca para que sirva a cualquier plano.
+FOOTPRINTS: list[dict[str, Any]] = []
+
+
+def track(x0: float, y0: float, x1: float, y1: float,
+          what: str = "") -> dict[str, Any]:
+    """Registra el rectangulo que ocupa algo ya dibujado."""
+    huella = {"x0": min(x0, x1), "y0": min(y0, y1),
+              "x1": max(x0, x1), "y1": max(y0, y1), "what": what}
+    FOOTPRINTS.append(huella)
+    return huella
+
+
+def clear_footprints() -> None:
+    FOOTPRINTS.clear()
+
+
+def hits(x0: float, y0: float, x1: float, y1: float,
+         margin: float = 0.0) -> list[dict[str, Any]]:
+    """Que huellas estorban en ese rectangulo."""
+    a0, b0 = min(x0, x1) - margin, min(y0, y1) - margin
+    a1, b1 = max(x0, x1) + margin, max(y0, y1) + margin
+    return [h for h in FOOTPRINTS
+            if h["x0"] < a1 and h["x1"] > a0 and h["y0"] < b1 and h["y1"] > b0]
+
 
 def set_scale(units_per_paper_mm: float) -> None:
     if units_per_paper_mm <= 0:
@@ -52,6 +80,7 @@ def paper(mm: float, scale: Optional[float] = None) -> float:
 
 def clear() -> None:
     OCCUPIED.clear()
+    FOOTPRINTS.clear()
 
 
 def reserve(x0: float, y0: float, x1: float, y1: float,

@@ -30,12 +30,17 @@ GRID_COLOR = 4  # cian: los ejes van en un color secundario
 
 
 def _polyline(points: list[Point], layer: str, lineweight: int,
-              closed: bool = True) -> str:
+              closed: bool = True, track: str = "") -> str:
     result = acad.call("create_polyline", {
         "points": [[p[0], p[1]] for p in points],
         "closed": closed, "layer": layer,
         "lineweight": lineweight, "colorIndex": None,
     })
+    if track and points:
+        # Queda como huella para que place_labels no escriba encima.
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        space.track(min(xs), min(ys), max(xs), max(ys), track)
     return result["handle"]
 
 
@@ -63,6 +68,7 @@ def _ensure_layer(name: str, color: int, lineweight: int,
                   linetype: Optional[str] = None) -> None:
     # Solo si no existe: ver layers.py.
     layers.ensure(name, color, lineweight, linetype)
+    layers.ensure_text_style()
 
 
 # ----------------------------------------------------------------- muros
@@ -74,7 +80,8 @@ def _wall_segment(axis: Axis, d_start: float, d_end: float, half: float,
         return None
     left = axis.vertices_between(d_start, d_end, half)
     right = axis.vertices_between(d_start, d_end, -half)
-    return _polyline(left + list(reversed(right)), layer, lineweight, closed=True)
+    return _polyline(left + list(reversed(right)), layer, lineweight,
+                     closed=True, track=f"muro {layer}")
 
 
 # Tramo de muro por debajo del cual no hay mamposteria posible: queda un

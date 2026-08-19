@@ -144,6 +144,8 @@ def install() -> None:
     # proceso apilan las cotas sobre franjas del plano anterior.
     space.clear()
     layers.reset()
+    # El mock no tiene estilos: se da por chequeado.
+    layers._TEXT_CHECKED[0] = True
     furniture.reset_footprints()
 
 

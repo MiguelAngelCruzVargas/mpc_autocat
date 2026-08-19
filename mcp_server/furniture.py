@@ -14,6 +14,7 @@ import math
 from typing import Any, Optional
 
 import autocad_client as acad
+import space
 
 LAYER = "MOBILIARIO"
 LW = 18
@@ -21,7 +22,9 @@ LW_SOFT = 13  # colchones, cojines: aún más liviano que el contorno
 
 # Huella de todo lo dibujado, para que los rótulos de ambiente no caigan
 # encima de un mueble. Cada entrada es un bounding box (x0, y0, x1, y1).
-OCCUPIED: list[tuple[float, float, float, float]] = []
+# El registro real vive en space.FOOTPRINTS: los rotulos de ambiente y los de
+# cualquier otro elemento tienen que esquivar las mismas huellas.
+OCCUPIED = space.FOOTPRINTS
 
 # Ancho de caracter respecto de la altura. Solo se usa como respaldo si el
 # plugin no puede medir: 0.62 se quedaba 40% corto y los rotulos terminaban
@@ -30,12 +33,13 @@ CHAR_W = 0.87
 
 
 def reset_footprints() -> None:
-    OCCUPIED.clear()
+    space.clear_footprints()
 
 
-def track(x0: float, y0: float, x1: float, y1: float) -> None:
+def track(x0: float, y0: float, x1: float, y1: float,
+          what: str = "mobiliario") -> None:
     """Registra un rectángulo como ocupado."""
-    OCCUPIED.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+    space.track(x0, y0, x1, y1, what)
 
 
 def _track_points(points: list[tuple[float, float]]) -> None:
@@ -472,9 +476,10 @@ def find_label_spot(room: tuple[float, float, float, float],
         # rotular, y que la persona lo mueva. Peor seria dejarlo afuera.
         return (room_cx, room_cy), False
 
-    # Solo estorban los muebles que caen dentro de este ambiente.
-    obstacles = [o for o in OCCUPIED
-                 if _overlaps(o, (x0, y0, x1, y1), 0.0)]
+    # Solo estorban las huellas que caen dentro de este ambiente.
+    obstacles = [(h["x0"], h["y0"], h["x1"], h["y1"]) for h in OCCUPIED
+                 if _overlaps((h["x0"], h["y0"], h["x1"], h["y1"]),
+                              (x0, y0, x1, y1), 0.0)]
 
     best = None
     for i in range(steps + 1):

@@ -130,6 +130,7 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | | `attach_image` | Inserta una imagen raster ya existente en disco (logo, mapa de microlocalización) — no genera el contenido, solo la coloca |
 | Mobiliario | `place_furniture` | Camas, sillones, comedor, cocina y sanitarios en planta; varias piezas por llamada |
 | | `label_rooms` | Rotula ambientes con nombre y superficie, esquivando el mobiliario |
+| | **`place_labels`** | **Rotula cualquier elemento ubicando el texto donde no pise lo ya dibujado; registra cada rótulo para que el siguiente lo esquive** |
 | Capas | `set_layer` | Crea/configura una capa: color ACI, tipo de línea, grosor (simbología/normas) |
 | | `list_layers` | Lista capas con sus propiedades |
 | Edición | `move_entity` / `copy_entity` / `rotate_entity` / `scale_entity` / `delete_entity` | Transformaciones básicas sobre una entidad existente, por handle |
