@@ -159,3 +159,142 @@ def check_layout(rooms: list[dict[str, Any]],
                     f"{len(problemas)} problema(s) de proyecto: "
                     + "; ".join(p["problem"] for p in problemas)),
     }
+
+
+# ------------------------------------------- dimensiones minimas habitables
+
+# Lado y superficie por debajo de los cuales el recinto no se puede usar.
+MINIMOS = {
+    "recamara": {"lado": 2.40, "area": 7.00, "nombre": "recámara"},
+    "bano":     {"lado": 1.10, "area": 2.20, "nombre": "baño"},
+    "social":   {"lado": 2.40, "area": 8.00, "nombre": "espacio social"},
+    "circulacion": {"lado": 0.90, "area": 0.00, "nombre": "circulación"},
+    "servicio": {"lado": 1.20, "area": 2.00, "nombre": "área de servicio"},
+}
+
+
+def _solapan(a: dict[str, Any], b: dict[str, Any], tol: float = 0.01) -> float:
+    """Superficie en la que dos recintos se pisan."""
+    dx = min(a["x1"], b["x1"]) - max(a["x0"], b["x0"])
+    dy = min(a["y1"], b["y1"]) - max(a["y0"], b["y0"])
+    if dx <= tol or dy <= tol:
+        return 0.0
+    return dx * dy
+
+
+def _en_frontera(puerta: dict[str, Any], a: dict[str, Any], b: dict[str, Any],
+                 tol: float = 0.35) -> bool:
+    """¿La puerta cae sobre el muro que separa esos dos recintos?"""
+    if "x" not in puerta or "y" not in puerta:
+        return True          # sin posicion declarada no hay nada que verificar
+    px, py = float(puerta["x"]), float(puerta["y"])
+
+    def toca(r: dict[str, Any]) -> bool:
+        return (r["x0"] - tol <= px <= r["x1"] + tol
+                and r["y0"] - tol <= py <= r["y1"] + tol)
+
+    return toca(a) and toca(b)
+
+
+def check_geometry(rooms: list[dict[str, Any]],
+                   doors: list[dict[str, Any]]) -> dict[str, Any]:
+    """Verifica que los recintos sean coherentes y construibles.
+
+    check_layout revisa el GRAFO de accesos —quién comunica con quién— pero no
+    que el dibujo lo cumpla. Se puede declarar "PASILLO -> BAÑO" y dibujar esa
+    puerta en un muro que no toca el baño: el grafo da por buena la conexión y
+    el baño queda sellado. Esto revisa la geometría.
+    """
+    problemas: list[dict[str, str]] = []
+    por_nombre = {r["name"].upper(): r for r in rooms}
+
+    # --- 1. Dimensiones minimas segun el uso ---
+    for r in rooms:
+        w = float(r["x1"]) - float(r["x0"])
+        h = float(r["y1"]) - float(r["y0"])
+        area = w * h
+        m = MINIMOS.get(_clase(r["name"]))
+        if not m:
+            continue
+        lado_menor = min(w, h)
+        if lado_menor < m["lado"] - 1e-6:
+            problemas.append({
+                "rule": "dimension minima",
+                "problem": f"'{r['name']}' mide {w:.2f} x {h:.2f} m: el lado "
+                           f"menor ({lado_menor:.2f} m) no llega al mínimo de "
+                           f"{m['lado']:.2f} m para una {m['nombre']}.",
+                "fix": f"Una {m['nombre']} de {lado_menor:.2f} m de lado no se "
+                       "puede usar. Reacomodá la distribución."})
+        elif area < m["area"] - 1e-6:
+            problemas.append({
+                "rule": "superficie minima",
+                "problem": f"'{r['name']}' tiene {area:.2f} m2, por debajo de "
+                           f"{m['area']:.2f} m2 para una {m['nombre']}.",
+                "fix": "Agrandá el recinto o cambiale el uso."})
+
+    # --- 2. Recintos que se pisan ---
+    for i, a in enumerate(rooms):
+        for b in rooms[i + 1:]:
+            s = _solapan(a, b)
+            if s > 0.05:
+                problemas.append({
+                    "rule": "solape",
+                    "problem": f"'{a['name']}' y '{b['name']}' se superponen en "
+                               f"{s:.2f} m2.",
+                    "fix": "Dos recintos no pueden ocupar el mismo espacio."})
+
+    # --- 3. Puertas duplicadas entre el mismo par ---
+    pares: dict[tuple, int] = {}
+    for d in doors:
+        par = tuple(sorted((str(d.get("from", "")).upper(),
+                            str(d.get("to", "")).upper())))
+        pares[par] = pares.get(par, 0) + 1
+    for par, n in pares.items():
+        if n > 1:
+            problemas.append({
+                "rule": "puerta duplicada",
+                "problem": f"Hay {n} puertas entre {par[0]} y {par[1]}.",
+                "fix": "Dos recintos se comunican con UN vano."})
+
+    # --- 4. La puerta tiene que caer en la frontera comun ---
+    for d in doors:
+        origen = str(d.get("from", "")).upper()
+        destino = str(d.get("to", "")).upper()
+        if origen in ("EXTERIOR", "CALLE", "FACHADA"):
+            continue
+        a, b = por_nombre.get(origen), por_nombre.get(destino)
+        if not a or not b:
+            problemas.append({
+                "rule": "puerta huerfana",
+                "problem": f"La puerta {origen} -> {destino} menciona un recinto "
+                           "que no está en la lista.",
+                "fix": "Los nombres tienen que coincidir con los de 'rooms'."})
+            continue
+
+        dx = min(a["x1"], b["x1"]) - max(a["x0"], b["x0"])
+        dy = min(a["y1"], b["y1"]) - max(a["y0"], b["y0"])
+        if dx < -0.35 or dy < -0.35:
+            problemas.append({
+                "rule": "puerta imposible",
+                "problem": f"'{origen}' y '{destino}' no se tocan, y se declaró "
+                           "una puerta entre ellos.",
+                "fix": "No comparten muro: el recinto va a quedar sellado. "
+                       "Revisá la distribución."})
+        elif not _en_frontera(d, a, b):
+            problemas.append({
+                "rule": "puerta fuera de lugar",
+                "problem": f"La puerta {origen} -> {destino} está en "
+                           f"({d.get('x')}, {d.get('y')}), fuera del muro que "
+                           "los separa.",
+                "fix": "Poné el vano sobre la frontera común; si no, el recinto "
+                       "queda sellado aunque la puerta figure en el grafo."})
+
+    return {
+        "ok": not problemas,
+        "problems": problemas,
+        "count": len(problemas),
+        "message": ("La geometría de los recintos es coherente."
+                    if not problemas else
+                    f"{len(problemas)} problema(s) de geometría: "
+                    + "; ".join(p["problem"] for p in problemas)),
+    }

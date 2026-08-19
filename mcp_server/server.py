@@ -35,6 +35,29 @@ def _style(lineweight: Optional[int], color_index: Optional[int]) -> dict[str, A
 # ------------------------------------------------- Lámina (cajón + rotulación)
 
 @mcp.tool()
+def check_geometry(rooms: list[dict[str, Any]],
+                    doors: list[dict[str, Any]]) -> dict[str, Any]:
+    """Verifica que los recintos sean coherentes y construibles.
+
+    check_layout revisa el GRAFO de accesos —quién comunica con quién— pero no
+    que el dibujo lo cumpla. Esto revisa la geometría, que es donde aparecen los
+    errores que el grafo no ve:
+      - recintos por debajo del mínimo habitable (una recámara de 1.50 m de
+        fondo no es una recámara, aunque el grafo diga que tiene puerta)
+      - recintos que se pisan entre sí
+      - dos puertas para el mismo par de ambientes
+      - puertas entre recintos que NO comparten muro: el ambiente queda sellado
+        aunque la puerta figure en el grafo
+
+    doors puede llevar "x" e "y" con la posición del vano; con eso verifica
+    además que caiga sobre la frontera común. Sin posición, esa parte se saltea.
+
+    Llamala JUNTO CON check_layout antes de dibujar: una valida la lógica de
+    uso, la otra que el espacio exista de verdad."""
+    return rules_mod.check_geometry(rooms=rooms, doors=doors)
+
+
+@mcp.tool()
 def check_layout(rooms: list[dict[str, Any]], doors: list[dict[str, Any]],
                   lot_width: Optional[float] = None,
                   lot_depth: Optional[float] = None,
