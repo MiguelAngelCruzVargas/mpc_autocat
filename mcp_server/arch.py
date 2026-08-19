@@ -264,6 +264,36 @@ def _draw_opening(axis: Axis, hole: dict[str, Any],
 
 # ------------------------------------------------------------------ ejes
 
+MIN_SEPARACION_EJES = 1.20
+
+
+def _agrupar_ejes(posiciones: list[float], minimo: float) -> tuple[list[float], list[dict]]:
+    """Junta ejes demasiado proximos en uno solo.
+
+    Dos ejes a 0.65 m producen dos burbujas que se pisan y cotas ilegibles. En
+    obra esos dos muros se replantean desde un mismo eje y la separacion va
+    como cota de detalle, no como eje propio.
+    """
+    if not posiciones:
+        return [], []
+    orden = sorted(posiciones)
+    grupos = [[orden[0]]]
+    for p in orden[1:]:
+        if p - grupos[-1][-1] < minimo:
+            grupos[-1].append(p)
+        else:
+            grupos.append([p])
+
+    finales, fusionados = [], []
+    for g in grupos:
+        finales.append(sum(g) / len(g))
+        if len(g) > 1:
+            fusionados.append({"merged": [round(v, 3) for v in g],
+                               "at": round(sum(g) / len(g), 3),
+                               "spread": round(g[-1] - g[0], 3)})
+    return finales, fusionados
+
+
 def create_axis_grid(
     x_positions: Optional[list[float]] = None,
     y_positions: Optional[list[float]] = None,
@@ -273,12 +303,13 @@ def create_axis_grid(
     bubble_radius: float = 0.0,
     text_height: float = 0.0,
     layer: str = LAYER_GRID,
+    min_spacing: float = MIN_SEPARACION_EJES,
 ) -> dict[str, Any]:
     """Ejes estructurales con globos numerados: verticales 1,2,3 y horizontales A,B,C."""
-    xs = sorted(x_positions or [])
-    ys = sorted(y_positions or [])
-    if not xs and not ys:
+    if not (x_positions or y_positions):
         raise ValueError("Hay que pasar x_positions y/o y_positions.")
+    xs, fus_x = _agrupar_ejes(list(x_positions or []), min_spacing)
+    ys, fus_y = _agrupar_ejes(list(y_positions or []), min_spacing)
 
     # Extensión del dibujo, para saber hasta dónde llegan los ejes.
     left = min(xs) if xs else x_min
@@ -326,7 +357,18 @@ def create_axis_grid(
         bubble((left - ext - radius, y), label)
         bubble((right + ext + radius, y), label)
 
+    resultado_extra = {}
+    if fus_x or fus_y:
+        resultado_extra["mergedAxes"] = {"x": fus_x, "y": fus_y}
+        detalle = "; ".join(
+            f"{f['merged']} -> {f['at']} (separacion {f['spread']} m)"
+            for f in fus_x + fus_y)
+        resultado_extra["warning"] = (
+            f"Ejes a menos de {min_spacing} m fusionados para que las burbujas "
+            f"no se pisen: {detalle}. Acota esa separacion como cota de detalle.")
+
     return {
+        **resultado_extra,
         "verticalAxes": [str(i) for i in range(1, len(xs) + 1)],
         "horizontalAxes": [_letter(i) for i in range(len(ys))],
         "bubbles": bubbles,

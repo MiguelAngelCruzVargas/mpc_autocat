@@ -2,7 +2,45 @@
 
 Reglas de trabajo cuando alguien pide dibujar algo en AutoCAD con estas tools.
 
-## 0. Dibujar con las tools, NO escribiendo un script por plano
+## 0. Antes de dibujar: validar
+
+Con un terreno y un programa de ambientes, ANTES de trazar nada:
+
+1. **`check_program`** — ¿el programa entra en el terreno? Si no entra, decirlo
+   con el número y las opciones, y esperar la decisión del cliente. Un programa
+   que no cierra no se arregla dibujando con cuidado.
+2. **`check_layout`** — ¿la zonificación cumple? Verifica lo que la geometría no
+   muestra y que hace inconstruible un plano bien dibujado.
+
+Las reglas que valida, y que hay que respetar al proyectar:
+
+- El acceso desde la calle **NUNCA** abre a una recámara o un baño: desemboca
+  en sala, comedor o vestíbulo.
+- El baño principal es **en-suite**: su puerta abre dentro de la recámara
+  principal, no al pasillo.
+- Al patio de servicio se entra desde la cocina o una circulación común, nunca
+  cruzando un dormitorio.
+- La cocina comunica directo con el comedor y no queda como paso entre
+  recámaras.
+- Todo ambiente tiene al menos un acceso.
+- En muros de colindancia (x=0, x=ancho, y=fondo) no van ventanas, salvo patio
+  de luz o retiro reglamentario.
+
+## 0.bis Dónde va el marco: NUNCA sobre el dibujo
+
+El cajón y el rótulo **no se dibujan encima del plano**. Dos formas correctas:
+
+- **Espacio papel** (lo recomendado): `create_layout` → `set_current_layout` →
+  dibujar el rótulo ahí → `create_viewport` para mostrar el modelo. Todos los
+  comandos dibujan en el espacio ACTIVO, así que con el layout activo el rótulo
+  va donde corresponde.
+- **En el modelo, apartado**: si tiene que ir en el modelo, a más de 20 m del
+  polígono del terreno, nunca solapado.
+
+El orden es: dibujar → `get_extents` → `fit_sheet` → recién ahí el cajón, y
+pasándole el `orientation` que devolvió `fit_sheet` o la hoja sale acostada.
+
+## 1. Dibujar con las tools, NO escribiendo un script por plano
 
 Un plano se dibuja llamando las tools del MCP (`create_sheet`, `create_walls`,
 `place_furniture`, `label_rooms`, `create_dimension`) **directamente**. No crear
@@ -24,7 +62,7 @@ tool**: agregala a la biblioteca y exponela, en vez de dejar el script.
 `examples/casa_9x12.py` es la única excepción, y está ahí como referencia de
 cómo se compone un plano entero, no como forma de trabajo.
 
-## 1. Siempre empezar por la lámina
+## 2. Siempre empezar por la lámina
 
 **Antes de trazar una sola línea, llamar a `create_sheet`.** Define el formato,
 la escala y el cuadro de rotulación, y devuelve el `drawArea` — el rectángulo
@@ -50,7 +88,7 @@ unidades del modelo. Si el terreno mide 40x25m y el área útil da 80.6x51.8,
 entra; si no entra, subí el denominador de escala o el formato — **nunca**
 achiques el dibujo fuera de escala.
 
-## 2. Dibujar adentro del área útil
+## 3. Dibujar adentro del área útil
 
 `create_sheet` devuelve dos rectángulos:
 
@@ -61,7 +99,7 @@ achiques el dibujo fuera de escala.
 Para varias láminas, repetir `create_sheet` con `origin_x` corrido (p.ej.
 +100 unidades entre hoja y hoja) en lugar de amontonarlas.
 
-## 3. Muros: siempre `create_walls`
+## 4. Muros: siempre `create_walls`
 
 Un muro NO es una línea. Usar `create_walls` con el eje del muro y su espesor:
 resuelve las esquinas a inglete y recorta los huecos de puertas y ventanas, que
@@ -76,7 +114,17 @@ divisorio interior 0.10. Puertas de 0.90 (acceso) / 0.80 (interior) / 0.70
 `distance` de un hueco se mide a lo largo del eje desde el arranque, siguiendo
 las vueltas. Conviene calcularla sumando tramos, no a ojo.
 
-## 4. Jerarquía de grosores
+## 4.bis Ejes: separación mínima 1.20 m
+
+`create_axis_grid` fusiona solo los ejes más próximos que eso, porque dos
+burbujas a 0.65 m se pisan y las cotas quedan ilegibles. Revisá el 'warning'
+que devuelve: la separación fusionada va como **cota de detalle**, no como eje
+propio.
+
+Y `set_display_options(linetype_scale=...)` es obligatorio para que los ejes se
+vean como trazo-punto: dibujando en metros con LTSCALE=1 salen continuos.
+
+## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta
 `lineweight` en centésimas de mm:
@@ -92,7 +140,12 @@ Un plano se lee por el contraste de trazos. Toda tool de creación acepta
 Si todo sale con el mismo grosor, el plano no se lee. Cuando el usuario diga
 que "se ve todo fino", revisar primero `set_display_options(lineweight_display=True)`.
 
-## 5. Mobiliario y rótulos
+Al terminar los muros, `union_regions` sobre sus handles: fusiona los tramos en
+un solo contorno y los cruces quedan en T y no en cajón. Devuelve además el área
+y el perímetro de mampostería. Hacerlo AL FINAL: el resultado es una Region y ya
+no admite editar vértices.
+
+## 6. Mobiliario y rótulos
 
 `place_furniture` dibuja todas las piezas en UNA llamada: pasarle la lista
 entera del ambiente o de la casa, no una llamada por mueble.
@@ -101,21 +154,21 @@ entera del ambiente o de la casa, no una llamada por mueble.
 muebles para ubicar cada nombre donde no tape nada. Rotular antes de amueblar
 deja los textos encima de las camas.
 
-## 6. Capas
+## 7. Capas
 
 Una capa por tipo de elemento, creada con `set_layer` antes de dibujar (color y
 grosor propios): `MUROS`, `EJES`, `COTAS`, `TEXTOS`, `MOBILIARIO`, `TERRENO`.
 `create_sheet` ya crea `CAJON` y `ROTULO` — no dibujar nada del plano en esas
 dos, para poder apagarlas y ver solo el dibujo.
 
-## 7. Texto y cotas a escala
+## 8. Texto y cotas a escala
 
 El texto se dimensiona en mm de papel × escala. En un plano 1:100 dibujado en
 metros, un texto de 2.5mm de papel se crea con `height = 0.25`. Para cotas, el
 parámetro `scale` de `create_dimension` cumple ese rol (en metros a 1:100,
 arrancar en `0.1`).
 
-## 8. Verificar antes de dar por terminado
+## 9. Verificar antes de dar por terminado
 
 Después de dibujar, `zoom_extents` y `get_drawing_info` para confirmar la
 cantidad de entidades. Si se creó geometría cerrada, `calculate_area` sobre las

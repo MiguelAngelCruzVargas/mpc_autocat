@@ -15,6 +15,7 @@ import arch as arch_mod
 import autocad_client as acad
 import civil as civil_mod
 import profile as profile_mod
+import rules as rules_mod
 import furniture as fur_mod
 import sheet as sheet_mod
 
@@ -32,6 +33,33 @@ def _style(lineweight: Optional[int], color_index: Optional[int]) -> dict[str, A
 
 
 # ------------------------------------------------- Lámina (cajón + rotulación)
+
+@mcp.tool()
+def check_layout(rooms: list[dict[str, Any]], doors: list[dict[str, Any]],
+                  lot_width: Optional[float] = None,
+                  lot_depth: Optional[float] = None,
+                  windows: Optional[list[dict[str, Any]]] = None
+                  ) -> dict[str, Any]:
+    """Verifica las reglas de zonificación de una planta ANTES de dibujarla.
+
+    Un plano puede estar impecable de dibujo y ser inconstruible. Esto revisa lo
+    que la geometría no muestra:
+      - el acceso desde la calle NUNCA puede abrir a una recámara o un baño
+      - el baño principal es en-suite: se entra desde la recámara principal
+      - al patio de servicio no se llega cruzando un dormitorio
+      - todo ambiente tiene al menos un acceso
+      - la cocina comunica con el comedor y no es paso entre recámaras
+      - no se abren ventanas sobre la colindancia
+
+    rooms: [{"name": "SALA", "x0":.., "y0":.., "x1":.., "y1":..}]
+    doors: [{"from": "EXTERIOR", "to": "VESTIBULO", "width": 0.90}] —
+           from='EXTERIOR' marca la puerta de calle.
+    windows: [{"room": "SALA", "wall": "izquierda"}] para colindancias.
+
+    Devuelve 'ok' y, por cada problema, la regla que viola y cómo corregirlo."""
+    return rules_mod.check_layout(rooms=rooms, doors=doors, lot_width=lot_width,
+                                  lot_depth=lot_depth, windows=windows)
+
 
 @mcp.tool()
 def check_program(lot_width: float, lot_depth: float,
@@ -110,14 +138,18 @@ def create_sheet(
     sheet_number: str = "",
     width_mm: float = 0.0,
     height_mm: float = 0.0,
+    orientation: str = "horizontal",
 ) -> dict[str, Any]:
     """PRIMER PASO DE TODO PLANO: dibuja el cajón (marco de la hoja con sus
     márgenes) y el cuadro de rotulación con los datos de la obra, y devuelve el
     área útil donde va el dibujo. Llamala ANTES que cualquier otra tool de
     dibujo, y después ubicá todo adentro del 'drawArea' que devuelve.
 
-    sheet_format: A0, A1, A2, A3 o A4 (apaisado). Para un formato a medida pasá
-    width_mm y height_mm.
+    sheet_format: A0, A1, A2, A3 o A4. Para un formato a medida pasá width_mm
+    y height_mm.
+    orientation: 'horizontal' (apaisado, el default) o 'vertical'. Si venís de
+    fit_sheet, pasale el valor que devolvió — si no, la hoja sale acostada y el
+    dibujo se te va a salir por arriba.
     scale_denominator: el denominador de la escala — 100 para 1:100, 50 para
     1:50. Decide qué tan grande sale el cajón en unidades del modelo.
     model_units: en qué unidad está dibujado el modelo, 'm' (lo normal en
@@ -152,6 +184,7 @@ def create_sheet(
         sheet_number=sheet_number,
         width_mm=width_mm or None,
         height_mm=height_mm or None,
+        orientation=orientation,
     )
 
 
@@ -215,6 +248,7 @@ def create_axis_grid(
     bubble_radius: float = 0.0,
     text_height: float = 0.0,
     layer: str = "EJES",
+    min_spacing: float = 1.20,
 ) -> dict[str, Any]:
     """Ejes estructurales con sus globos: los verticales numerados 1, 2, 3... y
     los horizontales con letras A, B, C..., en línea de eje y trazo.
@@ -226,6 +260,11 @@ def create_axis_grid(
     más allá de lo que abarcan los propios ejes.
     extension, bubble_radius, text_height: en unidades del modelo. Si los dejás
     en 0 se calculan proporcionales al tamaño de la grilla, que suele estar bien.
+
+    min_spacing: ejes más próximos que esto se FUSIONAN en uno solo (1.20 m).
+    Dos ejes a 0.65 m dan burbujas que se pisan y cotas ilegibles; en obra esos
+    muros se replantean desde un mismo eje y la separación va como cota de
+    detalle. Avisa en 'warning' cuáles fusionó.
 
     Llamala DESPUÉS de create_walls, con las coordenadas de los ejes de los
     muros portantes."""
@@ -1200,6 +1239,43 @@ def set_active_document(name: str) -> dict[str, Any]:
     """Cambia el dibujo activo, sobre el que van a operar las demás tools.
     Alcanza con el nombre de archivo ('Casa.dwg'), sin la ruta completa."""
     return acad.call("set_active_document", {"name": name})
+
+
+@mcp.tool()
+def select_entities(x1: Optional[float] = None, y1: Optional[float] = None,
+                     x2: Optional[float] = None, y2: Optional[float] = None,
+                     layers: Optional[list[str]] = None,
+                     types: Optional[list[str]] = None,
+                     mode: str = "inside") -> dict[str, Any]:
+    """Qué hay dentro de una zona, capa o tipo. Devuelve los handles.
+
+    ES LA BASE PARA CORREGIR SIN REHACER. Si el cliente pide reacomodar una
+    recámara, se selecciona lo que hay en ese rectángulo, se borra con
+    delete_entities y se vuelve a dibujar SOLO eso — en vez de tirar el plano
+    entero y empezar de cero.
+
+    x1,y1,x2,y2: rectángulo de selección; sin ellos, todo el espacio modelo.
+    layers / types: filtros adicionales ('Line', 'Polyline', 'DBText'...).
+    mode: 'inside' toma solo lo que entra ENTERO en el rectángulo (lo seguro,
+    es el default); 'crossing' toma también lo que lo cruza — útil para agarrar
+    los muros que limitan el ambiente, pero se lleva puestos los vecinos."""
+    return acad.call("select_entities", {
+        "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+        "layers": layers, "types": types, "mode": mode,
+    })
+
+
+@mcp.tool()
+def delete_entities(handles: list[str],
+                     ignore_missing: bool = True) -> dict[str, Any]:
+    """Borra varias entidades de una sola pasada.
+
+    Mucho más rápido que llamar delete_entity una por una: son N llamadas al
+    socket contra una sola. Los handles que ya no existen se ignoran por
+    defecto, porque al limpiar es normal que algo se haya borrado en cascada."""
+    return acad.call("delete_entities", {
+        "handles": handles, "ignoreMissing": ignore_missing,
+    })
 
 
 @mcp.tool()

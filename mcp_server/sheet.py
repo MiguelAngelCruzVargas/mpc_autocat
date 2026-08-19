@@ -135,6 +135,7 @@ def create_sheet(
     sheet_number: str = "",
     width_mm: Optional[float] = None,
     height_mm: Optional[float] = None,
+    orientation: str = "horizontal",
 ) -> dict[str, Any]:
     """Dibuja el cajón y el cuadro de rotulación. Devuelve el área útil."""
     if width_mm is not None and height_mm is not None:
@@ -149,6 +150,12 @@ def create_sheet(
             )
         sheet_w, sheet_h = SHEET_FORMATS[key]
         fmt_name = key
+        # Sin esto la hoja sale SIEMPRE apaisada: fit_sheet puede haber elegido
+        # el formato vertical y el cajon se dibujaba acostado, con el dibujo
+        # saliendose por arriba.
+        if str(orientation).lower() in ("vertical", "portrait", "retrato"):
+            sheet_w, sheet_h = sheet_h, sheet_w
+            fmt_name = key + " vertical"
 
     mm = _Paper(scale_denominator, model_units)
 

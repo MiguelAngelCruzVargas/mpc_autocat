@@ -64,8 +64,7 @@ namespace AutoCadMcpPlugin.Commands
                         new Vector3d(0, height, 0))
                 };
 
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var btr = SpaceHelper.Current(db, tr);
 
                 EntityHelper.ApplyCommon(db, tr, image, pars);
 

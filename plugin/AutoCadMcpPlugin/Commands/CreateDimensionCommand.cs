@@ -30,8 +30,7 @@ namespace AutoCadMcpPlugin.Commands
             var db = doc.Database;
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var btr = SpaceHelper.Current(db, tr);
 
                 var dim = new AlignedDimension(
                     new Point3d(x1, y1, 0),

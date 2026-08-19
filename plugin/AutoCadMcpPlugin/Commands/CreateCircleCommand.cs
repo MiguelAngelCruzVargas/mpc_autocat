@@ -18,8 +18,7 @@ namespace AutoCadMcpPlugin.Commands
             var db = doc.Database;
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var btr = SpaceHelper.Current(db, tr);
 
                 var circle = new Circle(new Point3d(x, y, z), Vector3d.ZAxis, radius);
                 EntityHelper.ApplyCommon(db, tr, circle, pars);

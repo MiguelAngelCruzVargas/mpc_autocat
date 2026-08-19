@@ -109,6 +109,12 @@ namespace AutoCadMcpPlugin
                 case "create_dimension_arc_length":
                     return DimensionCommands.ArcLength(doc, pars);
 
+                // Seleccion y borrado por zona
+                case "select_entities":
+                    return SelectCommands.Select(doc, pars);
+                case "delete_entities":
+                    return SelectCommands.DeleteMany(doc, pars);
+
                 // Limpieza de geometria
                 case "union_regions":
                     return UnionRegionsCommand.Run(doc, pars);

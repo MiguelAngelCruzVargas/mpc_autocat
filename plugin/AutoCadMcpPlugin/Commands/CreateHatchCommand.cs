@@ -26,8 +26,7 @@ namespace AutoCadMcpPlugin.Commands
             {
                 var boundaryId = HandleHelper.GetObjectId(db, boundaryHandleStr);
 
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var btr = SpaceHelper.Current(db, tr);
 
                 var hatch = new Hatch();
                 btr.AppendEntity(hatch);
