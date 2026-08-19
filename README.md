@@ -128,6 +128,8 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | Bloques / imágenes | `insert_block` | Inserta un símbolo (bloque), con atributos e importación desde un `.dwg` externo si hace falta |
 | | `define_block` | Captura entidades ya dibujadas (por handle) como un bloque reutilizable — sin archivo externo, sirve para armar símbolos propios (norte, registros, etc.) una vez y repetirlos |
 | | `attach_image` | Inserta una imagen raster ya existente en disco (logo, mapa de microlocalización) — no genera el contenido, solo la coloca |
+| **Instalaciones** | **`place_devices`** | **Simbología eléctrica normalizada en planta: salidas, apagadores, contactos, GFCI y tableros, todos en una llamada** |
+| | `create_conduit` | Canalización en arco suave entre dispositivos, con las marcas de fase, neutro y tierra |
 | Mobiliario | `place_furniture` | Camas, sillones, comedor, cocina y sanitarios en planta; varias piezas por llamada |
 | | `label_rooms` | Rotula ambientes con nombre y superficie, esquivando el mobiliario |
 | | **`place_labels`** | **Rotula cualquier elemento ubicando el texto donde no pise lo ya dibujado; registra cada rótulo para que el siguiente lo esquive** |

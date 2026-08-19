@@ -14,6 +14,7 @@ import annotation as ann_mod
 import arch as arch_mod
 import autocad_client as acad
 import civil as civil_mod
+import electrical as elec_mod
 import profile as profile_mod
 import rules as rules_mod
 import furniture as fur_mod
@@ -625,6 +626,65 @@ def create_cross_sections(x: float, y: float, stations: list[float],
 
 
 # ------------------------------------------- Documentación (obra lineal, etc.)
+
+@mcp.tool()
+def place_devices(devices: list[dict[str, Any]],
+                  light_layer: str = "ALUMBRADO",
+                  outlet_layer: str = "CONTACTOS",
+                  panel_layer: str = "CENTRO_CARGA",
+                  hatch_layer: str = "",
+                  lineweight: int = 25) -> dict[str, Any]:
+    """Simbología eléctrica en planta: salidas, apagadores, contactos, tableros.
+
+    Son símbolos normalizados y siempre iguales, así que NO los armes con
+    create_circle + create_line: un círculo con cruz es una salida de techo en
+    cualquier plano, y dibujarlo a mano cada vez es lo que hace que salga
+    distinto en cada lámina.
+
+    devices: cada uno {"type": ..., "x": .., "y": .., "angle": grados}
+      - "lamp"   salida de techo: círculo de 0.30 con cruz interior.
+      - "switch" apagador: círculo de 0.20 con línea radial; 'angle' apunta la
+        línea hacia el ambiente.
+      - "outlet" contacto: semicírculo de 0.15 apoyado en el muro; 'angle' es
+        hacia dónde abre. "double": True agrega la barra del contacto doble.
+      - "gfci"   contacto con falla a tierra.
+      - "panel"  tablero: rectángulo de 0.40 x 0.15 con medio relleno sólido;
+        'angle' lo alinea con el muro.
+    Opcionales por dispositivo: "size" y "tag".
+
+    Los tamaños son medidas REALES de obra en metros, no mm de papel.
+
+    Devuelve el punto y la caja de cada uno: la caja es lo que necesita
+    place_labels para rotularlos sin encimarse y create_conduit para saber de
+    dónde sale la tubería. Cada dispositivo queda registrado como huella."""
+    return elec_mod.place_devices(
+        devices=devices, light_layer=light_layer, outlet_layer=outlet_layer,
+        panel_layer=panel_layer, hatch_layer=hatch_layer,
+        lineweight=lineweight)
+
+
+@mcp.tool()
+def create_conduit(points: list[list[float]], sag: float = 0.0,
+                   conductors: str = "", layer: str = "TUBERIA",
+                   lineweight: int = 20, mark_size: float = 0.0,
+                   text_height: float = 0.0) -> dict[str, Any]:
+    """Un tramo de canalización entre dispositivos, con sus conductores.
+
+    En un plano eléctrico la tubería no va recta de aparato a aparato: se
+    dibuja en arco suave para distinguirla de la muraria y para que dos
+    circuitos que comparten trayecto no queden sobre la misma línea.
+
+    points: por dónde pasa, normalmente el centro de cada dispositivo.
+    sag: cuánto se arquea cada tramo respecto de la recta, como fracción de su
+    largo (0.12 es un arco suave; 0 lo deja recto).
+    conductors: qué va adentro, con la marca que lleva cada uno sobre el arco —
+    '/' cada fase, '|' cada neutro, 'T' la tierra. '//|T' son dos fases, un
+    neutro y tierra. Las marcas se dibujan sobre el tramo más largo, que es
+    donde se leen."""
+    return elec_mod.create_conduit(
+        points=points, sag=sag, conductors=conductors, layer=layer,
+        lineweight=lineweight, mark_size=mark_size, text_height=text_height)
+
 
 @mcp.tool()
 def create_table(x: float, y: float, rows: list[list[str]],

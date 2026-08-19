@@ -250,6 +250,24 @@ elegirlo bien: el dibujo se trabaja en pantalla.
 
 `layers.EVITAR` tiene el índice y el motivo de cada uno, para poder avisarlo.
 
+## 6.quater Instalaciones: `place_devices` y `create_conduit`
+
+La simbología eléctrica es normalizada y siempre igual —un círculo con cruz es
+una salida de techo en cualquier plano— así que **no se arma con
+`create_circle` + `create_line`**: sale distinta en cada lámina y no hay forma
+de que dos planos se parezcan.
+
+`place_devices` dibuja toda la instalación en UNA llamada: `lamp`, `switch`,
+`outlet`, `gfci` y `panel`, cada uno con su `angle` apuntando al ambiente.
+Los tamaños son medidas reales de obra (Ø0.30 la salida, Ø0.20 el apagador,
+r=0.15 el contacto), no mm de papel. Devuelve la caja de cada dispositivo,
+que es lo que después toma `place_labels` para rotularlos sin encimarse.
+
+`create_conduit` traza la canalización en arco suave (`sag`) y le pone las
+marcas de conductores: `'/'` cada fase, `'|'` cada neutro, `'T'` la tierra —
+`conductors="//|T"` son dos fases, un neutro y tierra. Recta de aparato a
+aparato la tubería se confunde con la muraria.
+
 ## 7. Capas
 
 Una capa por tipo de elemento, creada con `set_layer` antes de dibujar (color y
