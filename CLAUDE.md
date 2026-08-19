@@ -12,6 +12,17 @@ Con un terreno y un programa de ambientes, ANTES de trazar nada:
 2. **`check_layout`** — ¿la zonificación cumple? Verifica lo que la geometría no
    muestra y que hace inconstruible un plano bien dibujado.
 
+3. **`check_geometry`** — ¿los recintos existen de verdad? Valida lo que el
+   grafo no ve: dimensiones mínimas por uso, recintos que se pisan, puertas
+   duplicadas, y puertas entre ambientes que **no comparten muro** (el recinto
+   queda sellado aunque la puerta figure en el grafo).
+4. **`check_walls`** — ¿la muraria cierra? Extremos de muro al aire, tramos por
+   debajo del mínimo constructivo, muros dibujados dos veces sobre el mismo eje.
+
+Los cuatro son complementarios y ninguno alcanza solo: `check_layout` valida la
+lógica de uso, `check_geometry` que el espacio exista, `check_walls` que se
+pueda levantar, `check_program` que quepa en el terreno.
+
 Las reglas que valida, y que hay que respetar al proyectar:
 
 - El acceso desde la calle **NUNCA** abre a una recámara o un baño: desemboca

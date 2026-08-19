@@ -35,6 +35,28 @@ def _style(lineweight: Optional[int], color_index: Optional[int]) -> dict[str, A
 # ------------------------------------------------- Lámina (cajón + rotulación)
 
 @mcp.tool()
+def check_walls(walls: list[dict[str, Any]], tolerance: float = 0.05,
+                 min_length: float = 0.40) -> dict[str, Any]:
+    """Verifica que la muraria cierre: sin extremos al aire ni tramos sueltos.
+
+    Un muro que muere en el aire —el espolón en "L" que estrangula un paso— es
+    válido como geometría y no se construye. No lo ve el grafo de ambientes ni
+    lo arregla union_regions, que solo limpia los cruces.
+
+    walls: [{"points": [[x,y], ...], "name": "divisorio cocina"}] con los EJES
+    de cada muro, los mismos que le pasás a create_walls.
+
+    Revisa, sirve para cualquier tipo de planta:
+      - extremos libres: un arranque o final que no toca ningún otro muro
+      - tramos por debajo del mínimo constructivo
+      - muros duplicados o superpuestos sobre el mismo eje
+
+    Llamala ANTES de trazar, con la lista de ejes que pensás dibujar."""
+    return rules_mod.check_walls(walls=walls, tolerance=tolerance,
+                                 min_length=min_length)
+
+
+@mcp.tool()
 def check_geometry(rooms: list[dict[str, Any]],
                     doors: list[dict[str, Any]]) -> dict[str, Any]:
     """Verifica que los recintos sean coherentes y construibles.

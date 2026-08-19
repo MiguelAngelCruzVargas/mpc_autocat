@@ -9,6 +9,7 @@ Acá viven esas reglas, para que el chequeo no dependa de que alguien se acuerde
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Optional
 
 # Ambientes a los que una puerta de calle NUNCA debe abrir directo.
@@ -296,5 +297,125 @@ def check_geometry(rooms: list[dict[str, Any]],
         "message": ("La geometría de los recintos es coherente."
                     if not problemas else
                     f"{len(problemas)} problema(s) de geometría: "
+                    + "; ".join(p["problem"] for p in problemas)),
+    }
+
+
+# ------------------------------------------------ coherencia de la muraria
+
+def _dist_punto_segmento(p, a, b) -> float:
+    """Distancia de un punto al segmento a-b."""
+    px, py = p
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    largo2 = dx * dx + dy * dy
+    if largo2 < 1e-12:
+        return math.hypot(px - ax, py - ay)
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / largo2))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def check_walls(walls: list[dict[str, Any]],
+                tolerance: float = 0.05,
+                min_length: float = 0.40) -> dict[str, Any]:
+    """Verifica que la muraria cierre: sin extremos al aire ni tramos sueltos.
+
+    Un muro que muere en el aire —el clásico espolón en "L" que estrangula un
+    paso— es válido como geometría y no se construye. Tampoco se ve en el grafo
+    de ambientes ni lo detecta la unión booleana, que solo limpia los cruces.
+
+    walls: [{"points": [[x,y], [x,y], ...], "name": "muro cocina"}] con los EJES
+    de cada muro, los mismos que se le pasan a create_walls.
+
+    Revisa, para cualquier tipo de planta:
+      - extremos libres: un arranque o final que no toca ningún otro muro
+      - tramos por debajo del mínimo constructivo
+      - muros duplicados o superpuestos sobre el mismo eje
+
+    tolerance: cuánto puede faltar para considerar que dos muros se tocan.
+    """
+    problemas: list[dict[str, str]] = []
+
+    segmentos = []       # (indice_muro, nombre, p0, p1)
+    extremos = []        # (indice_muro, nombre, punto, "inicio"/"final")
+    for i, w in enumerate(walls):
+        pts = [(float(p[0]), float(p[1])) for p in w.get("points", [])]
+        nombre = w.get("name") or f"muro #{i + 1}"
+        if len(pts) < 2:
+            problemas.append({
+                "rule": "muro invalido",
+                "problem": f"'{nombre}' tiene menos de 2 puntos.",
+                "fix": "Un muro necesita al menos un tramo."})
+            continue
+
+        for a, b in zip(pts, pts[1:]):
+            largo = math.hypot(b[0] - a[0], b[1] - a[1])
+            if largo < min_length:
+                problemas.append({
+                    "rule": "tramo corto",
+                    "problem": f"'{nombre}' tiene un tramo de {largo:.2f} m, por "
+                               f"debajo de {min_length:.2f} m.",
+                    "fix": "Un tramo así no se levanta en obra: llevalo hasta la "
+                           "esquina o eliminalo."})
+            segmentos.append((i, nombre, a, b))
+
+        # Una polilinea cerrada no tiene extremos libres: su arranque y su
+        # final son el mismo punto. Reportarlos seria un falso positivo, y un
+        # validador que grita de mas enseña a ignorar los avisos.
+        cerrado = math.hypot(pts[-1][0] - pts[0][0],
+                             pts[-1][1] - pts[0][1]) <= tolerance
+        if not cerrado:
+            extremos.append((i, nombre, pts[0], "arranque"))
+            extremos.append((i, nombre, pts[-1], "final"))
+
+    # --- extremos que no tocan ningun otro muro ---
+    for idx, nombre, punto, cual in extremos:
+        toca = False
+        for j, _, a, b in segmentos:
+            # Los tramos del propio muro que arrancan o terminan en ese punto
+            # no cuentan como apoyo: es el muro sosteniendose a si mismo.
+            if j == idx:
+                propio_extremo = (
+                    math.hypot(punto[0] - a[0], punto[1] - a[1]) <= tolerance
+                    or math.hypot(punto[0] - b[0], punto[1] - b[1]) <= tolerance)
+                if propio_extremo:
+                    continue
+            if _dist_punto_segmento(punto, a, b) <= tolerance:
+                toca = True
+                break
+        if not toca:
+            problemas.append({
+                "rule": "muro huerfano",
+                "problem": f"El {cual} de '{nombre}' en "
+                           f"({punto[0]:.2f}, {punto[1]:.2f}) no toca ningún otro "
+                           "muro: queda al aire.",
+                "fix": "Prolongalo hasta el muro perimetral o hasta el divisorio "
+                       "vecino. Un muro que muere en el aire no se construye."})
+
+    # --- muros superpuestos sobre el mismo eje ---
+    for i in range(len(segmentos)):
+        ia, na, a0, a1 = segmentos[i]
+        for j in range(i + 1, len(segmentos)):
+            ib, nb, b0, b1 = segmentos[j]
+            if ia == ib:
+                continue
+            # Superpuestos: los dos extremos de uno caen sobre el otro.
+            if (_dist_punto_segmento(b0, a0, a1) <= tolerance
+                    and _dist_punto_segmento(b1, a0, a1) <= tolerance):
+                problemas.append({
+                    "rule": "muro duplicado",
+                    "problem": f"'{nb}' se superpone con '{na}' sobre el mismo eje.",
+                    "fix": "Hay dos muros dibujados en el mismo lugar: dejá uno."})
+
+    return {
+        "ok": not problemas,
+        "problems": problemas,
+        "count": len(problemas),
+        "walls": len(walls),
+        "segments": len(segmentos),
+        "message": ("La muraria cierra: sin extremos al aire ni tramos sueltos."
+                    if not problemas else
+                    f"{len(problemas)} problema(s) en los muros: "
                     + "; ".join(p["problem"] for p in problemas)),
     }
