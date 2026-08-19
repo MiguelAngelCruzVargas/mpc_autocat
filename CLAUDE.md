@@ -125,12 +125,43 @@ divisorio interior 0.10. Puertas de 0.90 (acceso) / 0.80 (interior) / 0.70
 `distance` de un hueco se mide a lo largo del eje desde el arranque, siguiendo
 las vueltas. Conviene calcularla sumando tramos, no a ojo.
 
+## 4.quater Obra vial: despejar el eje y no rematar el tramo
+
+Sobre el eje de una calle corren varias cosas a la vez, y por defecto todas
+caen en el mismo lugar. Hay que repartirlas a mano:
+
+- `create_stationing(label_offset=1.50)` manda el número de cadenamiento a un
+  lado; el rótulo de la tubería va al **opuesto**. Sin eso el 0+060 aterriza
+  encima de "TUB. PEAD Ø 30..." y el 0+080 sobre la propia línea de eje.
+- `create_road(cap_ends=False)` deja los extremos abiertos. La calle sigue más
+  allá del dibujo: una línea transversal en el 0+000 se lee como final de obra.
+  Con extremos abiertos no se puede achurar la calzada — el achurado necesita
+  contorno cerrado y la tool lo dice.
+- El sentido del flujo va con `create_flow_arrow`, no con un leader. Un leader
+  cuyo primer tramo mida menos que el doble de la flecha sale **sin punta**:
+  AutoCAD la suprime en silencio, y en un dibujo en metros con DIMASZ de
+  fábrica eso pasa siempre.
+
+## 4.ter Ejes de obra civil: SIEMPRE con `bulges`
+
+Un eje con curva sale de `create_alignment`, que devuelve `points` **y**
+`bulges`. Todo lo que después se ubique por cadenamiento —`create_road`,
+`point_on_road`, `create_stationing`— necesita los dos. Sin los bulges la
+distancia se mide sobre la cuerda y no sobre el arco: los pozos, las marcas y
+todo lo que caiga después del principio de curva queda corrido, y el error no
+se ve en pantalla, aparece en el replanteo.
+
 ## 4.bis Ejes: separación mínima 1.20 m
 
 `create_axis_grid` fusiona solo los ejes más próximos que eso, porque dos
 burbujas a 0.65 m se pisan y las cotas quedan ilegibles. Revisá el 'warning'
 que devuelve: la separación fusionada va como **cota de detalle**, no como eje
 propio.
+
+**Acotar ANTES de tirar los ejes.** Cada cadena de cotas reserva la franja que
+ocupa, así que la burbuja se corre para salir por afuera y la línea de eje
+cruza las cotas — que es el dibujo correcto. Al revés también cierra (las
+cotas se apilan afuera de los globos), pero se lee peor.
 
 Y `set_display_options(linetype_scale=...)` es obligatorio para que los ejes se
 vean como trazo-punto: dibujando en metros con LTSCALE=1 salen continuos.
@@ -172,14 +203,60 @@ grosor propios): `MUROS`, `EJES`, `COTAS`, `TEXTOS`, `MOBILIARIO`, `TERRENO`.
 `create_sheet` ya crea `CAJON` y `ROTULO` — no dibujar nada del plano en esas
 dos, para poder apagarlas y ver solo el dibujo.
 
-## 8. Texto y cotas a escala
+**La capa que ya existe manda.** Si el proyecto trae su nomenclatura
+(`VIAL_EJE`, `HIDRO_RED_DRENAJE`...), configurala con `set_layer` primero y
+pasale el nombre a la tool: las tools solo aplican su color y grosor cuando
+tienen que crear la capa, nunca pisan una ya configurada. `create_road` recibe
+`axis_layer`, `pavement_layer`, `curb_layer` y `sidewalk_layer` justo para eso.
 
-El texto se dimensiona en mm de papel × escala. En un plano 1:100 dibujado en
-metros, un texto de 2.5mm de papel se crea con `height = 0.25`. Para cotas, el
-parámetro `scale` de `create_dimension` cumple ese rol (en metros a 1:100,
-arrancar en `0.1`).
+## 8. Cotas: `create_dimension_chain`, nunca cota por cota
+
+Una planta se acota en **cadenas**, un nivel por tipo de dato: los huecos, los
+ejes, el total. `create_dimension_chain` dibuja la corrida entera y **resuelve
+el offset solo**, apilándose afuera de lo que ya haya en ese lado (incluidas
+las burbujas de eje):
+
+```
+create_dimension_chain(positions=[x0, x_hueco1, x_hueco2, ..., x1],
+                       side="bottom", reference=<y del paño inferior>)
+create_dimension_chain(positions=[x0, x_eje, x1],
+                       side="bottom", reference=<idem>, total=True)
+```
+
+Las cadenas salen a 10, 18 y 26 mm de papel, que es la separación de norma.
+Elegir el `dim_line_y` a mano NO funciona: la burbuja de eje se mueve con el
+tamaño del plano (radio = 2.5% del span), así que un offset fijo que cierra en
+una casa de 9x12 cae adentro del globo en cuanto el plano crece. Ese fue el
+error que dejaba las cotas encima de los círculos.
+
+Para una **sección tipo** —banqueta, calzada, banqueta— van los tramos sueltos
+en la misma línea, con `segments` en vez de `positions`:
+
+```
+create_dimension_chain(segments=[[3.65, 5.15], [-3.50, 3.50], [-5.15, -3.65]],
+                       side="left", reference=<estación de la sección>)
+```
+
+Tres llamadas sueltas darían tres líneas de cota distintas.
+
+`create_dimension` suelta queda para lo puntual: un detalle, una diagonal, un
+hueco aislado. Si la ubicás a mano, verificá con `check_annotations` antes.
+
+La cadena avisa cuando un tramo queda tan corto que el número no entra entre
+las flechas — ese va a una cadena de detalle o a un leader, no apretado.
+
+**El texto** se dimensiona en mm de papel × escala. En un plano 1:100 dibujado
+en metros, un texto de 2.5mm de papel se crea con `height = 0.25`. Para cotas
+ese rol lo cumple `scale`, que es *unidades del modelo por mm de papel* —
+`create_sheet` ya lo deja registrado, así que la cadena lo toma sola y no hace
+falta pasarlo.
 
 ## 9. Verificar antes de dar por terminado
+
+`check_annotations` cierra el ciclo de los otros cuatro `check_*`: ellos miran
+el proyecto, este mira el plano **como dibujo** — que las cotas, las burbujas
+y los rótulos no se encimen. Sale limpio solo mientras se use
+`create_dimension_chain`; da problemas cuando algo se ubicó a mano.
 
 Después de dibujar, `zoom_extents` y `get_drawing_info` para confirmar la
 cantidad de entidades. Si se creó geometría cerrada, `calculate_area` sobre las
@@ -193,9 +270,13 @@ huecos y ejes. Los dos mockean el socket: no necesitan AutoCAD. Cambiar
 `sheet.py` o `arch.py` y volver a correrlos es mucho más rápido que probar a
 mano en AutoCAD.
 
-Antes de dar por buena cualquier cambio en la geometría, correr `test_geom.py` y
-`test_arch.py` — cubren el inglete de las esquinas, el partido de los huecos y
-que los abatimientos barran 90°.
+El preview dibuja también las cotas (las descompone en sus líneas y su
+número), así que el encimado se ve ahí y no recién al abrir el DWG.
+
+Antes de dar por buena cualquier cambio en la geometría, correr `test_geom.py`,
+`test_arch.py` y `test_annotation.py` — cubren el inglete de las esquinas, el
+partido de los huecos, que los abatimientos barran 90° y que las cadenas de
+cota y las burbujas no se pisen en ningún orden de dibujo.
 
 ## Espacio papel vs espacio modelo
 

@@ -16,8 +16,10 @@ import preview
 
 preview.install()
 
-import arch      # noqa: E402  (después de install, para que use el mock)
-import sheet     # noqa: E402
+import annotation  # noqa: E402  (después de install, para que use el mock)
+import arch        # noqa: E402
+import rules       # noqa: E402
+import sheet       # noqa: E402
 
 
 def main() -> int:
@@ -81,14 +83,44 @@ def main() -> int:
     )
     print(f"  muro divisorio: {len(divider['wallHandles'])} tramos")
 
-    # --- 5. Ejes estructurales sobre los muros portantes ---
+    # --- 5. Cotas ANTES que los ejes ---
+    # Este es el orden que hay que respetar: cada cadena reserva su franja, y
+    # las burbujas de eje se corren para salir por afuera. Al revés también
+    # funciona (las cotas se apilan afuera de los globos), pero el dibujo
+    # correcto es este: la línea de eje cruza las cotas, la burbuja no.
+    face_b, face_l = oy - 0.075, ox - 0.075
+    face_r, face_t = ox + house_w + 0.075, oy + house_h + 0.075
+
+    huecos = annotation.create_dimension_chain(
+        positions=[face_l, ox + 1.55, ox + 2.45, ox + 4.75, ox + 6.25, face_r],
+        side="bottom", reference=face_b)
+    ejes_x = annotation.create_dimension_chain(
+        positions=[face_l, ox + 5.0, face_r],
+        side="bottom", reference=face_b, total=True)
+    ejes_y = annotation.create_dimension_chain(
+        positions=[face_b, face_t],
+        side="left", reference=face_l, total=True)
+    print(f"  cotas abajo: huecos a {huecos['offset']:.2f}, "
+          f"ejes a {ejes_x['offset']:.2f}, "
+          f"total a {ejes_x['totalChain']['offset']:.2f}")
+    print(f"  cotas izquierda: total a {ejes_y['totalChain']['offset']:.2f}")
+    for cadena in (huecos, ejes_x, ejes_y):
+        if cadena.get("warning"):
+            print("  AVISO:", cadena["warning"])
+
+    # --- 6. Ejes estructurales sobre los muros portantes ---
     grid = arch.create_axis_grid(
         x_positions=[ox, ox + 5.0, ox + house_w],
         y_positions=[oy, oy + house_h],
     )
-    print(f"  ejes: {grid['verticalAxes']} x {grid['horizontalAxes']}")
+    print(f"  ejes: {grid['verticalAxes']} x {grid['horizontalAxes']}, "
+          f"extensión {grid['extension']:.2f} (corrida para no pisar las cotas)")
 
-    # --- 6. Guardar y verificar ---
+    # --- 7. Que nada del margen se pise ---
+    anot = rules.check_annotations()
+    print("  " + anot["message"])
+
+    # --- 8. Guardar y verificar ---
     w, h = info["sheetSizeModel"]
     out_path = sys.argv[1] if len(sys.argv) > 1 else "preview_plan.svg"
     preview.save(out_path, preview.DRAWN, reference_span=max(w, h))
@@ -97,6 +129,8 @@ def main() -> int:
     fuera = preview.check_inside(preview.DRAWN, w, h)
     if fuera:
         print(f"AVISO: {len(fuera)} puntos fuera de la hoja, p.ej. {fuera[:3]}")
+        return 1
+    if not anot["ok"]:
         return 1
     print("OK: todo el plano entra en la hoja.")
     return 0

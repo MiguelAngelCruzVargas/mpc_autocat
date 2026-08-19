@@ -12,6 +12,8 @@ import math
 from typing import Any, Optional
 
 import autocad_client as acad
+import layers
+import space
 from geom import Axis, Point
 
 LAYER_WALLS = "MUROS"
@@ -59,10 +61,8 @@ def _arc(center: Point, radius: float, start_deg: float, end_deg: float,
 
 def _ensure_layer(name: str, color: int, lineweight: int,
                   linetype: Optional[str] = None) -> None:
-    acad.call("set_layer", {
-        "name": name, "colorIndex": color, "linetype": linetype,
-        "lineweightHundredthsMm": lineweight,
-    })
+    # Solo si no existe: ver layers.py.
+    layers.ensure(name, color, lineweight, linetype)
 
 
 # ----------------------------------------------------------------- muros
@@ -266,6 +266,9 @@ def _draw_opening(axis: Axis, hole: dict[str, Any],
 
 MIN_SEPARACION_EJES = 1.20
 
+# Aire entre la burbuja y lo que ya estaba al margen, en mm de papel.
+GRID_GAP_MM = 2.0
+
 
 def _agrupar_ejes(posiciones: list[float], minimo: float) -> tuple[list[float], list[dict]]:
     """Junta ejes demasiado proximos en uno solo.
@@ -326,36 +329,80 @@ def create_axis_grid(
     radius = bubble_radius or span * 0.025
     height = text_height or radius * 1.1
 
+    aire = space.paper(GRID_GAP_MM)
+    # Piso a la extension: con el eje mas corto que el radio, la burbuja del
+    # eje 1 y la del eje A se juntan en la esquina, porque las dos salen del
+    # mismo vertice en direcciones perpendiculares.
+    ext = max(ext, radius + aire)
+
+    # La burbuja tampoco puede caer encima de lo que ya haya al margen del
+    # dibujo. Si se acoto antes (lo recomendable), el eje se estira hasta
+    # pasar las cadenas de cota y el globo sale afuera, que es como se dibuja
+    # de verdad: la linea de eje CRUZA las cotas, la burbuja no.
+    if not extension:
+        lados = []
+        if xs:
+            a0, a1 = xs[0] - radius, xs[-1] + radius
+            lados.append(space.free_offset("bottom", bottom, a0, a1,
+                                           2 * radius, aire, start=ext))
+            lados.append(space.free_offset("top", top, a0, a1,
+                                           2 * radius, aire, start=ext))
+        if ys:
+            a0, a1 = ys[0] - radius, ys[-1] + radius
+            lados.append(space.free_offset("left", left, a0, a1,
+                                           2 * radius, aire, start=ext))
+            lados.append(space.free_offset("right", right, a0, a1,
+                                           2 * radius, aire, start=ext))
+        # Un solo ext para los cuatro lados: burbujas a distinta distancia
+        # segun el lado se leen como un error de dibujo.
+        ext = max(lados) if lados else ext
+
     _ensure_layer(layer, GRID_COLOR, LW_GRID, GRID_LINETYPE)
 
     bubbles: list[dict[str, Any]] = []
+    handles: list[str] = []
 
     def bubble(center: Point, label: str) -> None:
-        acad.call("create_circle", {
+        handles.append(acad.call("create_circle", {
             "x": center[0], "y": center[1], "z": 0.0, "radius": radius,
             "layer": layer, "lineweight": LW_GRID, "colorIndex": None,
-        })
+        })["handle"])
         # DBText se ancla abajo a la izquierda: corremos el texto para que
         # quede ópticamente centrado en el globo.
-        acad.call("create_text", {
+        handles.append(acad.call("create_text", {
             "text": label,
             "x": center[0] - height * 0.3 * len(label),
             "y": center[1] - height * 0.5,
             "z": 0.0, "height": height, "layer": layer,
             "rotationDeg": 0.0, "lineweight": LW_GRID, "colorIndex": None,
-        })
+        })["handle"])
         bubbles.append({"label": label, "x": center[0], "y": center[1]})
 
     for n, x in enumerate(xs, start=1):
-        _line((x, bottom - ext), (x, top + ext), layer, LW_GRID, GRID_COLOR)
+        handles.append(_line((x, bottom - ext), (x, top + ext), layer,
+                             LW_GRID, GRID_COLOR))
         bubble((x, top + ext + radius), str(n))
         bubble((x, bottom - ext - radius), str(n))
 
     for n, y in enumerate(ys):
         label = _letter(n)
-        _line((left - ext, y), (right + ext, y), layer, LW_GRID, GRID_COLOR)
+        handles.append(_line((left - ext, y), (right + ext, y), layer,
+                             LW_GRID, GRID_COLOR))
         bubble((left - ext - radius, y), label)
         bubble((right + ext + radius, y), label)
+
+    # Queda tomado el anillo de las burbujas, para que una cadena de cotas
+    # posterior se apile por afuera en vez de encimarse.
+    if xs:
+        a0, a1 = xs[0] - radius, xs[-1] + radius
+        for lado, ref in (("bottom", bottom), ("top", top)):
+            space.reserve(*space.band_box(lado, ref, ext, 2 * radius, a0, a1),
+                          what="burbujas de eje " + lado)
+    if ys:
+        a0, a1 = ys[0] - radius, ys[-1] + radius
+        for lado, ref in (("left", left), ("right", right)):
+            space.reserve(*space.band_box(lado, ref, ext, 2 * radius, a0, a1),
+                          what="burbujas de eje " + lado)
 
     resultado_extra = {}
     if fus_x or fus_y:
@@ -372,6 +419,7 @@ def create_axis_grid(
         "verticalAxes": [str(i) for i in range(1, len(xs) + 1)],
         "horizontalAxes": [_letter(i) for i in range(len(ys))],
         "bubbles": bubbles,
+        "handles": handles,
         "bubbleRadius": radius,
         "extension": ext,
     }

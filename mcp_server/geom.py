@@ -161,3 +161,42 @@ class Axis:
             if not clean or math.dist(clean[-1], p) > 1e-7:
                 clean.append(p)
         return clean
+
+
+def densify(points: list[list[float]], bulges: list[float],
+            per_arc: int = 0) -> list[list[float]]:
+    """Convierte una polilinea con arcos (bulges) en una poligonal fina.
+
+    Los offsets paralelos trabajan sobre segmentos rectos, asi que un arco hay
+    que muestrearlo: con pocos puntos la guarnicion de una curva sale poligonal
+    y se nota.
+
+    per_arc=0 lo decide el barrido: un segmento por grado. Con un numero fijo,
+    una curva de 45 grados quedaba 0.5 mm mas corta que su desarrollo real y
+    la ultima marca de cadenamiento (la del final del tramo) no se dibujaba.
+    """
+    out: list[list[float]] = []
+    for i in range(len(points) - 1):
+        p0, p1 = points[i], points[i + 1]
+        b = bulges[i] if i < len(bulges) else 0.0
+        out.append(list(p0))
+        if abs(b) < 1e-12:
+            continue
+        # De bulge a arco: barrido = 4*atan(b), y de ahi centro y radio.
+        barrido = 4.0 * math.atan(b)
+        cuerda = math.dist(p0, p1)
+        if cuerda < 1e-9:
+            continue
+        radio = cuerda / (2.0 * math.sin(abs(barrido) / 2.0))
+        mx, my = (p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0
+        dx, dy = (p1[0] - p0[0]) / cuerda, (p1[1] - p0[1]) / cuerda
+        h = math.sqrt(max(radio * radio - (cuerda / 2.0) ** 2, 0.0))
+        signo = 1.0 if barrido > 0 else -1.0
+        cx, cy = mx - dy * h * signo, my + dx * h * signo
+        a0 = math.atan2(p0[1] - cy, p0[0] - cx)
+        n = per_arc or min(360, max(8, int(math.degrees(abs(barrido)))))
+        for k in range(1, n):
+            a = a0 + barrido * k / n
+            out.append([cx + radio * math.cos(a), cy + radio * math.sin(a)])
+    out.append(list(points[-1]))
+    return out

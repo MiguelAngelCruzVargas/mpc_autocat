@@ -12,6 +12,8 @@ from __future__ import annotations
 import math
 from typing import Any, Optional
 
+import space
+
 # Ambientes a los que una puerta de calle NUNCA debe abrir directo.
 PRIVADOS = ("recamara", "recámara", "dormitorio", "baño", "bano", "closet",
             "clóset", "vestidor")
@@ -417,5 +419,59 @@ def check_walls(walls: list[dict[str, Any]],
         "message": ("La muraria cierra: sin extremos al aire ni tramos sueltos."
                     if not problemas else
                     f"{len(problemas)} problema(s) en los muros: "
+                    + "; ".join(p["problem"] for p in problemas)),
+    }
+
+
+# --------------------------------------------- el aparato de anotacion
+
+def check_annotations(items: Optional[list[dict[str, Any]]] = None,
+                      tolerance: float = 1e-6) -> dict[str, Any]:
+    """Que las cotas, las burbujas y los rotulos no se pisen entre si.
+
+    Los otros check_* miran el proyecto; este mira el plano como dibujo. Es el
+    problema que no se ve hasta abrir el DWG: la cadena de cotas generales
+    cruzando la fila de burbujas de eje, o dos cotas en el mismo nivel.
+
+    Cada tool de anotacion reserva la franja que ocupa (ver space.py), asi que
+    normalmente esto sale limpio solo. Da problemas cuando algo se ubico a
+    mano con create_dimension o create_text eligiendo el offset de memoria.
+
+    items: rectangulos extra a verificar SIN dibujarlos, para preguntar antes
+    de ubicar algo a mano: [{"x0":.., "y0":.., "x1":.., "y1":.., "what":".."}].
+    """
+    extra = []
+    for i, it in enumerate(items or []):
+        try:
+            extra.append({"x0": min(float(it["x0"]), float(it["x1"])),
+                          "y0": min(float(it["y0"]), float(it["y1"])),
+                          "x1": max(float(it["x0"]), float(it["x1"])),
+                          "y1": max(float(it["y0"]), float(it["y1"])),
+                          "what": str(it.get("what", f"item {i + 1}"))})
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"El item {i + 1} necesita x0, y0, x1, y1 numericos. ({exc})")
+
+    choques = space.overlaps(extra, tolerance)
+    problemas = [{
+        "rule": "anotacion encimada",
+        "problem": (f"'{c['a']}' y '{c['b']}' se pisan en "
+                    f"{c['overlapX']:.2f} x {c['overlapY']:.2f}."),
+        "fix": ("Usa create_dimension_chain sin offset y la cadena se apila "
+                "sola afuera de lo que ya haya; si el offset va a mano, "
+                "sacala mas afuera."),
+        "box": c["box"],
+    } for c in choques]
+
+    franjas = space.bands()
+    return {
+        "ok": not problemas,
+        "problems": problemas,
+        "count": len(problemas),
+        "bands": franjas,
+        "message": (f"El margen esta limpio: {len(franjas)} franja(s) de "
+                    "anotacion sin encimarse."
+                    if not problemas else
+                    f"{len(problemas)} encimadura(s): "
                     + "; ".join(p["problem"] for p in problemas)),
     }

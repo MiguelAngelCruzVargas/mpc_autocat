@@ -111,14 +111,18 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 |---|---|---|
 | **Lámina** | **`create_sheet`** | **Cajón (marco + márgenes) y cuadro de rotulación con los datos de la obra. Es el primer paso de todo plano: devuelve el área útil donde va el dibujo** |
 | **Arquitectura** | **`create_walls`** | **Muros con espesor real (doble línea), esquinas a inglete y huecos de puertas/ventanas ya recortados** |
-| | `create_axis_grid` | Ejes estructurales con globos: verticales 1,2,3 y horizontales A,B,C |
+| | `create_axis_grid` | Ejes estructurales con globos: verticales 1,2,3 y horizontales A,B,C; el eje se estira para que el globo no caiga sobre las cotas |
+| **Validación** | `check_program` / `check_layout` / `check_geometry` / `check_walls` | Que el programa entre en el terreno, que la zonificación cumpla, que los recintos existan y que la muraria cierre — antes de dibujar |
+| | `check_annotations` | Que las cotas, las burbujas y los rótulos no se encimen — el plano como dibujo, después de dibujar |
 | Geometría | `create_line` | Línea entre dos puntos 3D |
 | | `create_polyline` | Polilínea 2D a partir de una lista de puntos, abierta o cerrada |
 | | `create_circle` | Círculo por centro y radio |
 | | `create_arc` | Arco por centro, radio y ángulos inicial/final |
 | Anotación | `create_text` | Texto de una línea (DBText) |
 | | `create_mtext` | Texto multilínea con ancho de ajuste |
-| | `create_dimension` | Cota alineada entre dos puntos |
+| | **`create_dimension_chain`** | **Una corrida de cotas seguidas sobre un lado, con el offset resuelto solo: se apila afuera de lo que ya haya, burbujas de eje incluidas** |
+| | `create_dimension` | Cota alineada entre dos puntos (para lo puntual: un detalle, una diagonal) |
+| | `create_flow_arrow` | Puntas de flecha sólidas sobre un eje: el sentido del escurrimiento de un colector |
 | | `create_leader` | Línea de referencia con flecha + texto (callout hacia un detalle) |
 | | `create_hatch` | Rellena una entidad cerrada con un patrón (SOLID para leyendas, ANSI31/AR-CONC etc. para materiales) |
 | Bloques / imágenes | `insert_block` | Inserta un símbolo (bloque), con atributos e importación desde un `.dwg` externo si hace falta |
@@ -234,7 +238,10 @@ Con las tools, no escribiendo un script por plano. El orden es siempre el mismo:
 2. `create_walls` — un llamado por muro o tramo de muros, con sus huecos.
 3. `place_furniture` — todas las piezas de una vez.
 4. `label_rooms` — los nombres, que esquivan lo ya dibujado.
-5. `create_dimension` — las cotas.
+5. `create_dimension_chain` — las cotas, una cadena por nivel.
+6. `create_axis_grid` — los ejes al final, para que los globos salgan por
+   afuera de las cotas y no encima.
+7. `check_annotations` — que nada del margen se pise.
 
 Una casa de tres recámaras sale en unas quince llamadas, porque cada tool
 resuelve una pieza entera: `create_walls` con cinco huecos es *un* llamado, no
@@ -272,7 +279,25 @@ Dos cosas distintas, y las dos hacen falta:
 
 Ojo con la unidad del dibujo: los grosores son absolutos en mm de papel, no
 escalan con el dibujo. Lo que sí escala es el texto/cotas — para eso está el
-parámetro `scale` de `create_dimension`.
+parámetro `scale` de `create_dimension`, que son *unidades del modelo por mm de
+papel*. `create_sheet` lo deja registrado para la lámina en curso, así que
+`create_dimension_chain` lo toma solo.
+
+## El margen del dibujo: cotas y burbujas
+
+Todo lo que se dibuja al costado del plano —cadenas de cota, globos de eje—
+compite por la misma franja, y ahí aparecía el error más visible: la cota
+general cruzando la fila de burbujas. No es un problema de dibujar con cuidado,
+porque las dos cosas se ubican con reglas distintas: la burbuja sale del tamaño
+del plano (radio = 2.5% del span) y la cota salía de un offset elegido a mano.
+En una casa de 9x12 la burbuja ocupa de 0.96 a 1.56 y una cota general a 1.10
+le pasa por adentro.
+
+La solución es que cada cosa **reserve** la franja que ocupa (`space.py`) y que
+la siguiente se apile afuera. Las cadenas salen a 10, 18 y 26 mm de papel; los
+ejes se estiran hasta pasarlas. Sirve en cualquier orden, aunque el dibujo se
+lee mejor acotando primero: así la línea de eje cruza las cotas —que es lo
+correcto— y el globo queda por fuera de todo.
 
 ## Espacio papel: layouts y viewports
 
@@ -350,8 +375,7 @@ $env:ACAD_TEST_IMAGE = "C:\ruta\a\una\imagen.png"
 
 ## Próximos pasos
 
-- Cotas encadenadas y por coordenadas (hoy `create_dimension` hace una alineada
-  por vez).
+- Cotas por coordenadas (ordenadas), para replanteo.
 - Tablas (cuadro de acabados, cuantificación) como objeto `Table` nativo.
 - Exportar a PDF desde un layout (`PLOT` por API).
 - Bloques dinámicos y atributos multilínea.

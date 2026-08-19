@@ -12,9 +12,13 @@ import io
 import math
 from typing import Any
 
+import annotation
 import arch
 import autocad_client
+import furniture
+import layers
 import sheet
+import space
 
 DRAWN: list[dict[str, Any]] = []
 _next_handle = [0x100]
@@ -26,6 +30,9 @@ LAYER_COLORS = {
     "MUROS": "#111111",
     "PUERTAS-VENTANAS": "#356fb5",
     "EJES": "#12879b",
+    "COTAS": "#8a5a1b",
+    "TEXTOS": "#333333",
+    "MOBILIARIO": "#5b6b7a",
 }
 DEFAULT_COLOR = "#444444"
 
@@ -48,15 +55,96 @@ def fake_call(cmd: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     if cmd in ("create_polyline", "create_line", "create_text",
                "create_circle", "create_arc"):
         DRAWN.append({"cmd": cmd, **params})
+    elif cmd == "create_mtext":
+        DRAWN.append({"cmd": "create_text", **params})
+    elif cmd == "create_hatch":
+        # No se dibuja (habria que resolver el contorno), pero queda anotado:
+        # sin esto un test no puede verificar que un simbolo salio relleno.
+        DRAWN.append({"cmd": cmd, **params})
+    elif cmd in ("create_dimension", "create_dimension_rotated"):
+        # Las cotas se descomponen en las lineas y el numero que se ven en el
+        # papel. Sin esto el preview las tiraba en silencio, que es justo por
+        # lo que una cota encimada solo aparecia al abrir el DWG.
+        DRAWN.extend(_expand_dimension(params, rotated=cmd.endswith("rotated")))
     return {"handle": handle, "status": "ok", "area": 0.0}
+
+
+# Altura del numero de cota: DIMTXT por DIMSCALE. El estilo base son 2.5 mm
+# de papel, y 'scale' son las unidades del modelo que mide 1 mm de papel.
+DIM_TXT_MM = 2.5
+
+
+def _expand_dimension(params: dict[str, Any],
+                      rotated: bool) -> list[dict[str, Any]]:
+    p1 = (float(params["x1"]), float(params["y1"]))
+    p2 = (float(params["x2"]), float(params["y2"]))
+    dl = (float(params["dimLineX"]), float(params["dimLineY"]))
+    escala = float(params.get("scale") or 0.1)
+    h = DIM_TXT_MM * escala
+    layer = params.get("layer") or "COTAS"
+    lw = params.get("lineweight") or 13
+
+    if rotated:
+        a = math.radians(float(params.get("angleDeg") or 0.0))
+        u = (math.cos(a), math.sin(a))
+    else:
+        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+        largo = math.hypot(dx, dy) or 1.0
+        u = (dx / largo, dy / largo)
+    n = (-u[1], u[0])
+
+    def pie(p):
+        """El punto proyectado sobre la linea de cota."""
+        t = (dl[0] - p[0]) * n[0] + (dl[1] - p[1]) * n[1]
+        return (p[0] + n[0] * t, p[1] + n[1] * t)
+
+    f1, f2 = pie(p1), pie(p2)
+    valor = math.hypot(f2[0] - f1[0], f2[1] - f1[1])
+
+    def linea(a, b, grosor):
+        return {"cmd": "create_line", "x1": a[0], "y1": a[1], "z1": 0.0,
+                "x2": b[0], "y2": b[1], "z2": 0.0,
+                "layer": layer, "lineweight": grosor, "colorIndex": None}
+
+    salida = [linea(p1, f1, lw), linea(p2, f2, lw), linea(f1, f2, lw)]
+
+    # Marca oblicua en cada extremo, que es como se rematan las cotas de
+    # arquitectura (la flecha se usa en mecanica).
+    t = h * 0.45
+    for f in (f1, f2):
+        d = (u[0] + n[0], u[1] + n[1])
+        salida.append(linea((f[0] - d[0] * t, f[1] - d[1] * t),
+                            (f[0] + d[0] * t, f[1] + d[1] * t), lw))
+
+    medio = ((f1[0] + f2[0]) / 2.0, (f1[1] + f2[1]) / 2.0)
+    texto = params.get("text") or f"{valor:.2f}"
+    ancho = len(texto) * h * CHAR_W_RATIO
+    ang = math.degrees(math.atan2(u[1], u[0]))
+    if ang > 90 or ang < -90:
+        ang += 180
+    ar = math.radians(ang)
+    # Centrado sobre la linea y corrido hacia afuera: el numero va ARRIBA de
+    # la linea de cota, no encima.
+    base = (medio[0] - math.cos(ar) * ancho / 2.0 - n[0] * h * 0.35,
+            medio[1] - math.sin(ar) * ancho / 2.0 - n[1] * h * 0.35)
+    salida.append({"cmd": "create_text", "text": texto,
+                   "x": base[0], "y": base[1], "z": 0.0, "height": h,
+                   "layer": layer, "rotationDeg": ang,
+                   "lineweight": lw, "colorIndex": None})
+    return salida
 
 
 def install() -> None:
     """Desvía todas las llamadas al plugin hacia el mock."""
     DRAWN.clear()
     autocad_client.call = fake_call
-    sheet.acad.call = fake_call
-    arch.acad.call = fake_call
+    for modulo in (sheet, arch, furniture, annotation):
+        modulo.acad.call = fake_call
+    # El preview arranca de cero: sin esto, dos corridas seguidas en el mismo
+    # proceso apilan las cotas sobre franjas del plano anterior.
+    space.clear()
+    layers.reset()
+    furniture.reset_footprints()
 
 
 def _color(entity: dict[str, Any]) -> str:
@@ -67,6 +155,8 @@ def bounds(entities: list[dict[str, Any]]) -> tuple[float, float, float, float]:
     xs: list[float] = []
     ys: list[float] = []
     for e in entities:
+        if "x" not in e and e["cmd"] not in ("create_polyline", "create_line"):
+            continue      # entidades sin geometria propia, como el achurado
         if e["cmd"] == "create_polyline":
             xs += [p[0] for p in e["points"]]
             ys += [p[1] for p in e["points"]]
@@ -157,6 +247,8 @@ def check_inside(entities: list[dict[str, Any]], w: float, h: float,
     """Entidades que se salen de la hoja."""
     out: list[tuple[str, float, float]] = []
     for e in entities:
+        if "x" not in e and e["cmd"] not in ("create_polyline", "create_line"):
+            continue
         if e["cmd"] == "create_polyline":
             coords = [(p[0], p[1]) for p in e["points"]]
         elif e["cmd"] == "create_line":

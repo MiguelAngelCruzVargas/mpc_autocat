@@ -137,6 +137,24 @@ def check_program(lot_width: float, lot_depth: float,
 
 
 @mcp.tool()
+def check_annotations(items: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+    """¿El aparato de anotación se pisa entre sí? Cotas, burbujas de eje y rótulos.
+
+    Los otros check_* miran el proyecto; este mira el plano COMO DIBUJO, que es
+    donde aparece el error que no se ve hasta abrir el DWG: la cadena de cotas
+    generales cruzando la fila de burbujas de eje.
+
+    Normalmente sale limpio solo, porque create_dimension_chain y
+    create_axis_grid reservan la franja que ocupan y se apilan una afuera de
+    otra. Da problemas cuando algo se ubicó a mano eligiendo el offset de
+    memoria — que es exactamente el caso que conviene verificar.
+
+    items: rectángulos a verificar SIN dibujarlos, para preguntar ANTES de
+    ubicar algo a mano: [{"x0":.., "y0":.., "x1":.., "y1":.., "what":".."}]."""
+    return rules_mod.check_annotations(items=items)
+
+
+@mcp.tool()
 def fit_sheet(min_x: float, min_y: float, max_x: float, max_y: float,
                model_units: str = "m",
                sheet_format: Optional[str] = None,
@@ -383,8 +401,13 @@ def create_road(points: list[list[float]], width: float = 7.00,
                  curb_segments: Optional[list[dict[str, Any]]] = None,
                  sidewalk_width: float = 0.0,
                  closed: bool = False, draw_axis: bool = True,
+                 cap_ends: bool = True,
                  pavement_pattern: Optional[str] = None,
-                 pavement_scale: float = 1.0) -> dict[str, Any]:
+                 pavement_scale: float = 1.0,
+                 axis_layer: str = "EJE",
+                 pavement_layer: str = "PAVIMENTO",
+                 curb_layer: str = "GUARNICION",
+                 sidewalk_layer: str = "BANQUETA") -> dict[str, Any]:
     """Calle en planta desde su eje: calzada, guarniciones y banquetas.
 
     Es la tool para trazar una vialidad — no dibujes las paralelas a mano, que
@@ -409,14 +432,26 @@ def create_road(points: list[list[float]], width: float = 7.00,
     eje y por defecto abarcan todo. Sin esto los metros lineales del resumen
     salen siempre 2 x largo, que casi nunca es lo que se construye.
     sidewalk_width: banqueta por fuera de la guarnición; 0 la omite.
+    cap_ends: cerrar o no los extremos del tramo con la línea transversal. En
+    un plano de infraestructura la calle SIGUE más allá del dibujo, así que ese
+    remate se lee como final de obra; ahí va cap_ends=False y los bordes quedan
+    abiertos. Con extremos abiertos no se puede achurar la calzada, porque el
+    achurado necesita un contorno cerrado.
     pavement_pattern: rayado de la calzada, p.ej. 'AR-CONC' para concreto
     hidráulico. Sin patrón queda solo el contorno.
+    axis_layer / pavement_layer / curb_layer / sidewalk_layer: en qué capa va
+    cada elemento, para respetar la nomenclatura del proyecto (VIAL_EJE,
+    VIAL_RODADURA...). Si la capa ya existe se usa tal cual está configurada;
+    solo se crea con color y grosor propios cuando no existe.
 
     Devuelve el largo del eje y las cantidades de obra ya calculadas:
     pavementArea (m2), curbLength (ml de guarnición, contando los dos lados) y
     sidewalkArea — que es lo que va al resumen de obra."""
     return civil_mod.create_road(
+        axis_layer=axis_layer, pavement_layer=pavement_layer,
+        curb_layer=curb_layer, sidewalk_layer=sidewalk_layer,
         points=points, width=width, widths=widths, bulges=bulges,
+        cap_ends=cap_ends,
         curb_width=curb_width, curb_segments=curb_segments,
         sidewalk_width=sidewalk_width, closed=closed, draw_axis=draw_axis,
         pavement_pattern=pavement_pattern, pavement_scale=pavement_scale)
@@ -457,17 +492,22 @@ def create_alignment(start_x: float, start_y: float, start_bearing_deg: float,
 
 @mcp.tool()
 def point_on_road(points: list[list[float]], distance: float,
-                   offset: float = 0.0, closed: bool = False) -> dict[str, Any]:
+                   offset: float = 0.0, closed: bool = False,
+                   bulges: Optional[list[float]] = None) -> dict[str, Any]:
     """Dónde cae un punto ubicado por cadenamiento sobre un eje.
 
     distance: metros desde el arranque del eje, siguiendo las curvas.
     offset: desplazamiento perpendicular (+ es a la izquierda del sentido de
     avance). Con offset=3.5 caés justo en la guarnición de una calle de 7 m.
 
+    bulges: OBLIGATORIO si el eje tiene curvas (los devuelve create_alignment).
+    Sin ellos la distancia se mide sobre la cuerda y no sobre el arco, así que
+    todo lo que ubiques después del principio de curva queda corrido.
+
     Sirve para ubicar un poste, un registro, el arranque de un ramal o una cota
     sin recalcular la geometría de la curva."""
     return civil_mod.point_on_road(points=points, distance=distance,
-                                   offset=offset, closed=closed)
+                                   offset=offset, closed=closed, bulges=bulges)
 
 
 @mcp.tool()
@@ -621,7 +661,9 @@ def create_stationing(points: list[list[float]], interval: float,
                        text_height: float, tick: float = 0.0,
                        start_station: float = 0.0, closed: bool = False,
                        label_every: int = 1, station_format: str = "km",
-                       layer: str = "CADENAMIENTO") -> dict[str, Any]:
+                       layer: str = "CADENAMIENTO",
+                       bulges: Optional[list[float]] = None,
+                       label_offset: float = 0.0) -> dict[str, Any]:
     """Cadenamiento: marcas cada N metros sobre un eje, rotuladas 0+000.
 
     Es cómo se referencia una obra lineal (calle, carretera, colector): cada
@@ -634,13 +676,43 @@ def create_stationing(points: list[list[float]], interval: float,
     es corto.
     start_station: cadenamiento del punto de arranque, por si el tramo no
     empieza en 0.
-    station_format: 'km' rotula 0+020.00 (carretera); 'plain' rotula 20.00, que
-    es como se marca una calle corta."""
-    return ann_mod.create_stationing(points=points, interval=interval,
-                                     text_height=text_height, tick=tick,
-                                     start_station=start_station, closed=closed,
-                                     label_every=label_every,
-                                     station_format=station_format, layer=layer)
+    station_format: 'km' rotula 0+020.00 (carretera); 'short' rotula 0+020, sin
+    decimales, que es lo que va sobre el eje cuando las marcas caen en metros
+    justos; 'plain' rotula 20.00, como se marca una calle corta.
+    bulges: OBLIGATORIO si el eje tiene curvas (los da create_alignment). Sin
+    ellos el cadenamiento se mide sobre la cuerda y las marcas de la curva
+    caen antes de donde van.
+    label_offset: a qué distancia PERPENDICULAR del eje va el número. Por
+    defecto queda apenas afuera de la marca, que alcanza cuando el eje va solo.
+    Si sobre el eje corre algo más —un colector y su rótulo— hay que separarlo
+    (p.ej. 1.50) y mandar lo otro al lado opuesto, o los textos se cruzan."""
+    return ann_mod.create_stationing(
+        points=points, interval=interval, text_height=text_height, tick=tick,
+        start_station=start_station, closed=closed, label_every=label_every,
+        station_format=station_format, layer=layer, bulges=bulges,
+        label_offset=label_offset)
+
+
+@mcp.tool()
+def create_flow_arrow(points: list[list[float]], positions: list[float],
+                      size: float = 0.0,
+                      bulges: Optional[list[float]] = None,
+                      closed: bool = False, reverse: bool = False,
+                      layer: str = "HIDRO_RED_DRENAJE",
+                      color_index: Optional[int] = None) -> dict[str, Any]:
+    """Puntas de flecha SÓLIDAS sobre un eje: el sentido del escurrimiento.
+
+    Un leader que diga "sentido del flujo" no cumple la misma función: en un
+    plano de drenaje la flecha va SOBRE la tubería, repetida a lo largo del
+    tramo, y se lee de un vistazo. Sin ella un colector se puede leer al revés.
+
+    points / bulges: el eje de la tubería (o de la calle).
+    positions: los cadenamientos donde va cada flecha, sobre ese eje.
+    size: largo de la punta; por defecto 1/60 del eje.
+    reverse: apunta contra el sentido de avance del eje."""
+    return ann_mod.create_flow_arrow(
+        points=points, positions=positions, size=size, bulges=bulges,
+        closed=closed, reverse=reverse, layer=layer, color_index=color_index)
 
 
 @mcp.tool()
@@ -834,6 +906,47 @@ def create_dimension_rotated(x1: float, y1: float, x2: float, y2: float,
         "layer": layer, "style": style, "scale": scale, "text": text,
         "lineweight": lineweight, "colorIndex": None,
     })
+
+
+@mcp.tool()
+def create_dimension_chain(side: str, reference: float,
+                           positions: Optional[list[float]] = None,
+                           segments: Optional[list[list[float]]] = None,
+                           offset: float = 0.0, total: bool = False,
+                           scale: float = 0.0,
+                           style: Optional[str] = None,
+                           layer: str = "COTAS",
+                           lineweight: int = 13) -> dict[str, Any]:
+    """Una CORRIDA de cotas seguidas sobre un lado del dibujo. Es la forma
+    normal de acotar una planta: no cota por cota calculando el offset a mano,
+    sino cadenas —los huecos, los ejes, el total— cada una en su nivel.
+
+    El offset se resuelve SOLO: la cadena se apila afuera de lo que ya haya en
+    ese lado, incluidas las burbujas de eje. Es lo que evita el choque clásico
+    de la cota general cruzando los globos, que ningún offset fijo esquiva
+    porque la burbuja se mueve con el tamaño del plano.
+
+    positions: los cortes a lo largo del lado (x para 'bottom'/'top', y para
+    'left'/'right'); sale una cota entre cada par consecutivo.
+    segments: en vez de una corrida seguida, los tramos sueltos que van en esa
+    MISMA línea de cota: [[3.65, 5.15], [-3.50, 3.50], [-5.15, -3.65]]. Es como
+    se acota una sección tipo —banqueta, calzada, banqueta— salteando lo que a
+    esa escala no se puede acotar. Con tres llamadas sueltas saldrían tres
+    líneas de cota distintas, que es justo lo que no se quiere.
+    side: bottom | top | left | right.
+    reference: la coordenada del borde del dibujo desde donde se mide (la y del
+    paño inferior para 'bottom', la x del izquierdo para 'left').
+    offset: 0 = calculado. Ponerlo a mano solo si hay una razón.
+    total: agrega, un nivel más afuera, la cota general de punta a punta.
+    scale: DIMSCALE, unidades del modelo por mm de papel. 0 toma la de la
+    lámina que create_sheet registró — que es lo correcto casi siempre.
+
+    Avisa si un tramo queda tan corto que el número no entra entre las flechas."""
+    return ann_mod.create_dimension_chain(
+        positions=positions, segments=segments,
+        side=side, reference=reference, offset=offset,
+        total=total, scale=scale, style=style, layer=layer,
+        lineweight=lineweight)
 
 
 @mcp.tool()

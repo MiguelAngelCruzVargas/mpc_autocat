@@ -18,6 +18,8 @@ import math
 from typing import Any, Optional
 
 import autocad_client as acad
+import furniture as fur
+import space
 
 # Formatos ISO 216 en mm (ancho, alto), apaisados.
 SHEET_FORMATS: dict[str, tuple[float, float]] = {
@@ -158,6 +160,14 @@ def create_sheet(
             fmt_name = key + " vertical"
 
     mm = _Paper(scale_denominator, model_units)
+
+    # Una lamina nueva es un plano nuevo: la escala que rige pasa a ser esta y
+    # lo ocupado por el plano anterior deja de contar. Sin esto, redibujar el
+    # mismo plano en una sesion larga iba corriendo las cotas cada vez mas
+    # afuera, apilandolas sobre franjas que ya no existen.
+    space.set_scale(mm(1.0))
+    space.clear()
+    fur.reset_footprints()
 
     # Capas propias, para poder apagar el formato y ver solo el dibujo.
     acad.call("set_layer", {"name": LAYER_FRAME, "colorIndex": 7,

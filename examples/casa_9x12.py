@@ -34,6 +34,7 @@ if PREVIEW:
     import preview
     preview.install()
 
+import annotation as ann      # noqa: E402
 import arch          # noqa: E402
 import autocad_client as acad  # noqa: E402
 import furniture as fur        # noqa: E402
@@ -319,33 +320,27 @@ def draw_labels() -> None:
 
 
 def draw_dimensions() -> None:
+    """Cotas en cadena, un nivel por tipo de dato.
+
+    Antes esto elegia los offsets a mano (1.10 la general, 0.605 las
+    parciales) y funcionaba solo mientras la casa midiera 9x12: apenas se
+    agregaban ejes, la general caia adentro de las burbujas. Ahora cada cadena
+    reserva su franja y la siguiente se apila afuera sola.
+    """
     acad.call("set_layer", {"name": "COTAS", "colorIndex": 7,
                             "linetype": None, "lineweightHundredthsMm": 13})
-    off = 1.10
 
-    def dim(p0: list[float], p1: list[float], line: list[float]) -> None:
-        acad.call("create_dimension", {
-            "x1": p0[0], "y1": p0[1], "x2": p1[0], "y2": p1[1],
-            "dimLineX": line[0], "dimLineY": line[1],
-            "layer": "COTAS", "scale": DIM_SCALE,
-            "lineweight": 13, "colorIndex": None,
-        })
+    # Parciales primero, generales despues: el orden de adentro hacia afuera.
+    columnas = ann.create_dimension_chain(
+        positions=[P(x, 0)[0] for x in (0.0, AXIS_VL, AXIS_VR, EXT_W)],
+        side="bottom", reference=P(0, 0)[1], total=True, scale=DIM_SCALE)
+    franjas = ann.create_dimension_chain(
+        positions=[P(0, y)[1] for y in (0.0, AXIS_HL, AXIS_HU, EXT_H)],
+        side="left", reference=P(0, 0)[0], total=True, scale=DIM_SCALE)
 
-    # Generales.
-    dim(P(0, 0), P(EXT_W, 0), P(EXT_W / 2.0, -off))
-    dim(P(0, 0), P(0, EXT_H), P(-off, EXT_H / 2.0))
-
-    # Parciales horizontales: columnas.
-    y_line = -off * 0.55
-    dim(P(0, 0), P(AXIS_VL, 0), P(AXIS_VL / 2.0, y_line))
-    dim(P(AXIS_VL, 0), P(AXIS_VR, 0), P((AXIS_VL + AXIS_VR) / 2.0, y_line))
-    dim(P(AXIS_VR, 0), P(EXT_W, 0), P((AXIS_VR + EXT_W) / 2.0, y_line))
-
-    # Parciales verticales: franjas.
-    x_line = -off * 0.55
-    dim(P(0, 0), P(0, AXIS_HL), P(x_line, AXIS_HL / 2.0))
-    dim(P(0, AXIS_HL), P(0, AXIS_HU), P(x_line, (AXIS_HL + AXIS_HU) / 2.0))
-    dim(P(0, AXIS_HU), P(0, EXT_H), P(x_line, (AXIS_HU + EXT_H) / 2.0))
+    for cadena in (columnas, franjas):
+        if cadena.get("warning"):
+            print("  aviso:", cadena["warning"])
 
 
 # ----------------------------------------------------------------- main

@@ -12,7 +12,8 @@ import math
 from typing import Any, Optional
 
 import autocad_client as acad
-from geom import Axis, Point
+import layers
+from geom import Axis, Point, densify
 
 LAYER_AXIS = "EJE-CALLE"
 LAYER_PAVEMENT = "PAVIMENTO"
@@ -30,9 +31,9 @@ AXIS_COLOR = 1
 
 def _ensure(name: str, color: int, lineweight: int,
             linetype: Optional[str] = None) -> None:
-    acad.call("set_layer", {"name": name, "colorIndex": color,
-                            "linetype": linetype,
-                            "lineweightHundredthsMm": lineweight})
+    # Solo si no existe: una capa ya configurada en el dibujo manda sobre el
+    # default de la tool (ver layers.py).
+    layers.ensure(name, color, lineweight, linetype)
 
 
 def _interp_width(widths: list[list[float]], d: float) -> float:
@@ -116,7 +117,7 @@ def _band(axis: Axis, inner: float, outer: float, layer: str,
           widths: Optional[list[list[float]]] = None,
           inner_factor: float = 0.0, outer_factor: float = 0.0,
           extra_inner: float = 0.0, extra_outer: float = 0.0,
-          samples: int = 0) -> str:
+          samples: int = 0, cap_ends: bool = True) -> str:
     """Franja paralela al eje entre dos distancias (con signo: + es izquierda).
 
     Con `widths` la franja sigue un ancho variable: inner/outer_factor son la
@@ -140,6 +141,17 @@ def _band(axis: Axis, inner: float, outer: float, layer: str,
     else:
         a = axis.offset_vertices(inner)
         b = axis.offset_vertices(outer)
+    if not cap_ends:
+        # Los dos bordes sueltos, sin la linea transversal que cierra la
+        # franja. En un plano de infraestructura el tramo no termina ahi: la
+        # calle sigue, y un remate transversal se lee como final de obra.
+        # Sin contorno cerrado no hay achurado posible.
+        return [acad.call("create_polyline", {
+            "points": [[p[0], p[1]] for p in borde],
+            "closed": False, "layer": layer,
+            "lineweight": lineweight, "colorIndex": color,
+        })["handle"] for borde in (a, b)]
+
     pts = a + list(reversed(b))
 
     handle = acad.call("create_polyline", {
@@ -157,41 +169,9 @@ def _band(axis: Axis, inner: float, outer: float, layer: str,
             })
         except acad.AutoCadError:
             pass   # un patrón inexistente no debe tumbar el trazo
-    return handle
+    return [handle]
 
 
-def _densify(points: list[list[float]], bulges: list[float],
-             per_arc: int = 24) -> list[list[float]]:
-    """Convierte una polilinea con arcos en una poligonal fina.
-
-    Los offsets paralelos trabajan sobre segmentos rectos, asi que un arco hay
-    que muestrearlo: con pocos puntos la guarnicion de una curva sale poligonal
-    y se nota.
-    """
-    out: list[list[float]] = []
-    for i in range(len(points) - 1):
-        p0, p1 = points[i], points[i + 1]
-        b = bulges[i] if i < len(bulges) else 0.0
-        out.append(list(p0))
-        if abs(b) < 1e-12:
-            continue
-        # De bulge a arco: barrido = 4*atan(b), y de ahi centro y radio.
-        barrido = 4.0 * math.atan(b)
-        cuerda = math.dist(p0, p1)
-        if cuerda < 1e-9:
-            continue
-        radio = cuerda / (2.0 * math.sin(abs(barrido) / 2.0))
-        mx, my = (p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0
-        dx, dy = (p1[0] - p0[0]) / cuerda, (p1[1] - p0[1]) / cuerda
-        h = math.sqrt(max(radio * radio - (cuerda / 2.0) ** 2, 0.0))
-        signo = 1.0 if barrido > 0 else -1.0
-        cx, cy = mx - dy * h * signo, my + dx * h * signo
-        a0 = math.atan2(p0[1] - cy, p0[0] - cx)
-        for k in range(1, per_arc):
-            a = a0 + barrido * k / per_arc
-            out.append([cx + radio * math.cos(a), cy + radio * math.sin(a)])
-    out.append(list(points[-1]))
-    return out
 
 
 def create_road(
@@ -204,6 +184,7 @@ def create_road(
     sidewalk_width: float = 0.0,
     closed: bool = False,
     draw_axis: bool = True,
+    cap_ends: bool = True,
     pavement_pattern: Optional[str] = None,
     pavement_scale: float = 1.0,
     axis_layer: str = LAYER_AXIS,
@@ -217,6 +198,11 @@ def create_road(
     width: ancho total de calzada (de guarnición a guarnición).
     curb_width: ancho de la guarnición, a cada lado, por fuera de la calzada.
     sidewalk_width: ancho de banqueta por fuera de la guarnición; 0 la omite.
+    cap_ends: cerrar o no los extremos del tramo con la línea transversal. En
+    un plano de infraestructura la calle SIGUE más allá del dibujo, así que el
+    remate transversal se lee como final de obra; ahí va cap_ends=False y los
+    bordes quedan abiertos (o se remata con una matchline). Sin contorno
+    cerrado no se puede achurar la calzada.
 
     Devuelve el largo del eje, que es el dato con el que se cuantifica la obra
     (metros lineales de guarnición, metros cuadrados de pavimento).
@@ -233,7 +219,7 @@ def create_road(
 
     eje_dibujo = points
     if bulges and any(abs(b) > 1e-12 for b in bulges):
-        points = _densify(points, bulges)
+        points = densify(points, bulges)
 
     axis = Axis([(p[0], p[1]) for p in points], closed=closed)
     half = width / 2.0
@@ -241,10 +227,17 @@ def create_road(
 
     # --- Calzada ---
     _ensure(pavement_layer, 8, LW_PAVEMENT)
-    result["pavementHandle"] = _band(
+    if pavement_pattern and not cap_ends:
+        raise ValueError(
+            "No se puede achurar la calzada con cap_ends=False: el achurado "
+            "necesita un contorno cerrado y los bordes quedan abiertos. "
+            "Elegí uno de los dos.")
+    calzada = _band(
         axis, -half, half, pavement_layer, LW_PAVEMENT, closed,
         pavement_pattern, pavement_scale,
-        widths=widths, inner_factor=-0.5, outer_factor=0.5)
+        widths=widths, inner_factor=-0.5, outer_factor=0.5, cap_ends=cap_ends)
+    result["pavementHandle"] = calzada[0]
+    result["pavementHandles"] = calzada
 
     # --- Guarniciones ---
     # Por defecto van completas de los dos lados; con curb_segments se indica
@@ -290,37 +283,41 @@ def create_road(
                     ml_guarnicion += d1 - d0
             result["curbHandles"] = handles
         else:
-            result["curbHandles"] = [
+            result["curbHandles"] = (
                 _band(axis, half, half + curb_width, curb_layer, LW_CURB, closed,
                       widths=widths, inner_factor=0.5, outer_factor=0.5,
-                      extra_inner=0.0, extra_outer=curb_width),
-                _band(axis, -half - curb_width, -half, curb_layer, LW_CURB, closed,
-                      widths=widths, inner_factor=-0.5, outer_factor=-0.5,
-                      extra_inner=-curb_width, extra_outer=0.0),
-            ]
+                      extra_inner=0.0, extra_outer=curb_width, cap_ends=cap_ends)
+                + _band(axis, -half - curb_width, -half, curb_layer, LW_CURB,
+                        closed, widths=widths, inner_factor=-0.5,
+                        outer_factor=-0.5, extra_inner=-curb_width,
+                        extra_outer=0.0, cap_ends=cap_ends))
             ml_guarnicion = largo_eje * 2
 
     # --- Banquetas ---
     if sidewalk_width > 0:
         _ensure(sidewalk_layer, 9, LW_SIDEWALK)
         base = half + curb_width
-        result["sidewalkHandles"] = [
+        result["sidewalkHandles"] = (
             _band(axis, base, base + sidewalk_width, sidewalk_layer,
-                  LW_SIDEWALK, closed),
-            _band(axis, -base - sidewalk_width, -base, sidewalk_layer,
-                  LW_SIDEWALK, closed),
-        ]
+                  LW_SIDEWALK, closed, cap_ends=cap_ends)
+            + _band(axis, -base - sidewalk_width, -base, sidewalk_layer,
+                    LW_SIDEWALK, closed, cap_ends=cap_ends))
 
     # --- Eje, al final para que quede por encima del relleno ---
     if draw_axis:
         _ensure(axis_layer, AXIS_COLOR, LW_AXIS, AXIS_LINETYPE)
         # El eje se dibuja con sus arcos reales, no con la version densificada.
-        acad.call("create_polyline", {
+        # ByLayer: el color lo manda la capa. Forzarlo por entidad hacia que
+        # una capa configurada por el proyecto (VIAL_EJE en amarillo) se viera
+        # igual roja, que es justo lo que la nomenclatura propia trata de
+        # evitar. AXIS_COLOR queda solo como color con el que se CREA la capa
+        # si no existe.
+        result["axisHandle"] = acad.call("create_polyline", {
             "points": [[p[0], p[1]] for p in eje_dibujo],
             "bulges": bulges,
             "closed": closed, "layer": axis_layer,
-            "lineweight": LW_AXIS, "colorIndex": AXIS_COLOR,
-        })
+            "lineweight": LW_AXIS, "colorIndex": None,
+        })["handle"]
 
     largo = axis.total_length
     if widths:
@@ -346,20 +343,31 @@ def create_road(
 
 
 def road_edge(points: list[list[float]], offset: float,
-              closed: bool = False) -> list[list[float]]:
+              closed: bool = False,
+              bulges: Optional[list[float]] = None) -> list[list[float]]:
     """Los vértices de una paralela al eje, sin dibujar nada.
 
     Sirve para ubicar cosas respecto de la calle —un poste, el arranque de un
     ramal, dónde cae una cota— sin tener que recalcular el offset a mano.
     """
+    if bulges and any(abs(b) > 1e-12 for b in bulges):
+        points = densify(points, bulges)
     axis = Axis([(p[0], p[1]) for p in points], closed=closed)
     return [[p[0], p[1]] for p in axis.offset_vertices(offset)]
 
 
 def point_on_road(points: list[list[float]], distance: float,
-                  offset: float = 0.0, closed: bool = False) -> dict[str, Any]:
+                  offset: float = 0.0, closed: bool = False,
+                  bulges: Optional[list[float]] = None) -> dict[str, Any]:
     """Punto a una distancia dada del arranque del eje, y opcionalmente
-    desplazado perpendicularmente. Es cómo se ubica algo por cadenamiento."""
+    desplazado perpendicularmente. Es cómo se ubica algo por cadenamiento.
+
+    bulges: si el eje tiene curvas, hay que pasarlos. Sin ellos la distancia
+    se mide sobre la CUERDA y no sobre el arco, y todo lo que se ubique
+    después del principio de curva queda corrido varios centímetros.
+    """
+    if bulges and any(abs(b) > 1e-12 for b in bulges):
+        points = densify(points, bulges)
     axis = Axis([(p[0], p[1]) for p in points], closed=closed)
     p = axis.offset_point_at(distance, offset)
     seg, _ = axis.segment_at(distance)
@@ -573,9 +581,9 @@ def create_intersection(main_points: list[list[float]],
         raise ValueError("El radio de acuerdo tiene que ser > 0.")
 
     main = Axis([(p[0], p[1]) for p in (
-        _densify(main_points, main_bulges) if main_bulges else main_points)])
+        densify(main_points, main_bulges) if main_bulges else main_points)])
     branch = Axis([(p[0], p[1]) for p in (
-        _densify(branch_points, branch_bulges) if branch_bulges else branch_points)])
+        densify(branch_points, branch_bulges) if branch_bulges else branch_points)])
 
     # Donde nace el ramal, medido sobre la principal.
     origen = branch.points[0]

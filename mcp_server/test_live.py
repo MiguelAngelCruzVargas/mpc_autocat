@@ -20,11 +20,14 @@ import traceback
 import math
 
 import annotation as ann
+import arch
 import autocad_client as acad
 import civil
 import furniture as fur
 import profile as prof
+import rules
 import sheet
+import space
 
 KEEP = "--keep" in sys.argv
 BASE_X, BASE_Y = 500.0, 0.0   # lejos de cualquier dibujo real
@@ -716,6 +719,45 @@ def t_mobiliario_y_rotulos():
     return f"rotulo dentro del ambiente, area {et['area']} m2"
 
 
+def t_cadena_de_cotas():
+    space.clear()
+    space.set_scale(0.05)   # 1:50 en metros
+    x0, y0 = BASE_X + 800, BASE_Y + 100
+    huecos = ann.create_dimension_chain(
+        [x0, x0 + 1.5, x0 + 2.4, x0 + 9.0], "bottom", y0, layer="PRUEBA")
+    ejes = ann.create_dimension_chain(
+        [x0, x0 + 4.0, x0 + 9.0], "bottom", y0, layer="PRUEBA", total=True)
+    created.extend(huecos["handles"] + ejes["handles"]
+                   + ejes["totalChain"]["handles"])
+    niveles = [huecos["offset"], ejes["offset"], ejes["totalChain"]["offset"]]
+    if niveles != sorted(niveles):
+        raise RuntimeError(f"las cadenas no se apilaron hacia afuera: {niveles}")
+    return "niveles a " + ", ".join(f"{n:.2f}" for n in niveles)
+
+
+def t_cotas_y_burbujas_no_se_pisan():
+    """El bug que motivo todo esto, contra el dibujo real."""
+    space.clear()
+    space.set_scale(0.05)
+    x0, y0 = BASE_X + 830, BASE_Y + 100
+    cadena = ann.create_dimension_chain(
+        [x0, x0 + 4.0, x0 + 9.0], "bottom", y0, layer="PRUEBA", total=True)
+    grid = arch.create_axis_grid(
+        x_positions=[x0, x0 + 4.0, x0 + 9.0],
+        y_positions=[y0, y0 + 12.0], layer="PRUEBA")
+    created.extend(cadena["handles"] + cadena["totalChain"]["handles"]
+                   + grid["handles"])
+    r = rules.check_annotations()
+    if not r["ok"]:
+        raise RuntimeError(r["message"])
+    burbuja = min(b["y"] for b in grid["bubbles"]) + grid["bubbleRadius"]
+    cota = cadena["totalChain"]["band"][1]
+    if burbuja >= cota:
+        raise RuntimeError(
+            f"la burbuja llega a {burbuja:.2f} y la cota arranca en {cota:.2f}")
+    return f"{len(space.bands())} franjas, sin encimarse"
+
+
 PRUEBAS = [
     ("ping", t_ping),
     ("create_hatch SOLID", t_hatch_solid),
@@ -777,6 +819,8 @@ PRUEBAS = [
     ("corte por capas a escala", t_corte_por_capas),
     ("lamina con cajon y rotulo", t_lamina),
     ("mobiliario + rotulo que esquiva", t_mobiliario_y_rotulos),
+    ("cadena de cotas que se apila sola", t_cadena_de_cotas),
+    ("cotas y burbujas sin encimarse", t_cotas_y_burbujas_no_se_pisan),
 ]
 
 
