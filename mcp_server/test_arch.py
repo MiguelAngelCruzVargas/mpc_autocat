@@ -164,12 +164,64 @@ def test_letras_de_eje():
     check("eje 26 -> AA", arch._letter(26), "AA")
 
 
+def test_convencion_de_rotulos() -> None:
+    """La convencion no es universal: letras en los verticales tambien existe."""
+    r = arch.create_axis_grid(x_positions=[0.0, 4.5, 9.0],
+                              y_positions=[0.0, 5.0, 10.0],
+                              x_labels="letters", y_labels="numbers")
+    check("verticales con letras", r["verticalAxes"], ["A", "B", "C"])
+    check("horizontales con numeros", r["horizontalAxes"], ["1", "2", "3"])
+    etiquetas = {b["label"] for b in r["bubbles"]}
+    check("las burbujas dicen lo mismo", etiquetas, {"A", "B", "C", "1", "2", "3"})
+
+    d = arch.create_axis_grid(x_positions=[0.0, 4.5], y_positions=[0.0, 5.0])
+    check("el default no cambia", d["verticalAxes"] + d["horizontalAxes"],
+          ["1", "2", "A", "B"])
+    check_raises("rotulo invalido",
+                 lambda: arch.create_axis_grid(x_positions=[0.0, 4.5],
+                                               x_labels="romanos"),
+                 "numbers")
+
+
+def test_vano_pass_no_crea_capa_de_huecos() -> None:
+    """Una trabe de liga no tiene puertas: la capa no tiene por que existir."""
+    creadas = []
+    real = arch.acad.call
+
+    def espia(cmd, params=None):
+        if cmd == "set_layer":
+            creadas.append((params or {}).get("name"))
+        return real(cmd, params or {})
+
+    arch.acad.call = espia
+    try:
+        import layers
+        layers.reset()
+        arch.create_walls(points=[[0.0, 0.0], [0.0, 9.7]], thickness=0.20,
+                          layer="ESTR_TRABES_LIGA",
+                          openings=[{"distance": 4.85, "width": 0.30,
+                                     "type": "pass"}])
+        check("no crea PUERTAS-VENTANAS por un vano limpio",
+              "PUERTAS-VENTANAS" in creadas, False)
+
+        creadas.clear()
+        layers.reset()
+        arch.create_walls(points=[[0.0, 0.0], [0.0, 9.7]], thickness=0.15,
+                          openings=[{"distance": 4.85, "width": 0.90,
+                                     "type": "door"}])
+        check("pero si la crea cuando hay una puerta",
+              "PUERTAS-VENTANAS" in creadas, True)
+    finally:
+        arch.acad.call = real
+
+
 def main() -> int:
     for fn in [test_muro_recto, test_muro_con_hueco, test_perimetro_cerrado,
                test_perimetro_con_huecos_no_deja_junta,
                test_abatimiento_siempre_90, test_puerta_abre_del_lado_pedido,
                test_ventana, test_errores_claros, test_ejes,
-               test_letras_de_eje]:
+               test_letras_de_eje, test_convencion_de_rotulos,
+               test_vano_pass_no_crea_capa_de_huecos]:
         print(fn.__name__)
         fn()
 

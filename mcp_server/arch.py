@@ -183,7 +183,15 @@ def create_walls(
 
     opening_handles: list[dict[str, Any]] = []
     if draw_symbols and holes:
-        _ensure_layer(LAYER_OPENINGS, 7, LW_OPENING)
+        # Solo si algun hueco dibuja algo. Un vano 'pass' no tiene simbolo, y
+        # crear la capa igual dejaba una PUERTAS-VENTANAS vacia en planos donde
+        # no hay ni puertas ni ventanas -una cimentacion, por ejemplo, donde
+        # los "huecos" son el paso del dado por la trabe de liga.
+        con_simbolo = [h for h in holes
+                       if str(h.get("type", "door")).lower()
+                       not in ("pass", "vano", "opening")]
+        if con_simbolo:
+            _ensure_layer(LAYER_OPENINGS, 7, LW_OPENING)
         for hole in holes:
             opening_handles.append(_draw_opening(axis, hole, thickness))
 
@@ -307,10 +315,22 @@ def create_axis_grid(
     text_height: float = 0.0,
     layer: str = LAYER_GRID,
     min_spacing: float = MIN_SEPARACION_EJES,
+    x_labels: str = "numbers",
+    y_labels: str = "letters",
 ) -> dict[str, Any]:
-    """Ejes estructurales con globos numerados: verticales 1,2,3 y horizontales A,B,C."""
+    """Ejes estructurales con globos: por defecto verticales 1,2,3 y horizontales A,B,C.
+
+    x_labels / y_labels: 'numbers' o 'letters'. La convencion no es universal
+    -en mucho plano estructural las letras van en los ejes verticales y los
+    numeros en los horizontales-, y el nombre de cada interseccion (B-2, A-1)
+    sale de ahi, asi que tiene que poder elegirse.
+    """
     if not (x_positions or y_positions):
         raise ValueError("Hay que pasar x_positions y/o y_positions.")
+    for nombre, modo in (("x_labels", x_labels), ("y_labels", y_labels)):
+        if modo not in ("numbers", "letters"):
+            raise ValueError(
+                f"{nombre} tiene que ser 'numbers' o 'letters', no {modo!r}.")
     xs, fus_x = _agrupar_ejes(list(x_positions or []), min_spacing)
     ys, fus_y = _agrupar_ejes(list(y_positions or []), min_spacing)
 
@@ -378,14 +398,16 @@ def create_axis_grid(
         })["handle"])
         bubbles.append({"label": label, "x": center[0], "y": center[1]})
 
-    for n, x in enumerate(xs, start=1):
+    etiquetas_x = [_rotulo(i, x_labels) for i in range(len(xs))]
+    etiquetas_y = [_rotulo(i, y_labels) for i in range(len(ys))]
+
+    for label, x in zip(etiquetas_x, xs):
         handles.append(_line((x, bottom - ext), (x, top + ext), layer,
                              LW_GRID, GRID_COLOR))
-        bubble((x, top + ext + radius), str(n))
-        bubble((x, bottom - ext - radius), str(n))
+        bubble((x, top + ext + radius), label)
+        bubble((x, bottom - ext - radius), label)
 
-    for n, y in enumerate(ys):
-        label = _letter(n)
+    for label, y in zip(etiquetas_y, ys):
         handles.append(_line((left - ext, y), (right + ext, y), layer,
                              LW_GRID, GRID_COLOR))
         bubble((left - ext - radius, y), label)
@@ -416,13 +438,17 @@ def create_axis_grid(
 
     return {
         **resultado_extra,
-        "verticalAxes": [str(i) for i in range(1, len(xs) + 1)],
-        "horizontalAxes": [_letter(i) for i in range(len(ys))],
+        "verticalAxes": etiquetas_x,
+        "horizontalAxes": etiquetas_y,
         "bubbles": bubbles,
         "handles": handles,
         "bubbleRadius": radius,
         "extension": ext,
     }
+
+
+def _rotulo(index: int, modo: str) -> str:
+    return str(index + 1) if modo == "numbers" else _letter(index)
 
 
 def _letter(index: int) -> str:

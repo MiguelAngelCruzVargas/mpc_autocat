@@ -262,6 +262,7 @@ def create_walls(
     layer: str = "MUROS",
     lineweight: int = 50,
     min_segment: float = 0.40,
+    draw_symbols: bool = True,
 ) -> dict[str, Any]:
     """Muros con ESPESOR REAL (doble línea) a lo largo de un eje, con los huecos
     de puertas y ventanas ya recortados. Es la tool para dibujar muros — no uses
@@ -290,11 +291,17 @@ def create_walls(
     sale del muro o dos huecos se pisan, tira un error explicando el problema en
     vez de dibujar algo roto.
 
+    draw_symbols: dibujar o no el símbolo de cada hueco (hoja, abatimiento,
+    vidrio). Se apaga cuando la tool se usa para algo que no es un muro —una
+    trabe de liga con el paso de los dados, por ejemplo, donde los "huecos" no
+    son puertas.
+
     min_segment: avisa (en 'warning') cuando un hueco deja un tramo de muro más
     corto que esto — un machón de 30 cm entre la esquina y una puerta no se
     construye, y en el plano se ve como un rectangulito flotando. El muro se
     dibuja igual; el aviso es para corregir el proyecto."""
     return arch_mod.create_walls(
+        draw_symbols=draw_symbols,
         points=points, thickness=thickness, closed=closed,
         openings=openings, layer=layer, lineweight=lineweight,
         min_segment=min_segment,
@@ -312,6 +319,8 @@ def create_axis_grid(
     text_height: float = 0.0,
     layer: str = "EJES",
     min_spacing: float = 1.20,
+    x_labels: str = "numbers",
+    y_labels: str = "letters",
 ) -> dict[str, Any]:
     """Ejes estructurales con sus globos: los verticales numerados 1, 2, 3... y
     los horizontales con letras A, B, C..., en línea de eje y trazo.
@@ -330,8 +339,15 @@ def create_axis_grid(
     detalle. Avisa en 'warning' cuáles fusionó.
 
     Llamala DESPUÉS de create_walls, con las coordenadas de los ejes de los
-    muros portantes."""
+    muros portantes.
+    x_labels / y_labels: 'numbers' o 'letters'. Por defecto los verticales van
+    1,2,3 y los horizontales A,B,C, pero la convención no es universal: en
+    mucho plano estructural las letras van en los ejes verticales. El nombre de
+    cada intersección (B-2, A-1) sale de ahí, así que conviene fijarlo antes de
+    rotular nada.
+    """
     return arch_mod.create_axis_grid(
+        x_labels=x_labels, y_labels=y_labels,
         x_positions=x_positions, y_positions=y_positions,
         x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max,
         extension=extension, bubble_radius=bubble_radius,
