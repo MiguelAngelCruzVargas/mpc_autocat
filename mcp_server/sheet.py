@@ -14,6 +14,7 @@ unidades del modelo según la escala y la unidad en la que se dibuja.
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Optional
 
 import autocad_client as acad
@@ -296,9 +297,16 @@ def fit_sheet(min_x: float, min_y: float, max_x: float, max_y: float,
             if allow_portrait:
                 yield n, h, w, "vertical"
 
+    # El rotulo ocupa la esquina inferior derecha: si no se descuenta, el
+    # dibujo se centra sobre el y quedan encimados.
+    alto_rotulo = ROW_PROJECT_MM + 3 * ROW_MM + ROW_FOOT_MM
+
+    def libre(w_hoja, h_hoja):
+        return (w_hoja - MARGIN_LEFT_MM - MARGIN_MM - 2 * margin_mm,
+                h_hoja - 2 * MARGIN_MM - alto_rotulo - 2 * margin_mm)
+
     def entra(w_hoja, h_hoja, esc):
-        libre_w = w_hoja - MARGIN_LEFT_MM - MARGIN_MM - 2 * margin_mm
-        libre_h = h_hoja - 2 * MARGIN_MM - 2 * margin_mm
+        libre_w, libre_h = libre(w_hoja, h_hoja)
         return (ancho * mm_por_unidad / esc <= libre_w
                 and alto * mm_por_unidad / esc <= libre_h)
 
@@ -337,9 +345,12 @@ def fit_sheet(min_x: float, min_y: float, max_x: float, max_y: float,
     factor = esc / mm_por_unidad          # mm de papel -> unidades de modelo
     hoja_w_modelo, hoja_h_modelo = w_hoja * factor, h_hoja * factor
 
+    # El dibujo se centra en la franja util, que es la que queda ARRIBA del
+    # rotulo, no en la hoja entera.
     cx, cy = (min_x + max_x) / 2.0, (min_y + max_y) / 2.0
     origin_x = cx - hoja_w_modelo / 2.0 + (MARGIN_LEFT_MM - MARGIN_MM) / 2.0 * factor
-    origin_y = cy - hoja_h_modelo / 2.0
+    centro_util_mm = MARGIN_MM + alto_rotulo + (h_hoja - 2 * MARGIN_MM - alto_rotulo) / 2.0
+    origin_y = cy - centro_util_mm * factor
 
     return {
         "sheet_format": nombre,
@@ -357,3 +368,119 @@ def fit_sheet(min_x: float, min_y: float, max_x: float, max_y: float,
         "paperWidthUsed": ancho * mm_por_unidad / esc,
         "paperHeightUsed": alto * mm_por_unidad / esc,
     }
+
+
+# ------------------------------------------ validacion del programa vs lote
+
+def check_program(lot_width: float, lot_depth: float,
+                  spaces: list[dict[str, Any]],
+                  outdoor: Optional[list[dict[str, Any]]] = None,
+                  wall_thickness: float = 0.15,
+                  circulation_factor: float = 0.12,
+                  model_units: str = "m") -> dict[str, Any]:
+    """¿El programa que pidió el cliente entra en el terreno?
+
+    Se responde ANTES de dibujar. Un programa que no cierra no se arregla
+    dibujando con cuidado: hay que decirlo, con el número, para que la decisión
+    de qué achicar la tome quien corresponde y no quede escondida en un plano
+    que después no se puede construir.
+
+    spaces: [{"name": "Recámara", "width": 3.85, "depth": 4.00}] o
+            [{"name": "Recámara", "area": 15.40}]
+    outdoor: áreas descubiertas que se restan del terreno (cochera, jardín,
+             patio), en el mismo formato.
+    wall_thickness: para estimar cuánto se lleva la mampostería.
+    circulation_factor: pasillos y vestíbulos como fracción del programa; 0.12
+             es lo habitual en vivienda.
+
+    Devuelve fits (True/False), el déficit en m2 y en porcentaje, y qué habría
+    que hacer para que cierre.
+    """
+    if lot_width <= 0 or lot_depth <= 0:
+        raise ValueError("El terreno tiene que tener dimensiones positivas.")
+    if not spaces:
+        raise ValueError("Hay que pasar al menos un ambiente en 'spaces'.")
+
+    def area_de(item: dict[str, Any], donde: str) -> float:
+        if item.get("area") is not None:
+            a = float(item["area"])
+        elif item.get("width") is not None and item.get("depth") is not None:
+            a = float(item["width"]) * float(item["depth"])
+        else:
+            raise ValueError(
+                f"{donde} '{item.get('name', '?')}': hace falta 'area' o "
+                "'width' y 'depth'.")
+        if a <= 0:
+            raise ValueError(f"{donde} '{item.get('name','?')}': área <= 0.")
+        return a
+
+    area_lote = lot_width * lot_depth
+    descubierto = [{"name": o.get("name", "descubierto"),
+                    "area": area_de(o, "Área descubierta")}
+                   for o in (outdoor or [])]
+    area_descubierta = sum(o["area"] for o in descubierto)
+
+    programa = [{"name": s.get("name", "?"), "area": area_de(s, "Ambiente")}
+                for s in spaces]
+    area_programa = sum(p["area"] for p in programa)
+    circulacion = area_programa * circulation_factor
+    necesario = area_programa + circulacion
+
+    bruto = area_lote - area_descubierta
+    if bruto <= 0:
+        raise ValueError(
+            f"Las áreas descubiertas ({area_descubierta:.2f} m2) ocupan todo el "
+            f"terreno ({area_lote:.2f} m2): no queda nada para construir.")
+
+    # Mampostería: perímetro del bruto mas los divisorios, estimados a partir
+    # de la cantidad de ambientes.
+    lado = math.sqrt(bruto)
+    muros = (4 * lado + 2.2 * lado * len(programa) ** 0.5) * wall_thickness
+    util = bruto - muros
+
+    deficit = necesario - util
+    entra = deficit <= 0
+
+    resultado = {
+        "fits": entra,
+        "lotArea": round(area_lote, 2),
+        "outdoorArea": round(area_descubierta, 2),
+        "grossBuildable": round(bruto, 2),
+        "wallsEstimate": round(muros, 2),
+        "usableArea": round(util, 2),
+        "programArea": round(area_programa, 2),
+        "circulation": round(circulacion, 2),
+        "required": round(necesario, 2),
+        "deficit": round(max(deficit, 0.0), 2),
+        "surplus": round(max(-deficit, 0.0), 2),
+        "spaces": programa,
+        "outdoorSpaces": descubierto,
+    }
+
+    if entra:
+        resultado["message"] = (
+            f"El programa entra: hacen falta {necesario:.2f} m2 y hay "
+            f"{util:.2f} m2 útiles ({resultado['surplus']:.2f} m2 de holgura).")
+        return resultado
+
+    # No entra: se dice cuanto falta y por donde puede salir.
+    pct = deficit / necesario * 100.0
+    opciones = []
+    if descubierto:
+        mayor = max(descubierto, key=lambda o: o["area"])
+        opciones.append(
+            f"reducir {mayor['name']} ({mayor['area']:.2f} m2 hoy) en "
+            f"{min(deficit, mayor['area'] * 0.6):.2f} m2")
+    mayor_amb = max(programa, key=lambda p: p["area"])
+    opciones.append(
+        f"achicar {mayor_amb['name']} ({mayor_amb['area']:.2f} m2), el ambiente "
+        "más grande del programa")
+    opciones.append(
+        f"repartir el faltante entre todos los ambientes: {pct:.1f}% cada uno")
+
+    resultado["message"] = (
+        f"NO ENTRA: el programa pide {necesario:.2f} m2 (incluida circulación) "
+        f"y el terreno deja {util:.2f} m2 útiles. Faltan {deficit:.2f} m2, "
+        f"un {pct:.1f}%.")
+    resultado["options"] = opciones
+    return resultado

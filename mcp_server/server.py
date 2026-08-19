@@ -34,6 +34,36 @@ def _style(lineweight: Optional[int], color_index: Optional[int]) -> dict[str, A
 # ------------------------------------------------- Lámina (cajón + rotulación)
 
 @mcp.tool()
+def check_program(lot_width: float, lot_depth: float,
+                   spaces: list[dict[str, Any]],
+                   outdoor: Optional[list[dict[str, Any]]] = None,
+                   wall_thickness: float = 0.15,
+                   circulation_factor: float = 0.12,
+                   model_units: str = "m") -> dict[str, Any]:
+    """¿El programa que pidió el cliente entra en el terreno?
+
+    LLAMALA ANTES DE DIBUJAR, siempre que te den un terreno y una lista de
+    ambientes con medidas. Un programa que no cierra no se arregla dibujando
+    con cuidado: hay que avisarlo con el número, para que la decisión de qué
+    achicar la tome el cliente y no quede escondida en un plano que después no
+    se puede construir.
+
+    spaces: [{"name": "Recámara", "width": 3.85, "depth": 4.00}] o con
+    "area" directamente.
+    outdoor: áreas descubiertas que se restan del terreno (cochera, jardín,
+    patio de servicio), mismo formato.
+    circulation_factor: pasillos y vestíbulos como fracción del programa; 0.12
+    es lo habitual en vivienda.
+
+    Devuelve 'fits', el déficit en m2 y en porcentaje, y en 'options' por dónde
+    podría salir (reducir la cochera, achicar el ambiente mayor, repartir)."""
+    return sheet_mod.check_program(
+        lot_width=lot_width, lot_depth=lot_depth, spaces=spaces,
+        outdoor=outdoor, wall_thickness=wall_thickness,
+        circulation_factor=circulation_factor, model_units=model_units)
+
+
+@mcp.tool()
 def fit_sheet(min_x: float, min_y: float, max_x: float, max_y: float,
                model_units: str = "m",
                sheet_format: Optional[str] = None,
