@@ -26,7 +26,7 @@ LW_CURB = 50
 LW_SIDEWALK = 25
 
 AXIS_LINETYPE = "CENTER"
-AXIS_COLOR = 1
+AXIS_COLOR = layers.COLOR_EJES
 
 
 def _ensure(name: str, color: int, lineweight: int,
@@ -226,7 +226,7 @@ def create_road(
     result: dict[str, Any] = {}
 
     # --- Calzada ---
-    _ensure(pavement_layer, 8, LW_PAVEMENT)
+    _ensure(pavement_layer, layers.COLOR_SECUNDARIO, LW_PAVEMENT)
     if pavement_pattern and not cap_ends:
         raise ValueError(
             "No se puede achurar la calzada con cap_ends=False: el achurado "
@@ -246,7 +246,7 @@ def create_road(
     # resumen salen siempre 2 x largo, y no es lo que se construye.
     ml_guarnicion = 0.0
     if curb_width > 0:
-        _ensure(curb_layer, 4, LW_CURB)
+        _ensure(curb_layer, layers.COLOR_VEGETACION, LW_CURB)
         largo_eje = axis.total_length
 
         if curb_segments:
@@ -295,7 +295,7 @@ def create_road(
 
     # --- Banquetas ---
     if sidewalk_width > 0:
-        _ensure(sidewalk_layer, 9, LW_SIDEWALK)
+        _ensure(sidewalk_layer, layers.COLOR_TENUE, LW_SIDEWALK)
         base = half + curb_width
         result["sidewalkHandles"] = (
             _band(axis, base, base + sidewalk_width, sidewalk_layer,
@@ -589,7 +589,7 @@ def create_intersection(main_points: list[list[float]],
     origen = branch.points[0]
     d_nace = _closest_station(main, origen)
 
-    _ensure(layer, 4, LW_CURB)
+    _ensure(layer, layers.COLOR_VEGETACION, LW_CURB)
     arcos = []
     desarrollo_total = 0.0
 

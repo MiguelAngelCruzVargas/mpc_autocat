@@ -217,6 +217,39 @@ entera del ambiente o de la casa, no una llamada por mueble.
 muebles para ubicar cada nombre donde no tape nada. Rotular antes de amueblar
 deja los textos encima de las camas.
 
+## 6.ter Color: nunca los puros 1-7 (salvo 7 y 8)
+
+Los índices 1 a 7 son los colores puros de AutoCAD, pensados para la pantalla
+negra del modelo. En un plano hay que evitarlos casi todos, y por razones
+**opuestas**:
+
+| Color | Qué le pasa |
+|---|---|
+| 2 amarillo, 4 cian, 3 verde | Muy claros: **se lavan al imprimir** en papel blanco. El cian y el amarillo son los peores. |
+| 5 azul | Al revés: **imprime bien**, pero es tan oscuro que no se lee sobre el fondo del espacio modelo. |
+| 1 rojo, 6 magenta | Chillones en pantalla, sin ganar nada. |
+| 9 gris claro | Casi no imprime. |
+| **7 blanco/negro y 8 gris** | Los únicos dos que se comportan igual en pantalla y en papel. Son la base. |
+
+Del 10 al 249 están los mismos matices al 65% o 50% de intensidad, que se leen
+bien en los dos medios. Equivalencias, ya aplicadas como default de la
+biblioteca (`layers.py`):
+
+| Para | Usar | En vez de |
+|---|---|---|
+| Ejes | **32** ámbar | 2 o 4 |
+| Cotas | **12** rojo oscuro | 1 |
+| Hidráulica, drenaje | **152** azul acero | 4 o 5 |
+| Guarniciones, vegetación | **96** verde oliva | 3 |
+| Pozos, registros | **172** violeta | 6 |
+| Achurados, secundarios | **8** o **253** gris | 9 |
+
+Si la lámina se traza en **monocromo** con un `.ctb` —lo habitual en obra— el
+color solo define el grosor y nada de esto afecta la impresión. Igual hay que
+elegirlo bien: el dibujo se trabaja en pantalla.
+
+`layers.EVITAR` tiene el índice y el motivo de cada uno, para poder avisarlo.
+
 ## 7. Capas
 
 Una capa por tipo de elemento, creada con `set_layer` antes de dibujar (color y

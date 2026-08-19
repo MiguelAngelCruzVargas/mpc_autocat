@@ -116,10 +116,34 @@ def test_el_cadenamiento_va_bylayer() -> None:
           str(_colores(("create_line", "create_text"))))
 
 
+def test_los_defaults_no_usan_colores_puros() -> None:
+    """Los indices 1-7 son de pantalla: en papel se lavan o no se leen."""
+    import layers as L
+    usados = {"ejes": L.COLOR_EJES, "cotas": L.COLOR_COTAS,
+              "hidraulica": L.COLOR_HIDRAULICA,
+              "vegetacion": L.COLOR_VEGETACION,
+              "registros": L.COLOR_REGISTROS}
+    malos = {k: v for k, v in usados.items() if v in L.EVITAR}
+    check("la paleta no cae en ningun color a evitar", not malos, str(malos))
+    check("el principal sigue siendo 7 (negro al imprimir)",
+          L.COLOR_PRINCIPAL == 7, str(L.COLOR_PRINCIPAL))
+    check("y el secundario el gris 8", L.COLOR_SECUNDARIO == 8,
+          str(L.COLOR_SECUNDARIO))
+
+    hechos = con_capas([])
+    civil.create_road(points=EJE, bulges=BUL, width=7.0, curb_width=0.15,
+                      sidewalk_width=1.5)
+    colores = {h["name"]: h.get("colorIndex") for h in hechos}
+    chillones = {n: c for n, c in colores.items() if c in L.EVITAR}
+    check("create_road no crea capas con colores chillones", not chillones,
+          str(chillones))
+
+
 def main() -> int:
     for fn in [test_no_pisa_una_capa_existente, test_crea_la_capa_que_falta,
                test_el_eje_de_la_calle_va_bylayer,
-               test_el_cadenamiento_va_bylayer]:
+               test_el_cadenamiento_va_bylayer,
+               test_los_defaults_no_usan_colores_puros]:
         print(fn.__name__)
         fn()
 

@@ -1168,7 +1168,25 @@ def set_layer(name: str, color_index: Optional[int] = None, linetype: Optional[s
 
     Para que los grosores se VEAN en pantalla hace falta LWDISPLAY activado: el
     plugin lo prende solo al cargarse y al abrir cada dibujo, y se puede forzar
-    con set_display_options(lineweight_display=True)."""
+    con set_display_options(lineweight_display=True).
+
+    QUÉ COLOR ELEGIR. Los índices 1 a 7 son los colores puros, pensados para la
+    pantalla negra del modelo, y en un plano hay que evitar casi todos — por
+    razones opuestas:
+      - 2 amarillo, 4 cian, 3 verde: muy claros, se lavan al imprimir sobre
+        papel blanco. El cian y el amarillo son los peores.
+      - 5 azul: al revés — imprime bien, pero es tan oscuro que no se lee
+        sobre el fondo del espacio modelo.
+      - 7 (blanco/negro) y 8 (gris) son los únicos dos que se comportan igual
+        en pantalla y en papel: son la base de cualquier plano.
+    Del 10 al 249 están los tonos por matiz al 65% o 50% de intensidad, que se
+    leen bien en los dos medios. Equivalencias recomendadas:
+      ejes 32 (ámbar) · cotas 12 (rojo oscuro) · hidráulica 152 (azul acero) ·
+      vegetación/guarniciones 96 (verde oliva) · registros 172 (violeta) ·
+      achurados 8 o 253 (grises)
+    Si la lámina se traza en MONOCROMO con un .ctb —lo habitual en obra— el
+    color solo define el grosor y no afecta la impresión; igual conviene
+    elegirlo bien porque el dibujo se trabaja en pantalla."""
     return acad.call("set_layer", {
         "name": name, "colorIndex": color_index, "linetype": linetype,
         "lineweightHundredthsMm": lineweight_hundredths_mm,

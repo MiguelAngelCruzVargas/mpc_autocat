@@ -232,7 +232,7 @@ def create_stationing(points: list[list[float]], interval: float,
     if bulges and any(abs(b) > 1e-12 for b in bulges):
         points = densify(points, bulges)
     axis = Axis([(p[0], p[1]) for p in points], closed=closed)
-    _layer(layer, color=1, lineweight=LW_GRID)
+    _layer(layer, color=layers.COLOR_COTAS, lineweight=LW_GRID)
 
     t = tick or text_height * 3.0
     marcas = []
@@ -346,7 +346,8 @@ def create_layer_section(x: float, y: float, width: float,
                 "x": dim_x - text_height * 0.4,
                 "y": medio - text_height * 2.0, "z": 0.0,
                 "height": text_height * 0.8, "layer": layer,
-                "rotationDeg": 90.0, "lineweight": LW_TEXT, "colorIndex": 1,
+                "rotationDeg": 90.0, "lineweight": LW_TEXT,
+                "colorIndex": None,
             })
 
         dibujadas.append({"name": nombre, "thickness": espesor,
@@ -575,7 +576,7 @@ def create_flow_arrow(points: list[list[float]], positions: list[float],
     s = size or min(3.0, max(0.5, largo / 60.0))
     signo = -1.0 if reverse else 1.0
 
-    _layer(layer, color=4, lineweight=LW_GRID)
+    _layer(layer, color=layers.COLOR_HIDRAULICA, lineweight=LW_GRID)
 
     dibujadas = []
     for d in positions:

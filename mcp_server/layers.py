@@ -28,6 +28,49 @@ FUENTE_DEFECTO = "txt"
 ESTILO_TEXTO = "MCP-ARIAL"
 
 
+# ----------------------------------------------------------------- color
+#
+# Los colores 1 a 7 son los "puros" de AutoCAD, pensados para la pantalla
+# negra del espacio modelo. En un plano hay que evitarlos salvo dos, y por
+# razones OPUESTAS:
+#
+#   2 amarillo, 4 cian, 3 verde  -> muy claros. En una impresion a color
+#       sobre papel blanco casi desaparecen. El amarillo es el peor.
+#   5 azul                       -> muy oscuro. Sobre el fondo negro del
+#       modelo no se lee; en papel imprime bien. Es al reves de lo que
+#       parece: el azul no se pierde al imprimir, se pierde en pantalla.
+#   7 blanco/negro y 8 gris      -> los unicos dos que se comportan igual
+#       en pantalla y en papel. Son la base de cualquier plano.
+#
+# Del 10 al 249 estan los tonos por matiz: el indice es matiz + brillo, y
+# los pares 2/4/6 bajan la intensidad. Un 32 es el mismo naranja que el 30
+# pero al 65%, que es lo que se lee bien en los dos medios.
+#
+# Nota: si la lamina se traza en MONOCROMO (lo mas comun en obra, con un
+# .ctb que manda todo a negro), el color solo define el GROSOR y nada de
+# esto afecta la impresion. Igual hay que elegirlo bien, porque el dibujo
+# se trabaja en pantalla.
+
+COLOR_PRINCIPAL = 7      # muros, cortes, contornos: negro al imprimir
+COLOR_SECUNDARIO = 8     # achurados, rellenos, lo que va atras
+COLOR_TENUE = 253        # gris claro, para lo mas liviano
+COLOR_EJES = 32          # ambar oscuro (era 4 cian: se lavaba en papel)
+COLOR_COTAS = 12         # rojo oscuro (era 1: chillon en pantalla)
+COLOR_HIDRAULICA = 152   # azul acero (era 4/5: uno se lava, el otro no se ve)
+COLOR_VEGETACION = 96    # verde oliva (era 3: muy claro)
+COLOR_REGISTROS = 172    # violeta oscuro (era 6 magenta)
+
+# Los que NO conviene usar, y por que. Lo consulta quien quiera avisar.
+EVITAR = {1: "rojo puro: chillon en pantalla, usa 12",
+          2: "amarillo: se lava en papel blanco, usa 32 o 42",
+          3: "verde puro: muy claro en papel, usa 96",
+          4: "cian: el que peor se imprime, usa 152",
+          5: "azul puro: tan oscuro que no se lee sobre el fondo del modelo,"
+             " usa 152",
+          6: "magenta: chillon, usa 172",
+          9: "gris muy claro: casi no imprime, usa 8 o 253"}
+
+
 def reset() -> None:
     """Olvida lo cacheado. Al cambiar de dibujo, o si se crearon capas afuera."""
     global _EXISTING

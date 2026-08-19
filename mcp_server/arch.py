@@ -26,7 +26,7 @@ LW_GRID = 13
 
 # Tipo de línea de los ejes: eje y trazo, como manda la simbología.
 GRID_LINETYPE = "CENTER"
-GRID_COLOR = 4  # cian: los ejes van en un color secundario
+GRID_COLOR = layers.COLOR_EJES  # ambar oscuro: ver la paleta en layers.py
 
 
 def _polyline(points: list[Point], layer: str, lineweight: int,
