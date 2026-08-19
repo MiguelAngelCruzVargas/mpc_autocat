@@ -162,6 +162,50 @@ def free_offset(side: str, reference: float, along_min: float, along_max: float,
     return offset
 
 
+# Lo que un rotulo NO puede cruzar. Un muro separa ambientes: el rotulo de un
+# contacto del bano no puede terminar del lado de la recamara, aunque ahi haya
+# lugar libre. No alcanza con mirar si la caja del texto pisa el muro -puede
+# quedar entera del otro lado sin tocarlo, que es peor- hay que mirar si el
+# segmento del elemento a su rotulo lo atraviesa.
+PREFIJOS_BARRERA = ("muro",)
+
+
+def barriers(extra: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:
+    """Las huellas que separan ambientes."""
+    propios = [h for h in FOOTPRINTS
+               if str(h.get("what", "")).startswith(PREFIJOS_BARRERA)]
+    return propios + list(extra or [])
+
+
+def crosses(p0: tuple[float, float], p1: tuple[float, float],
+            box: dict[str, Any], tol: float = 1e-9) -> bool:
+    """El segmento p0-p1 atraviesa el rectangulo (Liang-Barsky)."""
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, p0[0] - box["x0"]), (dx, box["x1"] - p0[0]),
+                 (-dy, p0[1] - box["y0"]), (dy, box["y1"] - p0[1])):
+        if abs(p) < tol:
+            if q < -tol:
+                return False        # paralelo y afuera
+            continue
+        r = q / p
+        if p < 0:
+            if r > t1:
+                return False
+            t0 = max(t0, r)
+        else:
+            if r < t0:
+                return False
+            t1 = min(t1, r)
+    return t1 - t0 > tol
+
+
+def blocked(p0: tuple[float, float], p1: tuple[float, float],
+            extra: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:
+    """Que barreras se cruzan yendo de p0 a p1."""
+    return [b for b in barriers(extra) if crosses(p0, p1, b)]
+
+
 def bands(side: Optional[str] = None) -> list[dict[str, Any]]:
     """Lo reservado hasta ahora, para inspeccionar o para check_annotations."""
     return [dict(b) for b in OCCUPIED]

@@ -132,6 +132,65 @@ def test_prefer() -> None:
           f"quedo en y {caja[1]:.3f}..{caja[3]:.3f}")
 
 
+def test_el_rotulo_no_cambia_de_ambiente() -> None:
+    """El caso real: el contacto del bano rotulado adentro de la recamara.
+
+    No basta con que el texto no PISE el muro. En el plano electrico el
+    rotulo termino 5 mm antes del divisorio, sin tocarlo, y por eso paso el
+    chequeo de colision: quedo entero del lado equivocado, que se lee peor
+    que si lo cruzara. Lo que hay que mirar es si el segmento del elemento a
+    su rotulo atraviesa un muro.
+    """
+    limpiar()
+    space.track(2.95, -96.0, 3.05, -92.0, "muro ELEC_ARQ_BASE")
+    space.track(3.85, -93.15, 4.15, -92.85, "lamp L-BANO")   # tapa la derecha
+    r = ann.place_labels([{"text": "C-3 GFCI",
+                           "box": [3.025, -92.95, 3.325, -92.65]}],
+                         height=0.125, gap=0.08)
+    x = r["labels"][0]["x"]
+    check("el rotulo se queda del lado del aparato", x > 3.05,
+          f"quedo en x={x:.3f}, del otro lado del muro")
+    check("y encontro lugar igual", r["labels"][0]["fits"], str(r["labels"][0]))
+
+
+def test_sin_muro_de_por_medio_usa_el_mejor_lado() -> None:
+    """La barrera no debe estorbar cuando no hay muro."""
+    limpiar()
+    space.track(3.85, -93.15, 4.15, -92.85, "lamp L-BANO")
+    r = ann.place_labels([{"text": "C-3 GFCI",
+                           "box": [3.025, -92.95, 3.325, -92.65]}],
+                         height=0.125, gap=0.08)
+    check("coloca sin problema", r["labels"][0]["fits"], str(r["labels"][0]))
+
+
+def test_si_no_hay_nada_libre_prefiere_cruzar_a_no_rotular() -> None:
+    """Un elemento sin rotular es peor que un rotulo en el ambiente vecino."""
+    limpiar()
+    space.track(2.95, -96.0, 3.05, -92.0, "muro")
+    # Todo el lado del aparato ocupado: solo queda cruzar.
+    for caja in ([3.05, -94.0, 6.0, -92.6], [3.05, -92.6, 6.0, -91.0],
+                 [3.05, -96.0, 6.0, -94.0]):
+        space.track(*caja, what="lleno")
+    r = ann.place_labels([{"text": "C-3", "box": [3.06, -92.95, 3.30, -92.65]}],
+                         height=0.125, gap=0.05)
+    check("lo dibuja igual", r["count"] == 1, str(r))
+    check("y avisa que quedo apretado", "warning" in r or not r["labels"][0]["fits"],
+          str(r["labels"][0]))
+
+
+def test_barreras_extra() -> None:
+    limpiar()
+    space.track(3.85, -93.15, 4.15, -92.85, "lamp")
+    # Un limite que no es un muro registrado: se pasa a mano.
+    r = ann.place_labels([{"text": "C-3 GFCI",
+                           "box": [3.025, -92.95, 3.325, -92.65]}],
+                         height=0.125, gap=0.08,
+                         barriers=[[3.30, -96.0, 3.40, -92.0]])
+    check("respeta la barrera pasada a mano",
+          r["labels"][0]["x"] < 3.30 or not r["labels"][0]["fits"],
+          str(r["labels"][0]))
+
+
 def test_errores_claros() -> None:
     limpiar()
     for nombre, fn, frag in (
@@ -154,6 +213,10 @@ def main() -> int:
                test_esquiva_lo_que_dibujaron_las_tools,
                test_obstaculos_extra, test_rotado_90,
                test_avisa_cuando_no_hay_lugar, test_prefer,
+               test_el_rotulo_no_cambia_de_ambiente,
+               test_sin_muro_de_por_medio_usa_el_mejor_lado,
+               test_si_no_hay_nada_libre_prefiere_cruzar_a_no_rotular,
+               test_barreras_extra,
                test_errores_claros]:
         print(fn.__name__)
         fn()

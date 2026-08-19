@@ -206,6 +206,13 @@ trabe. Ninguno era un error de cálculo: era escribir sin mirar lo que ya
 estaba. `create_walls` y `place_furniture` registran su huella solos; lo demás
 se le pasa en `obstacles`.
 
+Un muro separa ambientes, así que el rótulo **no se manda del otro lado**
+aunque ahí haya lugar: `place_labels` descarta el lado cuando el segmento del
+elemento a su texto cruza un muro de los que `create_walls` registró. No
+alcanza con que el texto no *pise* el muro — puede quedar entero del lado
+equivocado sin tocarlo, que se lee peor. Con `barriers` se agregan límites que
+no son muros.
+
 Revisá `cramped` en lo que devuelve: ahí van los que no encontraron lugar.
 
 ## 6. Mobiliario y rótulos

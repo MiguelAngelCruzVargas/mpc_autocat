@@ -626,7 +626,9 @@ def place_labels(labels: list[dict[str, Any]], height: float,
                  layer: str = LAYER_LABELS, gap: float = 0.0,
                  obstacles: Optional[list[list[float]]] = None,
                  lineweight: int = LW_TEXT,
-                 style: Optional[str] = None) -> dict[str, Any]:
+                 style: Optional[str] = None,
+                 barriers: Optional[list[list[float]]] = None,
+                 respect_walls: bool = True) -> dict[str, Any]:
     """Rotula elementos ubicando cada texto donde NO pise lo ya dibujado.
 
     Es lo que faltaba y por lo que los rotulos se venian calculando a mano,
@@ -647,6 +649,13 @@ def place_labels(labels: list[dict[str, Any]], height: float,
       'top', 'bottom'... para probar ese lado primero).
     gap: aire minimo entre el texto y lo que esquiva. 0 = medio alto de texto.
     obstacles: cajas extra a esquivar, ademas de lo que ya esta registrado.
+    respect_walls: un muro separa ambientes, asi que el rotulo no se manda del
+    otro lado aunque ahi haya lugar. No alcanza con que el texto no PISE el
+    muro: puede quedar entero del lado equivocado sin tocarlo -el rotulo del
+    contacto del bano terminando adentro de la recamara-, que es peor que
+    cruzarlo. Se descarta el lado cuando el segmento del elemento a su rotulo
+    atraviesa un muro.
+    barriers: cajas extra que separan, ademas de los muros ya registrados.
 
     Cada rotulo que se coloca queda registrado, asi que el siguiente tampoco
     se le encima. Los que no encontraron lugar salen igual —un elemento sin
@@ -661,6 +670,9 @@ def place_labels(labels: list[dict[str, Any]], height: float,
     extra = [{"x0": min(b[0], b[2]), "y0": min(b[1], b[3]),
               "x1": max(b[0], b[2]), "y1": max(b[1], b[3]), "what": "obstaculo"}
              for b in (obstacles or [])]
+    vallas = [{"x0": min(b[0], b[2]), "y0": min(b[1], b[3]),
+               "x1": max(b[0], b[2]), "y1": max(b[1], b[3]), "what": "barrera"}
+              for b in (barriers or [])]
 
     _layer(layer, color=7, lineweight=lineweight)
 
@@ -690,10 +702,14 @@ def place_labels(labels: list[dict[str, Any]], height: float,
                         max(caja[2], h["x1"]), max(caja[3], h["y1"]))
 
         elegido, libre = None, False
+        respaldo = None            # el mejor que solo falla por la barrera
         orden = list(_LADOS)
         preferido = item.get("prefer")
         if preferido:
             orden.sort(key=lambda l: l[0] != preferido)
+
+        centro = ((caja[0] + caja[2]) / 2.0, (caja[1] + caja[3]) / 2.0)
+        mira_muros = respect_walls and bool(item.get("respect_walls", True))
 
         for _, sx, sy in orden:
             base = _anclar(caja, sx, sy, ancho, alto, aire, rot)
@@ -702,11 +718,23 @@ def place_labels(labels: list[dict[str, Any]], height: float,
             estorbos += [h for h in extra
                          if h["x0"] < bbox[2] and h["x1"] > bbox[0]
                          and h["y0"] < bbox[3] and h["y1"] > bbox[1]]
-            if not estorbos:
-                elegido, libre = (base, bbox), True
-                break
             if elegido is None:
                 elegido = (base, bbox)
+            if estorbos:
+                continue
+            if mira_muros:
+                medio = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
+                if space.blocked(centro, medio, vallas):
+                    # Libre pero del otro lado de un muro: se guarda por si no
+                    # hay nada mejor, y se sigue buscando en el mismo ambiente.
+                    if respaldo is None:
+                        respaldo = (base, bbox)
+                    continue
+            elegido, libre = (base, bbox), True
+            break
+
+        if not libre and respaldo is not None:
+            elegido = respaldo
 
         (bx, by), bbox = elegido
         acad.call("create_text", {

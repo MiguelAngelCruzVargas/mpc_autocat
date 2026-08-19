@@ -797,7 +797,9 @@ def place_labels(labels: list[dict[str, Any]], height: float,
                  layer: str = "TEXTOS", gap: float = 0.0,
                  obstacles: Optional[list[list[float]]] = None,
                  lineweight: int = 18,
-                 style: Optional[str] = None) -> dict[str, Any]:
+                 style: Optional[str] = None,
+                 barriers: Optional[list[list[float]]] = None,
+                 respect_walls: bool = True) -> dict[str, Any]:
     """Rotula elementos ubicando cada texto donde NO pise lo ya dibujado.
 
     ES LA TOOL PARA ROTULAR CUALQUIER COSA que no sea un ambiente (para eso
@@ -815,12 +817,21 @@ def place_labels(labels: list[dict[str, Any]], height: float,
     obstacles: cajas extra a esquivar, además de los muros y muebles que las
     tools ya registraron solas.
 
+    respect_walls: un muro separa ambientes, así que el rótulo NO se manda del
+    otro lado aunque ahí haya lugar. No alcanza con que el texto no pise el
+    muro: puede quedar entero del lado equivocado sin tocarlo —el rótulo del
+    contacto del baño terminando adentro de la recámara— y eso se lee peor que
+    si lo cruzara. Se descarta el lado cuando el segmento del elemento a su
+    rótulo atraviesa un muro de los que create_walls ya registró.
+    barriers: cajas extra que separan, además de esos muros.
+
     Cada rótulo colocado queda registrado, así que el siguiente tampoco se le
     encima. Los que no encuentren lugar salen igual —un elemento sin rotular es
     peor— y se listan en 'cramped' con un aviso."""
     return ann_mod.place_labels(
         labels=labels, height=height, layer=layer, gap=gap,
-        obstacles=obstacles, lineweight=lineweight, style=style)
+        obstacles=obstacles, lineweight=lineweight, style=style,
+        barriers=barriers, respect_walls=respect_walls)
 
 
 @mcp.tool()
