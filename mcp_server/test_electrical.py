@@ -127,7 +127,9 @@ def test_canalizacion_en_arco_con_conductores() -> None:
           any(abs(b) > 1e-9 for b in (poli["bulges"] or [])),
           str(poli["bulges"]))
     check("no cerrada", not poli.get("closed"))
-    check("el largo es el del recorrido", abs(r["length"] - 4.0) < 1e-9,
+    # 4.0 es la CUERDA; el tubo que se instala es el desarrollo del arco.
+    check("el largo es el del arco, no el de la cuerda",
+          abs(r["length"] - 4.0383) < 1e-3 and r["length"] > 4.0,
           str(r["length"]))
     check("una marca por conductor", len(r["marks"]) == 4, str(r["marks"]))
     check("dos fases, un neutro y tierra",
@@ -139,6 +141,47 @@ def test_canalizacion_en_arco_con_conductores() -> None:
     check("las marcas caen sobre el tramo",
           all(-1e-9 <= m["x"] <= 4.0 + 1e-9 for m in r["marks"]),
           str([m["x"] for m in r["marks"]]))
+
+
+def _dist_a_segmento(p, a, b) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L2 = dx * dx + dy * dy
+    t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx
+                                               + (p[1] - a[1]) * dy) / L2))
+    return math.dist(p, (a[0] + dx * t, a[1] + dy * t))
+
+
+def test_las_marcas_van_SOBRE_el_arco() -> None:
+    """Se calculaban en la cuerda y el tubo es un arco: quedaban flotando.
+
+    En un tramo de 5.76 m con sag 0.10 la flecha del arco es de 29 cm, asi que
+    las marcas de fase, neutro y tierra aparecian a esa distancia del tubo, en
+    el aire. Medir contra la recta no sirve: hay que seguir el arco.
+    """
+    from geom import densify
+    for pts, sag in (([[5.845, -97.5], [0.175, -98.5]], 0.10),
+                     ([[0.0, 0.0], [4.0, 0.0], [4.0, 4.0]], 0.15)):
+        limpiar()
+        r = elec.create_conduit(pts, sag=sag, conductors="//|T")
+        poli = _de("create_polyline")[0]
+        fino = densify(poli["points"], poli["bulges"])
+        peor = max(min(_dist_a_segmento((m["x"], m["y"]), a, b)
+                       for a, b in zip(fino, fino[1:]))
+                   for m in r["marks"])
+        check(f"las marcas caen sobre el tubo (sag {sag})", peor < 0.005,
+              f"la mas lejana quedo a {peor * 100:.1f} cm")
+
+
+def test_el_largo_es_el_del_arco() -> None:
+    """El tubo que se instala es el desarrollo, no la cuerda."""
+    limpiar()
+    recto = elec.create_conduit([[0.0, 0.0], [10.0, 0.0]], sag=0.0)
+    limpiar()
+    curvo = elec.create_conduit([[0.0, 0.0], [10.0, 0.0]], sag=0.20)
+    check("el arco mide mas que la cuerda", curvo["length"] > recto["length"],
+          f'{curvo["length"]} contra {recto["length"]}')
+    check("y la cuerda mide exacto", abs(recto["length"] - 10.0) < 1e-9,
+          str(recto["length"]))
 
 
 def test_errores_claros() -> None:
@@ -172,6 +215,8 @@ def main() -> int:
                test_tablero_medio_relleno,
                test_registra_huellas_para_los_rotulos,
                test_canalizacion_en_arco_con_conductores,
+               test_las_marcas_van_SOBRE_el_arco,
+               test_el_largo_es_el_del_arco,
                test_errores_claros]:
         print(fn.__name__)
         fn()

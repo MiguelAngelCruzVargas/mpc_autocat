@@ -18,6 +18,7 @@ import math
 from typing import Any, Optional
 
 import autocad_client as acad
+from geom import densify
 import layers
 import space
 
@@ -244,23 +245,25 @@ def create_conduit(points: list[list[float]], sag: float = 0.0,
     bulges = [sag if i < len(pts) - 1 else 0.0 for i in range(len(pts))]
     handle = _poly(pts, layer, lineweight, closed=False, bulges=bulges)
 
-    largo = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+    # El recorrido REAL, siguiendo los arcos. Medir sobre la cuerda daria un
+    # largo menor que el tubo que se instala, y -peor- pondria las marcas de
+    # conductores sobre la recta y no sobre el arco: en un tramo de 5.76 m con
+    # sag 0.10 quedaban 29 cm afuera del tubo, flotando en el dibujo.
+    fino = densify([[p[0], p[1]] for p in pts], bulges) if sag else         [[p[0], p[1]] for p in pts]
+    largo = sum(math.dist(a, b) for a, b in zip(fino, fino[1:]))
+
     marcas = []
     if conductors:
-        # Las marcas van sobre el tramo mas largo, que es donde se leen.
+        # Sobre el tramo mas largo, que es donde se leen.
         i = max(range(len(pts) - 1), key=lambda k: math.dist(pts[k], pts[k + 1]))
-        a, b = pts[i], pts[i + 1]
-        tramo = math.dist(a, b)
+        sub = _tramo_fino(fino, pts, i, bool(sag))
+        tramo = sum(math.dist(a, b) for a, b in zip(sub, sub[1:]))
         s = mark_size or min(0.22, max(0.10, tramo * 0.10))
-        ux, uy = (b[0] - a[0]) / tramo, (b[1] - a[1]) / tramo
-        nx, ny = -uy, ux
-        # Centradas en el tramo y separadas entre si, sin salirse de el.
         paso = min(s * 0.75, tramo / (len(conductors) + 1))
-        base = ((a[0] + b[0]) / 2.0 - ux * paso * (len(conductors) - 1) / 2.0,
-                (a[1] + b[1]) / 2.0 - uy * paso * (len(conductors) - 1) / 2.0)
+        d0 = tramo / 2.0 - paso * (len(conductors) - 1) / 2.0
         for k, c in enumerate(conductors):
-            px = base[0] + ux * paso * k
-            py = base[1] + uy * paso * k
+            (px, py), (ux, uy) = _sobre(sub, d0 + paso * k)
+            nx, ny = -uy, ux
             if c == "/":
                 dx, dy = (ux + nx) / math.sqrt(2), (uy + ny) / math.sqrt(2)
             else:
@@ -278,3 +281,34 @@ def create_conduit(points: list[list[float]], sag: float = 0.0,
 
     return {"handle": handle, "length": round(largo, 4),
             "sag": sag, "conductors": conductors, "marks": marcas}
+
+
+def _tramo_fino(fino: list[list[float]], pts: list, i: int,
+                hay_arco: bool) -> list[list[float]]:
+    """Los puntos muestreados que corresponden al tramo i del recorrido."""
+    if not hay_arco:
+        return [list(pts[i]), list(pts[i + 1])]
+    # densify conserva los vertices originales en orden: se corta entre el
+    # que coincide con pts[i] y el que coincide con pts[i+1].
+    def idx(p):
+        return min(range(len(fino)),
+                   key=lambda k: math.dist(fino[k], (p[0], p[1])))
+    a, b = idx(pts[i]), idx(pts[i + 1])
+    return fino[min(a, b):max(a, b) + 1]
+
+
+def _sobre(path: list[list[float]], d: float):
+    """Punto y tangente a una distancia d recorriendo la poligonal fina."""
+    acum = 0.0
+    for a, b in zip(path, path[1:]):
+        largo = math.dist(a, b)
+        if largo < 1e-12:
+            continue
+        if acum + largo >= d or b is path[-1]:
+            t = max(0.0, min(1.0, (d - acum) / largo))
+            u = ((b[0] - a[0]) / largo, (b[1] - a[1]) / largo)
+            return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t), u
+        acum += largo
+    a, b = path[-2], path[-1]
+    largo = math.dist(a, b) or 1.0
+    return (b[0], b[1]), ((b[0] - a[0]) / largo, (b[1] - a[1]) / largo)

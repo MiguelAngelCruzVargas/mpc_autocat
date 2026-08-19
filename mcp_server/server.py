@@ -18,6 +18,7 @@ import electrical as elec_mod
 import profile as profile_mod
 import rules as rules_mod
 import furniture as fur_mod
+import layers as layers_mod
 import sheet as sheet_mod
 
 mcp = FastMCP("autocad")
@@ -1247,10 +1248,20 @@ def set_layer(name: str, color_index: Optional[int] = None, linetype: Optional[s
     Si la lámina se traza en MONOCROMO con un .ctb —lo habitual en obra— el
     color solo define el grosor y no afecta la impresión; igual conviene
     elegirlo bien porque el dibujo se trabaja en pantalla."""
-    return acad.call("set_layer", {
+    resultado = acad.call("set_layer", {
         "name": name, "colorIndex": color_index, "linetype": linetype,
         "lineweightHundredthsMm": lineweight_hundredths_mm,
     })
+    # La capa se crea igual —el color lo elige quien dibuja— pero un indice
+    # desaconsejado se avisa en el momento y no cuando el plano ya salio de
+    # la impresora.
+    motivo = layers_mod.EVITAR.get(color_index)
+    if motivo:
+        resultado["warning"] = (
+            f"Capa '{name}' con colorIndex {color_index}: {motivo}. "
+            "Se creo igual; ver la tabla de equivalencias en la descripcion "
+            "de esta tool.")
+    return resultado
 
 
 @mcp.tool()
