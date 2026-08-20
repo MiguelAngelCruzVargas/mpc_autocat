@@ -17,7 +17,7 @@ namespace AutoCadMcpPlugin.Commands
     public static class SelectCommands
     {
         /// <summary>
-        /// params: [x1,y1,x2,y2] (rectángulo; sin esto, todo el modelo),
+        /// params: [x1,y1,x2,y2] (rectángulo; sin esto, todo el espacio ACTIVO),
         ///         [layers], [types], [mode] ("inside" solo lo que entra
         ///         entero, "crossing" también lo que lo cruza; default inside)
         /// </summary>
@@ -47,9 +47,10 @@ namespace AutoCadMcpPlugin.Commands
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(
-                    bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                // El espacio ACTIVO, igual que SpaceHelper/GetExtentsCommand: si
+                // no, una entidad dibujada con un layout abierto es invisible
+                // para esto aunque este mal ubicada en el papel.
+                var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
 
                 foreach (ObjectId id in btr)
                 {

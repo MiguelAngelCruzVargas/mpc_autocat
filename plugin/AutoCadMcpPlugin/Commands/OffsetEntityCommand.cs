@@ -76,9 +76,15 @@ namespace AutoCadMcpPlugin.Commands
                 }
 
                 var btr = (BlockTableRecord)tr.GetObject(src.BlockId, OpenMode.ForWrite);
+                // Default: hereda la capa del original. ApplyCommon lo pisa si
+                // vino layer/lineweight/colorIndex en el request -antes esto se
+                // hacia a mano con "chosen.Layer = src.Layer" y quedaba fijo
+                // pase lo que pase, así que un offset a otra capa (la guarnicion
+                // a su propia capa, por ejemplo) terminaba en la capa del eje.
                 chosen.Layer = src.Layer;
                 btr.AppendEntity(chosen);
                 tr.AddNewlyCreatedDBObject(chosen, true);
+                EntityHelper.ApplyCommon(db, tr, chosen, pars);
 
                 // Las curvas que no elegimos son objetos transitorios que nunca
                 // llegaron a la base de datos: hay que liberarlas a mano.

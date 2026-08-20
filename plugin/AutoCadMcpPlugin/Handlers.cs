@@ -36,6 +36,8 @@ namespace AutoCadMcpPlugin
                     return CreateLeaderCommand.Run(doc, pars);
                 case "create_hatch":
                     return CreateHatchCommand.Run(doc, pars);
+                case "list_hatch_patterns":
+                    return ListHatchPatternsCommand.Run(doc, pars);
 
                 // Bloques / símbolos / imágenes
                 case "insert_block":

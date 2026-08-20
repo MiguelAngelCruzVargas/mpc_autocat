@@ -11,8 +11,10 @@ namespace AutoCadMcpPlugin.Commands
             var db = doc.Database;
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                // El espacio ACTIVO, igual que GetExtentsCommand/ListEntitiesCommand/
+                // SelectCommands: si no, con un layout de papel abierto el conteo
+                // no coincide con lo que esas tools reportan para el mismo dibujo.
+                var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
 
                 int entityCount = 0;
                 foreach (ObjectId id in btr) entityCount++;

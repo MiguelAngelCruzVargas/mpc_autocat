@@ -11,7 +11,9 @@ namespace AutoCadMcpPlugin.Commands
         /// Línea de referencia con flecha + texto (callout), como los que apuntan
         /// al detalle de juntas en un corte.
         /// params: points ([[x,y], ...], al menos 2 — el último es donde arranca el
-        /// texto), text, [textHeight=2.5], [layer]
+        /// texto), text, [textHeight=2.5], [arrowSize] (por defecto, la del
+        /// DIMSTYLE activo -set_dim_style-, para que coincida con las cotas del
+        /// mismo plano), [layer]
         /// </summary>
         public static JsonObject Run(Document doc, JsonObject pars)
         {
@@ -44,6 +46,27 @@ namespace AutoCadMcpPlugin.Commands
                     var coords = pt.AsArray();
                     leader.AppendVertex(new Point3d(coords[0].GetValue<double>(), coords[1].GetValue<double>(), 0));
                 }
+
+                // EvaluateLeader() recalcula el landing/gap contra el DIMSTYLE
+                // ACTIVO del dibujo (Dimasz/Dimgap), no contra textHeight. Si ese
+                // dimstyle quedo con un DIMSCALE grande -de otro plano dibujado
+                // antes en la misma sesion, a otra escala- el gap se dispara y el
+                // MText termina metros mas abajo de donde se lo puso, aunque su
+                // Location reporte el punto correcto. Fijar el override ACA, por
+                // entidad, deja al leader independiente del estado ambiente.
+                //
+                // El tamano de flecha default sale del DIMSTYLE activo (el mismo
+                // que usan las cotas de create_dimension*), no de un ratio fijo:
+                // si no, la flecha del leader queda de otro tamano que la de las
+                // cotas en el mismo plano aunque se haya configurado arrow_size
+                // con set_dim_style. arrowSize explicito pisa eso.
+                double arrowSize = pars["arrowSize"] != null
+                    ? pars["arrowSize"].GetValue<double>()
+                    : ActiveDimAsz(db, tr, textHeight);
+                leader.Dimasz = arrowSize;
+                leader.Dimgap = textHeight * 0.5;
+                leader.Dimscale = 1.0;
+
                 EntityHelper.ApplyCommon(db, tr, leader, pars);
 
                 // El leader tiene que estar YA en la base de datos antes de
@@ -63,6 +86,22 @@ namespace AutoCadMcpPlugin.Commands
                 tr.Commit();
                 return result;
             }
+        }
+
+        /// <summary>
+        /// Dimasz del DIMSTYLE activo, escalado igual que las cotas (Dimasz *
+        /// Dimscale). Un dimstyle recien creado o sin arrowSize configurado
+        /// trae Dimasz en 0, que dibujaria un leader sin flecha visible: para
+        /// eso cae al ratio de textHeight que se usaba antes.
+        /// </summary>
+        private static double ActiveDimAsz(Database db, Transaction tr, double textHeight)
+        {
+            if (db.Dimstyle.IsNull)
+                return textHeight * 0.6;
+
+            var record = (DimStyleTableRecord)tr.GetObject(db.Dimstyle, OpenMode.ForRead);
+            double asz = record.Dimasz * record.Dimscale;
+            return asz > 0 ? asz : textHeight * 0.6;
         }
     }
 }

@@ -17,8 +17,10 @@ namespace AutoCadMcpPlugin.Commands
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                // El espacio ACTIVO, igual que SpaceHelper (ver GetExtentsCommand
+                // para el porque: si no, esto no ve lo dibujado con un layout
+                // abierto).
+                var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
 
                 int count = 0;
                 foreach (ObjectId id in btr)

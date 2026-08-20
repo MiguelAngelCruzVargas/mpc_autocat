@@ -15,8 +15,8 @@ namespace AutoCadMcpPlugin.Commands
     /// entonces se encuadra. Si el dibujo crece, el marco se adapta; al revés,
     /// el dibujo se sale de la hoja.
     /// params: [layers] (lista de capas a considerar; sin esto, todo el espacio
-    ///         modelo), [excludeLayers] (para dejar afuera el propio cajón y
-    ///         rótulo al reencuadrar)
+    ///         ACTIVO -Model o el layout que este abierto-), [excludeLayers]
+    ///         (para dejar afuera el propio cajón y rótulo al reencuadrar)
     /// </summary>
     public static class GetExtentsCommand
     {
@@ -32,9 +32,12 @@ namespace AutoCadMcpPlugin.Commands
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(
-                    bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                // Mismo espacio que usan las tools de dibujo (SpaceHelper): si
+                // esto se quedaba fijo en ModelSpace, un cajon dibujado con un
+                // layout activo quedaba invisible para get_extents/list_entities/
+                // select_entities -"no hay nada raro"- aunque estuviera mal
+                // ubicado en el papel. Ver SpaceHelper.cs.
+                var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
 
                 foreach (ObjectId id in btr)
                 {
