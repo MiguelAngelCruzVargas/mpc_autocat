@@ -122,6 +122,7 @@ def create_table(x: float, y: float, rows: list[list[str]],
         _line((cx, bottom), (cx, top), layer, LW_GRID)
 
     pad = text_height * 0.5
+    desbordes = []
     for i, row in enumerate(rows):
         cy = top - i * row_height - row_height / 2.0 - text_height / 2.0
         cx = x
@@ -129,13 +130,35 @@ def create_table(x: float, y: float, rows: list[list[str]],
             cell = str(row[j]) if j < len(row) else ""
             if cell:
                 centrar = header and i == 0
-                tx = (cx + w / 2.0 - _w(cell, text_height) / 2.0) if centrar else cx + pad
+                # _w() le pregunta el ancho a AutoCAD (RPC); solo hace falta
+                # para centrar el texto. Para el resto alcanza con el ancho de
+                # columna, así que no vale la pena una llamada por celda.
+                if centrar:
+                    ancho_celda = _w(cell, text_height)
+                    disponible = w
+                    tx = cx + w / 2.0 - ancho_celda / 2.0
+                else:
+                    ancho_celda = len(cell) * text_height * 0.87
+                    disponible = w - pad
+                    tx = cx + pad
+                if ancho_celda > disponible:
+                    desbordes.append(
+                        f"fila {i + 1} col {j + 1} ({cell!r}): necesita "
+                        f"{ancho_celda:.2f} y la columna tiene {disponible:.2f} "
+                        "-- se va a encimar con la de al lado")
                 _text(cell, tx, cy, text_height, layer, LW_TEXT)
             cx += w
 
-    return {"x": x, "y": y, "width": total_w,
-            "height": (y - bottom), "rows": n,
-            "bottom": bottom, "right": x + total_w}
+    resultado = {"x": x, "y": y, "width": total_w,
+                 "height": (y - bottom), "rows": n,
+                 "bottom": bottom, "right": x + total_w}
+    if desbordes:
+        # No se corta ni se achica el texto solo: achicar la letra sin avisar
+        # es tan malo como dejarla encimada, así que se avisa y quien pidió
+        # la tabla decide si agranda la columna o baja text_height.
+        resultado["warning"] = ("Texto mas ancho que su columna, va a quedar "
+                                 "encimado: " + "; ".join(desbordes))
+    return resultado
 
 
 def _w(text: str, height: float) -> float:

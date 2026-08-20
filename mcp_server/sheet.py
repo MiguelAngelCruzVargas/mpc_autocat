@@ -108,6 +108,23 @@ def _text(content: str, x: float, y: float, height: float, layer: str,
     })
 
 
+def _w_mm(text: str, height_mm: float, mm) -> float:
+    """Ancho de un texto en mm de PAPEL, preguntandole a AutoCAD (con respaldo
+    estimado). Se usa para avisar cuando un dato del rotulo no entra en su
+    celda, en vez de dejarlo escrito encima del borde o de la celda de al lado.
+    """
+    try:
+        ancho_modelo = acad.call("measure_text", {
+            "text": text, "height": mm(height_mm),
+            "style": None, "widthFactor": None})["width"]
+        return ancho_modelo / mm(1.0)
+    except (acad.AutoCadError, KeyError, TypeError):
+        # Mismo ratio que annotation._w: medido contra AutoCAD real, no
+        # inventado. Con 0.6 se subestimaba el ancho ~31% y el aviso de
+        # desborde no saltaba justo cuando no hay AutoCAD para verlo a ojo.
+        return len(text) * height_mm * 0.87
+
+
 def _cell(mm, x_left_mm: float, y_bottom_mm: float, label: str, value: str,
           origin_x: float, origin_y: float, pad_mm: float = 2.0,
           value_height_mm: float = H_VALUE_MM) -> None:
@@ -208,19 +225,35 @@ def create_sheet(
     scale_text = f"1:{scale_denominator:g}"
     foot = [("ESCALA", scale_text), ("FECHA", date), ("DIBUJÓ", drawn_by),
             ("REVISÓ", reviewed_by), ("LÁMINA", sheet_number)]
+    desbordes = []
     for (label, value), x_mm in zip(foot, foot_cols_mm[:-1]):
-        # La lámina es el dato que se busca de un vistazo: va más grande.
+        # La lámina es el dato que se busca de un vistazo: va más grande, y
+        # por eso es la que antes se desborda si el número es largo.
         big = label == "LÁMINA"
+        value_height = H_PROJECT_MM if big else H_VALUE_MM
         _cell(mm, x_mm, 0.0, label, value, tx1, ty1,
-              value_height_mm=H_PROJECT_MM if big else H_VALUE_MM)
+              value_height_mm=value_height)
+        if value:
+            ancho_mm = _w_mm(value, value_height, mm)
+            disponible_mm = col_w_mm - 2.0
+            if ancho_mm > disponible_mm:
+                desbordes.append(
+                    f"{label} ({value!r}): necesita {ancho_mm:.0f}mm de papel "
+                    f"y la celda tiene {disponible_mm:.0f}mm")
 
     # Filas de datos: contenido, propietario, ubicación (de abajo hacia arriba).
+    value_w_mm = TITLE_W_MM - 30.0 - 2.0  # ancho disponible desde donde arranca el valor
     rows = [("CONTENIDO", content), ("PROPIETARIO", client), ("UBICACIÓN", location)]
     for (label, value), y_base_mm in zip(rows, row_tops_mm[:-1]):
         _text(label, tx1 + mm(2.0), ty1 + mm(y_base_mm + 2.2),
               mm(H_LABEL_MM), LAYER_TITLE, LW_TEXT)
         _text(value, tx1 + mm(30.0), ty1 + mm(y_base_mm + 2.0),
               mm(H_VALUE_MM), LAYER_TITLE, LW_TEXT)
+        if value:
+            ancho_mm = _w_mm(value, H_VALUE_MM, mm)
+            if ancho_mm > value_w_mm:
+                desbordes.append(f"{label} ({value!r}): necesita {ancho_mm:.0f}mm "
+                                  f"de papel y la celda tiene {value_w_mm:.0f}mm")
 
     # Nombre de la obra, la franja de arriba.
     y_project_mm = row_tops_mm[-1]
@@ -228,6 +261,11 @@ def create_sheet(
           mm(H_LABEL_MM), LAYER_TITLE, LW_TEXT)
     _text(project, tx1 + mm(2.0), ty1 + mm(y_project_mm + 3.0),
           mm(H_PROJECT_MM), LAYER_TITLE, LW_TEXT)
+    if project:
+        ancho_mm = _w_mm(project, H_PROJECT_MM, mm)
+        if ancho_mm > TITLE_W_MM - 4.0:
+            desbordes.append(f"OBRA ({project!r}): necesita {ancho_mm:.0f}mm de "
+                              f"papel y la franja tiene {TITLE_W_MM - 4.0:.0f}mm")
 
     # Área útil = adentro del cajón, sin pisar el rótulo. Es lo que hay que
     # respetar al dibujar: todo el plano entra acá.
@@ -236,7 +274,7 @@ def create_sheet(
         "full_x1": fx1, "full_y1": fy1, "full_x2": tx1, "full_y2": fy2,
     }
 
-    return {
+    resultado = {
         "format": fmt_name,
         "scale": scale_text,
         "modelUnits": model_units,
@@ -246,6 +284,12 @@ def create_sheet(
         "frameHandle": frame_handle,
         "titleBlockHandle": title_handle,
     }
+    if desbordes:
+        # No se corta el texto ni se achica la letra sola: eso se decide con
+        # el dato completo a la vista, no en silencio.
+        resultado["warning"] = ("Dato mas ancho que su celda del rotulo, se "
+                                 "sale del cajon: " + "; ".join(desbordes))
+    return resultado
 
 
 # ------------------------------------------- encuadre sobre lo ya dibujado
