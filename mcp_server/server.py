@@ -16,9 +16,11 @@ import autocad_client as acad
 import civil as civil_mod
 import electrical as elec_mod
 import profile as profile_mod
+import quantities as qty_mod
 import rules as rules_mod
 import furniture as fur_mod
 import layers as layers_mod
+import sections as sect_mod
 import sheet as sheet_mod
 
 mcp = FastMCP("autocad")
@@ -864,6 +866,65 @@ def create_layer_section(x: float, y: float, width: float,
                                         dimension_side=dimension_side, layer=layer)
 
 
+@mcp.tool()
+def create_building_section(
+    x: float, y: float, length: float,
+    stories: list[dict[str, Any]],
+    view: str = "corte",
+    datum: float = 0.0,
+    dimension_stories: bool = True,
+    dimension_side: str = "left",
+    level_labels: bool = True,
+    hatch_pattern: str = "ANSI31",
+    hatch_scale: float = 1.0,
+    layer_cut: Optional[str] = None,
+    layer_seen: Optional[str] = None,
+    text_height: float = 0.0,
+) -> dict[str, Any]:
+    """Corte vertical (o fachada) de un edificio, por niveles.
+
+    Un corte dibujado a mano pierde justo lo que distingue un corte de un
+    esquema: qué muro está realmente cortado (banda gruesa achurada) versus
+    qué se ve de fondo (línea fina), y los niveles se terminan acotando con
+    el offset calculado a ojo. Esta tool resuelve las dos cosas.
+
+    (x, y) es el extremo IZQUIERDO del corte, a la cota ±0.00 de stories[0].
+    length es la extensión horizontal.
+
+    stories: de ABAJO hacia arriba, uno por nivel:
+      {"name": "PB", "height": 2.90, "slab_thickness": 0.12, "elements": [...]}
+    height es piso a piso e INCLUYE el espesor de su propia losa superior:
+    una azotea plana es simplemente el último nivel de la lista.
+
+    elements por nivel, mismo estilo que 'openings' en create_walls:
+      {"type": "cut_wall", "x": 0.15, "thickness": 0.15, "top": None} — un
+        muro que el plano de corte SÍ atraviesa: banda achurada.
+      {"type": "window", "x_start":.., "x_end":.., "sill":.., "head":..} /
+      {"type": "door", "x_start":.., "x_end":.., "head":..} — aberturas del
+        muro de FONDO, vistas más allá del plano de corte (el caso real: casi
+        nunca se elige la línea de corte para que pase justo por un vano).
+        sill/head en metros DESDE EL PISO de ese nivel, no cota absoluta.
+      {"type": "seen_wall", "x_start":.., "x_end":..} — silueta de un muro
+        visto de fondo, sin achurar.
+
+    view: "corte" achura y dibuja losas; "fachada" nunca achura ni dibuja
+    losas (una fachada no muestra espesores), y los cut_wall pasan a ser la
+    envolvente exterior vista, no la banda cortada.
+
+    dimension_stories: acota los niveles con la misma cadena de cotas que se
+    usa en planta (create_dimension_chain), del lado dimension_side.
+
+    Devuelve los niveles con su cota y su Y de modelo, los handles por nivel,
+    y 'warning' si algún vano supera la altura libre de su nivel (se dibuja
+    igual: puede ser una doble altura intencional)."""
+    return sect_mod.create_building_section(
+        x=x, y=y, length=length, stories=stories, view=view, datum=datum,
+        dimension_stories=dimension_stories, dimension_side=dimension_side,
+        level_labels=level_labels, hatch_pattern=hatch_pattern,
+        hatch_scale=hatch_scale, layer_cut=layer_cut, layer_seen=layer_seen,
+        text_height=text_height)
+
+
 # ---------------------------------------------------------------- Geometría
 
 @mcp.tool()
@@ -1147,6 +1208,7 @@ def create_dimension_arc_length(handle: str, arc_x: float, arc_y: float,
 @mcp.tool()
 def create_leader(
     points: list[list[float]], text: str, text_height: float = 2.5,
+    arrow_size: Optional[float] = None,
     layer: Optional[str] = None,
     lineweight: Optional[int] = None, color_index: Optional[int] = None,
 ) -> dict[str, Any]:
@@ -1154,10 +1216,14 @@ def create_leader(
     señalar un detalle. 'points' es la polilínea de la flecha (al menos 2 puntos);
     el texto arranca en el último punto.
 
+    arrow_size: tamaño de la flecha en unidades del modelo. Sin esto, toma el
+    de set_dim_style (el DIMSTYLE activo), para que coincida con las cotas del
+    mismo plano; si no hay ninguno configurado, cae a text_height * 0.6.
     lineweight: grosor de la flecha y el texto en centésimas de mm (13-18 es lo
     habitual). color_index: color ACI 1-255."""
     return acad.call("create_leader", {
-        "points": points, "text": text, "textHeight": text_height, "layer": layer,
+        "points": points, "text": text, "textHeight": text_height,
+        "arrowSize": arrow_size, "layer": layer,
         **_style(lineweight, color_index),
     })
 
@@ -1180,6 +1246,22 @@ def create_hatch(
         "scale": scale, "angleDeg": angle_deg, "layer": layer,
         **_style(lineweight, color_index),
     })
+
+
+@mcp.tool()
+def list_hatch_patterns(filter: Optional[str] = None) -> dict[str, Any]:
+    """Patrones de achurado que existen DE VERDAD en el acad.pat/acadiso.pat
+    de esta instalación de AutoCAD.
+
+    Llamala ANTES de pasarle un nombre de patrón a create_hatch o create_legend
+    que no sea 'SOLID', 'ANSI31' o 'AR-CONC' (esos tres son casi universales).
+    El resto (texturas de piedra, ladrillo, techo...) varían de una instalación
+    a otra, y create_hatch no avisa si el nombre está mal hasta que ya intentó
+    dibujar — es mejor confirmar el nombre real que adivinar y reintentar.
+
+    filter: substring para acotar la lista (p.ej. "AR-" o "BRICK"), sin
+    importar mayúsculas. Sin esto devuelve TODOS los patrones (pueden ser 70+)."""
+    return acad.call("list_hatch_patterns", {"filter": filter})
 
 
 # ---------------------------------------------------------- Bloques/símbolos
@@ -1319,13 +1401,20 @@ def delete_entity(handle: str) -> dict[str, Any]:
 
 @mcp.tool()
 def offset_entity(handle: str, distance: float,
-                   side_x: Optional[float] = None, side_y: Optional[float] = None) -> dict[str, Any]:
+                   side_x: Optional[float] = None, side_y: Optional[float] = None,
+                   layer: Optional[str] = None, lineweight: Optional[int] = None,
+                   color_index: Optional[int] = None) -> dict[str, Any]:
     """Crea una curva paralela a otra (Line, Arc, Circle o Polyline) a una
     distancia dada — típico para trazar una guarnición paralela al eje de una
     calle. side_x/side_y es un punto de referencia opcional para elegir de qué
-    lado queda el offset cuando hay ambigüedad."""
+    lado queda el offset cuando hay ambigüedad.
+
+    layer: sin esto, la curva nueva hereda la capa de la original — pasalo
+    cuando el offset represente otra cosa (la guarnición de un eje, por
+    ejemplo) y tenga que ir a su propia capa."""
     return acad.call("offset_entity", {
         "handle": handle, "distance": distance, "sideX": side_x, "sideY": side_y,
+        "layer": layer, **_style(lineweight, color_index),
     })
 
 
@@ -1333,7 +1422,8 @@ def offset_entity(handle: str, distance: float,
 
 @mcp.tool()
 def list_entities(entity_type: Optional[str] = None, limit: int = 200) -> dict[str, Any]:
-    """Lista entidades del espacio modelo activo (handle, tipo, capa).
+    """Lista entidades del espacio ACTIVO (el modelo, o el layout de papel si
+    hay uno abierto con set_current_layout) (handle, tipo, capa).
     entity_type: filtro opcional por tipo exacto (p.ej. 'Line', 'Polyline', 'Circle')."""
     return acad.call("list_entities", {"type": entity_type, "limit": limit})
 
@@ -1358,6 +1448,63 @@ def get_entity(handle: str) -> dict[str, Any]:
 def calculate_area(handle: str) -> dict[str, Any]:
     """Calcula el área de una entidad cerrada (Polyline cerrada, Region o Circle)."""
     return acad.call("calculate_area", {"handle": handle})
+
+
+@mcp.tool()
+def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Cuantifica materiales a partir de lo YA DIBUJADO, no de números de memoria.
+
+    Un cuadro de cuantificación hecho a mano repite el error que esta
+    biblioteca ya resolvió para áreas y rótulos: alguien calcula aparte y el
+    número que pone en la tabla no es necesariamente el que mide el plano.
+    Acá el área sale de calculate_area sobre los handles reales — nada se
+    inventa salvo el acero, que el dibujo no puede mostrar a escala (una
+    varilla en corte es un círculo esquemático de 1cm), así que ahí se toma
+    la especificación que ya quedó anotada en el plano.
+
+    items: lista de conceptos, cada uno con 'type' y 'label':
+      "concrete_volume": {"handles": [...], "depth": 0.15} — mide el área de
+        cada handle y la multiplica por 'depth' (la profundidad que ESA vista
+        no muestra, p.ej. el espesor hacia adentro del muro en una elevación).
+      "brick_count": {"handles": [...], "brick_w": 0.28, "brick_h": 0.07,
+        "joint": 0.015, "waste_pct": 5.0} — piezas = área medida / módulo
+        pieza+junta, con la merma.
+      "mortar_volume": {"handles": [...], "thickness": 0.14, "brick_w":..,
+        "brick_h":.., "brick_depth":.., "joint":..} — mortero = volumen del
+        muro menos el volumen real que ocupan las piezas.
+      "steel_weight": {"count": 3, "length": 2.5, "long_bars": 4,
+        "long_bar_size": "#3", "stirrup_size": "#2", "stirrup_spacing": 0.15,
+        "stirrup_handle": "466"} — peso de varilla longitudinal + estribos;
+        stirrup_handle mide el PERÍMETRO REAL del estribo ya dibujado
+        (closed Polyline) en vez de recalcularlo a mano.
+
+    Devuelve 'items' (una fila resuelta por concepto, con el detalle de cómo
+    se midió) y 'totals' (sumado por material: concreto_m3, ladrillo_piezas,
+    mortero_m3, acero_kg). Pasale el resultado a create_quantities_table
+    para dibujarlo."""
+    return qty_mod.calculate_quantities(items)
+
+
+@mcp.tool()
+def create_quantities_table(x: float, y: float, result: dict[str, Any],
+                            text_height: float,
+                            title: str = "CUANTIFICACIÓN DE OBRA (MEDIDA DEL PLANO)",
+                            layer: str = "TABLAS",
+                            col_widths: Optional[list[float]] = None) -> dict[str, Any]:
+    """Dibuja el resultado de calculate_quantities como tabla.
+
+    No recalcula nada: toma 'result' tal cual lo devolvió calculate_quantities
+    y lo tabula, con una columna que muestra CÓMO se llegó a cada número
+    (área medida, módulo, fórmula) y no solo el resultado final — así quien
+    lee la lámina puede verificar la cuenta sin abrir el DWG.
+
+    col_widths: [concepto, medición], en unidades del modelo. Por defecto
+    [5.5, 17.0] — la columna de medición trae la operación completa (cada
+    área sumada, el módulo desglosado, el kg/m usado), así que sale ancha.
+    Si algún texto no entra, el resultado avisa en 'warning' cuánto necesita."""
+    return qty_mod.create_quantities_table(
+        x=x, y=y, result=result, text_height=text_height, title=title,
+        layer=layer, col_widths=col_widths)
 
 
 @mcp.tool()
@@ -1559,7 +1706,8 @@ def select_entities(x1: Optional[float] = None, y1: Optional[float] = None,
     delete_entities y se vuelve a dibujar SOLO eso — en vez de tirar el plano
     entero y empezar de cero.
 
-    x1,y1,x2,y2: rectángulo de selección; sin ellos, todo el espacio modelo.
+    x1,y1,x2,y2: rectángulo de selección; sin ellos, todo el espacio ACTIVO
+    (el modelo, o el layout de papel si hay uno abierto con set_current_layout).
     layers / types: filtros adicionales ('Line', 'Polyline', 'DBText'...).
     mode: 'inside' toma solo lo que entra ENTERO en el rectángulo (lo seguro,
     es el default); 'crossing' toma también lo que lo cruza — útil para agarrar
@@ -1608,7 +1756,9 @@ def union_regions(handles: list[str],
 @mcp.tool()
 def get_extents(layers: Optional[list[str]] = None,
                  exclude_layers: Optional[list[str]] = None) -> dict[str, Any]:
-    """Cuánto ocupa lo que ya está dibujado, en unidades del modelo.
+    """Cuánto ocupa lo que ya está dibujado en el espacio ACTIVO (el modelo, o
+    el layout de papel si hay uno abierto con set_current_layout), en unidades
+    del modelo.
 
     Permite invertir el orden de trabajo: en vez de poner el cajón primero y
     confiar en que el dibujo entre, se dibuja, se mide y recién entonces se

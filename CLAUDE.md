@@ -166,6 +166,34 @@ cotas se apilan afuera de los globos), pero se lee peor.
 Y `set_display_options(linetype_scale=...)` es obligatorio para que los ejes se
 vean como trazo-punto: dibujando en metros con LTSCALE=1 salen continuos.
 
+## 4.quinquies Cortes y fachadas: `create_building_section`
+
+Un corte se describe por **niveles**, no se deriva de `create_walls`: qué muro
+corta de verdad el plano de corte (banda gruesa achurada) y cuál queda visto
+de fondo (línea fina) es una decisión de quien proyecta, y este MCP no tiene
+ningún concepto de altura/nivel en la planta como para inferirla sola. Se le
+pasa la lista de `stories` ya resuelta, de abajo hacia arriba, cada una con su
+`height` (piso a piso, **incluye** el espesor de su propia losa superior —
+una azotea plana es simplemente el último nivel de la lista) y sus
+`elements`: `cut_wall` (cortado, se achura), `window`/`door` (casi siempre del
+muro de fondo, vistos más allá del plano de corte — la línea de corte se
+elige justamente para no pasar por un vano) y `seen_wall` (silueta de fondo).
+
+`view="corte"` achura y dibuja losas; `view="fachada"` **nunca** achura ni
+dibuja losas (una fachada no muestra espesores) y los `cut_wall` pasan a ser
+la envolvente exterior vista, no la banda cortada.
+
+Acotar los niveles con `dimension_stories=True` en vez de calcular el offset a
+mano — es el mismo `create_dimension_chain` de siempre, aplicado en vertical.
+Los rótulos de nivel ("N.P.T. +2.90") se ubican solos del lado opuesto a la
+cadena de cotas para no encimarse con ella.
+
+Capas propias, para no chocar con lo que ya usan otras tools de corte:
+`CORTES-ARQ` (cortado) y `CORTES-ARQ-VISTO` (visto) — **no** `CORTES`, que ya
+es el detalle de capas de pavimento (`create_layer_section`), ni `SECCIONES`,
+que ya son los cortes viales (`create_cross_sections`). `FACHADAS` para
+`view="fachada"`.
+
 ## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta
@@ -329,6 +357,40 @@ en metros, un texto de 2.5mm de papel se crea con `height = 0.25`. Para cotas
 ese rol lo cumple `scale`, que es *unidades del modelo por mm de papel* —
 `create_sheet` ya lo deja registrado, así que la cadena lo toma sola y no hace
 falta pasarlo.
+
+## 8.bis Cuantificación de obra: `calculate_quantities`
+
+Un cuadro de "volumen de obra" hecho de memoria repite el error que ya
+resolvieron los rótulos y las cotas: el número que se anota no es
+necesariamente el que mide el plano. `calculate_quantities` mide con
+`calculate_area` los handles que YA quedaron dibujados (castillos, dalas,
+zapatas, paños de muro) y aplica la fórmula de obra sobre esa medición, no
+sobre un número recordado.
+
+Lo único que el dibujo no muestra a escala es el **acero**: una varilla en
+corte es un círculo esquemático de ~1cm, no la sección real. Ahí se toma la
+especificación que ya quedó anotada en el plano (varillas, diámetro,
+separación de estribos) — sigue siendo un dato del proyecto, no un supuesto
+de la tool. Para el perímetro del estribo, pasale `stirrup_handle`: mide el
+`length` real del estribo ya dibujado (Polyline cerrada) en vez de
+recalcularlo a mano.
+
+`create_quantities_table` dibuja el resultado tal cual — no vuelve a
+calcular nada — con una columna que muestra CÓMO se llegó a cada número
+(área medida, módulo, fórmula), para que se pueda verificar la cuenta sin
+abrir el DWG.
+
+**Es obligatorio, no opcional.** Todo plano que salga de esta biblioteca —no
+solo el que lo pida explícitamente— lleva su cuadro de cuantificación igual
+que lleva su cuadro de especificaciones: en cuanto haya concreto, tabique,
+mortero o acero dibujado, corresponde un `calculate_quantities` +
+`create_quantities_table` antes de dar el plano por terminado.
+
+Si falta un dato para cuantificar algo con el que el dibujo no alcanza
+—profundidad real de una sección, tipo y separación de varilla, % de
+merma— **hay que preguntarlo**, no inventarlo. La tool ya rechaza el cálculo
+sin esos datos (`ValueError` explícito), pero preguntar antes de dibujar
+ahorra el redibujado.
 
 ## 9. Verificar antes de dar por terminado
 

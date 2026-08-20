@@ -17,6 +17,8 @@ import arch
 import autocad_client
 import furniture
 import layers
+import quantities
+import sections
 import sheet
 import space
 
@@ -33,6 +35,9 @@ LAYER_COLORS = {
     "COTAS": "#8a5a1b",
     "TEXTOS": "#333333",
     "MOBILIARIO": "#5b6b7a",
+    "CORTES-ARQ": "#111111",
+    "CORTES-ARQ-VISTO": "#5b6b7a",
+    "FACHADAS": "#356fb5",
 }
 DEFAULT_COLOR = "#444444"
 
@@ -138,7 +143,7 @@ def install() -> None:
     """Desvía todas las llamadas al plugin hacia el mock."""
     DRAWN.clear()
     autocad_client.call = fake_call
-    for modulo in (sheet, arch, furniture, annotation):
+    for modulo in (sheet, arch, furniture, annotation, sections):
         modulo.acad.call = fake_call
     # El preview arranca de cero: sin esto, dos corridas seguidas en el mismo
     # proceso apilan las cotas sobre franjas del plano anterior.
