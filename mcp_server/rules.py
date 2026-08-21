@@ -475,3 +475,281 @@ def check_annotations(items: Optional[list[dict[str, Any]]] = None,
                     f"{len(problemas)} encimadura(s): "
                     + "; ".join(p["problem"] for p in problemas)),
     }
+
+
+# ------------------------------------------------------- muro de contencion
+
+def check_retaining_wall(height: float,
+                         soil_unit_weight: float = 1800.0,
+                         friction_angle_deg: float = 30.0,
+                         surcharge: float = 0.0,
+                         concrete_unit_weight: float = 2400.0,
+                         friction_coefficient: float = 0.5,
+                         min_fs_overturning: float = 1.5,
+                         min_fs_sliding: float = 1.5,
+                         stem_thickness: Optional[float] = None,
+                         footing_thickness: Optional[float] = None,
+                         max_base_width: Optional[float] = None) -> dict[str, Any]:
+    """Proporción PRELIMINAR de un muro de contención por empuje activo de
+    Rankine, para el paso ANTES de dibujar -- un muro de 3.5 m de tierra no
+    se resuelve con la misma pared de 15 cm de un tabique interior, pero
+    hasta ahora esta biblioteca no tenía forma de decir CUÁNTO ancho de base
+    hace falta: quien pedía el dibujo terminaba poniendo una proporción a
+    ojo, sin ninguna cuenta atrás que la respalde.
+
+    Modelo: cantiléver en T, vástago apoyado a un tercio de la base desde el
+    paño (talón = 2/3 de la base, del lado de la tierra retenida) -- la
+    proporción de libro de texto para este tipo de muro. El talón cuenta con
+    el peso de la tierra que carga encima para resistir el volteo, que es
+    la diferencia entre un resultado defendible y uno que no: un muro de
+    gravedad puro (sin talón, solo el concreto) necesita una base
+    absurdamente ancha porque le falta ese peso -- la primera versión de
+    este chequeo lo hacía así y daba 12.68 m de base para 3.5 m de altura,
+    un número que ningún ingeniero construiría. Sigue siendo conservador
+    (ignora el empuje pasivo del lado del paño y cualquier diente de
+    cortante), pero no al punto de ser inútil. El resultado es un chequeo
+    PRELIMINAR de proporción -- no reemplaza el estudio de mecánica de
+    suelos del proyecto ni el diseño a flexión/cortante del vástago y la
+    zapata.
+
+    height: altura de tierra retenida, del desplante (base de la zapata) a
+    la corona del muro, en metros.
+    soil_unit_weight: peso volumétrico del suelo retenido, kg/m3 (1800 es un
+    relleno compactado típico; bajalo si el suelo es más suelto).
+    friction_angle_deg: ángulo de fricción interna del suelo (30° es un
+    valor conservador típico sin estudio de mecánica de suelos).
+    surcharge: sobrecarga uniforme sobre el relleno, kg/m2 (una banqueta,
+    una cochera encima) -- 0 si no hay nada cargando por arriba.
+    concrete_unit_weight: peso volumétrico del concreto, kg/m3 (2400 típico).
+    friction_coefficient: fricción concreto-suelo en la base, para el
+    deslizamiento (0.5 es un valor conservador usual).
+    min_fs_overturning / min_fs_sliding: factores de seguridad mínimos
+    exigidos (1.5 es lo habitual en un chequeo preliminar).
+    stem_thickness / footing_thickness: si no se pasan, arrancan en H/12
+    (mínimo 0.20 m) -- la proporción usual para un muro de esta altura.
+    max_base_width: tope de ancho de base a probar antes de rendirse y
+    avisar que no cierra con estas proporciones (por default, sin tope).
+
+    Devuelve 'ok', las dimensiones que SÍ cumplen los dos factores de
+    seguridad (baseWidth, stemThickness, footingThickness), el empuje activo
+    y el momento de volteo con los que se calculó, y 'method' explicando el
+    modelo -- para que quien lea el plano pueda verificar la cuenta, no solo
+    confiar en el número."""
+    if height <= 0:
+        raise ValueError("height tiene que ser mayor que 0.")
+
+    phi = math.radians(friction_angle_deg)
+    ka = math.tan(math.pi / 4.0 - phi / 2.0) ** 2
+
+    empuje_suelo = 0.5 * ka * soil_unit_weight * height ** 2
+    empuje_sobrecarga = ka * surcharge * height
+    empuje_total = empuje_suelo + empuje_sobrecarga
+    momento_volteo = empuje_suelo * (height / 3.0) + empuje_sobrecarga * (height / 2.0)
+
+    ts = stem_thickness if stem_thickness is not None else max(0.20, round(height / 12.0, 2))
+    tf = footing_thickness if footing_thickness is not None else max(0.20, round(height / 12.0, 2))
+    base = max(0.90, round(0.55 * height, 2))
+    if max_base_width is not None:
+        # Si la semilla ya se pasa del tope, arrancar directo en el tope: lo
+        # que importa es si el tope alcanza, no un valor que ni se puede
+        # construir.
+        base = min(base, max_base_width)
+
+    # Vastago a un tercio de la base desde el paño (el toe, del lado de
+    # afuera); el resto, menos el propio espesor del vastago, es el talon
+    # que queda del lado de la tierra retenida.
+    toe_ratio = 1.0 / 3.0
+    altura_suelo_talon = height - tf
+    toe = heel = 0.0
+    fs_volteo = fs_deslizamiento = 0.0
+    for _ in range(400):
+        toe = base * toe_ratio
+        heel = max(0.0, base - ts - toe)
+        peso_vastago = ts * altura_suelo_talon * concrete_unit_weight
+        peso_zapata = base * tf * concrete_unit_weight
+        peso_talon = heel * altura_suelo_talon * soil_unit_weight
+        n = peso_vastago + peso_zapata + peso_talon
+        # Momentos resistentes respecto del paño (x=0, el borde de afuera).
+        momento_resistente = (peso_zapata * (base / 2.0)
+                              + peso_vastago * (toe + ts / 2.0)
+                              + peso_talon * (base - heel / 2.0))
+        fs_volteo = (momento_resistente / momento_volteo) if momento_volteo > 0 else float("inf")
+        fs_deslizamiento = ((friction_coefficient * n) / empuje_total) if empuje_total > 0 else float("inf")
+        if fs_volteo >= min_fs_overturning and fs_deslizamiento >= min_fs_sliding:
+            break
+        if max_base_width is not None and base >= max_base_width:
+            break
+        base = round(base + 0.05, 2)
+
+    ok = fs_volteo >= min_fs_overturning and fs_deslizamiento >= min_fs_sliding
+    problemas: list[dict[str, str]] = []
+    if not ok:
+        if fs_volteo < min_fs_overturning:
+            problemas.append({
+                "rule": "volteo",
+                "problem": f"Con base de {base:.2f} m el factor de seguridad al "
+                           f"volteo da {fs_volteo:.2f}, por debajo de "
+                           f"{min_fs_overturning:g}.",
+                "fix": "Subí max_base_width para seguir probando, agregá un "
+                       "talón real con el peso de la tierra encima (este "
+                       "chequeo es conservador y no lo cuenta), o bajá la "
+                       "altura retenida."})
+        if fs_deslizamiento < min_fs_sliding:
+            problemas.append({
+                "rule": "deslizamiento",
+                "problem": f"El factor de seguridad al deslizamiento da "
+                           f"{fs_deslizamiento:.2f}, por debajo de "
+                           f"{min_fs_sliding:g}.",
+                "fix": "Agregá un diente o llave de cortante en la base, o "
+                       "subí friction_coefficient si hay dato real del "
+                       "estudio de suelos."})
+
+    return {
+        "ok": ok,
+        "problems": problemas,
+        "ka": round(ka, 4),
+        "activeThrust_kg_per_m": round(empuje_total, 1),
+        "overturningMoment_kgm_per_m": round(momento_volteo, 1),
+        "baseWidth": base,
+        "stemThickness": ts,
+        "footingThickness": tf,
+        "toeLength": round(toe, 2),
+        "heelLength": round(heel, 2),
+        "fsOverturning": round(fs_volteo, 2),
+        "fsSliding": round(fs_deslizamiento, 2),
+        "method": ("Rankine, cantiléver en T con el vástago a base/3 del "
+                   "paño y el talón cargando el peso de la tierra que tiene "
+                   "encima -- conservador: ignora el empuje pasivo del lado "
+                   "del paño y cualquier diente de cortante. Chequeo "
+                   "PRELIMINAR de proporción, no reemplaza el estudio de "
+                   "mecánica de suelos ni el diseño a flexión/cortante del "
+                   "vástago y la zapata."),
+    }
+
+
+# ------------------------------------------------------- zapata aislada
+
+def check_footing(axial_load: float,
+                  column_width: float = 0.30,
+                  column_length: float = 0.30,
+                  allow_bearing: float = 15000.0,
+                  concrete_fc: float = 200.0,
+                  concrete_unit_weight: float = 2400.0,
+                  soil_unit_weight: float = 1700.0,
+                  depth_to_footing: float = 1.0,
+                  phi_shear: float = 0.85,
+                  min_thickness: float = 0.20,
+                  max_side: Optional[float] = None) -> dict[str, Any]:
+    """Proporción PRELIMINAR de una zapata aislada: cuánto lado hace falta
+    por capacidad de carga del suelo, y cuánto peralte para que no punzone
+    -- las dos preguntas que "1.00 x 1.00 x 0.30, típico de vivienda" no
+    contesta. Esa frase fue justo lo que se usó a ojo antes de tener esta
+    función: sirve de punto de partida, pero no dice si ESA columna, con
+    ESA carga, realmente cabe en esa zapata.
+
+    Dos chequeos independientes, porque cada uno gobierna una dimensión
+    distinta:
+      - CARGA: el lado de la zapata sale de repartir la carga (más el peso
+        propio de la zapata y la tierra que le queda encima) sobre la
+        capacidad admisible del suelo -- esto define el LARGO/ANCHO.
+      - PUNZONAMIENTO: una vez que el lado está fijo, el peralte tiene que
+        aguantar el cortante que la columna punzona contra la zapata en el
+        perímetro crítico a d/2 de la columna (ACI, vc = 1.06·√f'c en
+        kg/cm²) -- esto define el PERALTE, y typicamente gobierna antes que
+        la carga misma.
+
+    axial_load: carga de servicio sobre la columna, kg (sin factorizar).
+    column_width / column_length: sección de la columna, m.
+    allow_bearing: capacidad de carga admisible del suelo, kg/m2 (15000 =
+    15 t/m2, un valor moderado típico sin estudio de mecánica de suelos).
+    concrete_fc: f'c del concreto, kg/cm2 (200 es lo típico en vivienda).
+    concrete_unit_weight / soil_unit_weight: kg/m3.
+    depth_to_footing: desplante, de la superficie a la base de la zapata,
+    m -- define cuánta tierra carga encima para el chequeo de capacidad.
+    phi_shear: factor de reducción para cortante (0.85 es el valor usual).
+    min_thickness: peralte mínimo a probar, m.
+    max_side: tope de lado a probar antes de avisar que no cierra.
+
+    Devuelve 'ok' y, si cumple, 'side'/'thickness' ya verificados por los
+    dos chequeos, junto con la carga total (con peso propio incluido), el
+    cortante actuante y resistente por punzonamiento, y 'method' explicando
+    el criterio -- no reemplaza el estudio de mecánica de suelos ni el
+    diseño a flexión del armado."""
+    if axial_load <= 0:
+        raise ValueError("axial_load tiene que ser mayor que 0.")
+
+    # --- Lado: por capacidad de carga, incluyendo peso propio + sobrecarga
+    # de tierra sobre la zapata (no solo la carga de la columna sola).
+    lado = max(0.60, round(math.sqrt(axial_load / allow_bearing), 2))
+    carga_total = axial_load
+    for _ in range(200):
+        peso_zapata = lado * lado * min_thickness * concrete_unit_weight
+        peso_tierra = lado * lado * depth_to_footing * soil_unit_weight
+        carga_total = axial_load + peso_zapata + peso_tierra
+        lado_necesario = math.sqrt(carga_total / allow_bearing)
+        if lado_necesario <= lado:
+            break
+        lado = round(lado_necesario + 0.05, 2)
+        if max_side is not None and lado >= max_side:
+            lado = max_side
+            break
+
+    presion_actuante = carga_total / (lado * lado)
+    ok_carga = presion_actuante <= allow_bearing * 1.001
+
+    # --- Peralte: por punzonamiento (cortante en dos direcciones), ACI.
+    espesor = max(min_thickness, round((lado - max(column_width, column_length)) / 3.0, 2))
+    d = peri = vu = vc_resistente = 0.0
+    ok_punzonamiento = False
+    for _ in range(200):
+        d = max(espesor - 0.08, 0.05)
+        peri = 2.0 * (column_width + d) + 2.0 * (column_length + d)
+        area_critica = (column_width + d) * (column_length + d)
+        vu = carga_total * (1.0 - area_critica / (lado * lado))
+        vc_resistente = phi_shear * 1.06 * math.sqrt(concrete_fc) * (peri * 100.0) * (d * 100.0)
+        if vu <= vc_resistente:
+            ok_punzonamiento = True
+            break
+        espesor = round(espesor + 0.05, 2)
+
+    ok = ok_carga and ok_punzonamiento
+    problemas: list[dict[str, str]] = []
+    if not ok_carga:
+        problemas.append({
+            "rule": "capacidad de carga",
+            "problem": f"Con lado {lado:.2f} m la presión sobre el suelo da "
+                       f"{presion_actuante:.0f} kg/m2, por encima de los "
+                       f"{allow_bearing:g} kg/m2 admisibles (se llegó al "
+                       f"tope max_side).",
+            "fix": "Subí max_side, o pedí un estudio de mecánica de suelos "
+                   "si esta capacidad admisible es solo un supuesto."})
+    if not ok_punzonamiento:
+        problemas.append({
+            "rule": "punzonamiento",
+            "problem": f"El cortante actuante ({vu:.0f} kg) supera al "
+                       f"resistente ({vc_resistente:.0f} kg) incluso con "
+                       f"{espesor:.2f} m de peralte.",
+            "fix": "Agrandá el lado de la zapata (reduce la presión y el "
+                   "cortante actuante), subí f'c, o revisá si hace falta "
+                   "un dado/pedestal que reparta la carga en un perímetro "
+                   "mayor."})
+
+    return {
+        "ok": ok,
+        "problems": problemas,
+        "side": lado,
+        "thickness": espesor,
+        "totalLoad_kg": round(carga_total, 1),
+        "bearingPressure_kg_m2": round(presion_actuante, 1),
+        "effectiveDepth_m": round(d, 3),
+        "criticalPerimeter_m": round(peri, 2),
+        "punchingShearDemand_kg": round(vu, 1),
+        "punchingShearCapacity_kg": round(vc_resistente, 1),
+        "method": ("Lado por capacidad de carga admisible (incluye peso "
+                   "propio de la zapata y la tierra que le queda encima); "
+                   "peralte por punzonamiento en dos direcciones (ACI, "
+                   "vc=1.06·√f'c en kg/cm², perímetro crítico a d/2 de la "
+                   "columna). Chequeo PRELIMINAR -- no reemplaza el "
+                   "estudio de mecánica de suelos ni el diseño a flexión "
+                   "del armado de la zapata."),
+    }
