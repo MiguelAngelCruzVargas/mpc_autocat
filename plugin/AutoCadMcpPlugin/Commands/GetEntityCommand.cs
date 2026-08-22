@@ -27,6 +27,30 @@ namespace AutoCadMcpPlugin.Commands
                     ["linetype"] = ent.Linetype
                 };
 
+                // La caja real que ocupa, calculada por AutoCAD.
+                //
+                // Sin esto no habia forma de saber cuanto mide un MText: se
+                // devolvia su punto de insercion y nada mas. Y sin la caja no
+                // se puede preguntar "que hay debajo de este texto", que es la
+                // unica manera honesta de detectar que un rotulo esta encima
+                // del dibujo. check_annotations comparaba contra un registro
+                // interno que solo llenan las tools de alto nivel: un dibujo
+                // hecho con create_polyline crudo le resultaba INVISIBLE.
+                try
+                {
+                    var ext = ent.GeometricExtents;
+                    result["bbox"] = new JsonArray {
+                        ext.MinPoint.X, ext.MinPoint.Y,
+                        ext.MaxPoint.X, ext.MaxPoint.Y };
+                }
+                catch (System.Exception)
+                {
+                    // Un texto vacio o un bloque sin geometria no tienen
+                    // extents y GeometricExtents tira. No es un error de la
+                    // consulta: es que no ocupan lugar.
+                    result["bbox"] = null;
+                }
+
                 switch (ent)
                 {
                     case Line line:

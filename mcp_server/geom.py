@@ -200,3 +200,95 @@ def densify(points: list[list[float]], bulges: list[float],
             out.append([cx + radio * math.cos(a), cy + radio * math.sin(a)])
     out.append(list(points[-1]))
     return out
+
+
+# ------------------------------------------- propiedades de una seccion
+
+def section_properties(points: list[list[float]],
+                       bulges: Optional[list[float]] = None,
+                       arc_segments: int = 0) -> dict[str, float]:
+    """Area, perimetro, centroide y momentos de inercia de un contorno cerrado.
+
+    Existe porque calculate_area devolvia SOLO el area. El centroide y los
+    momentos son lo que hace falta apenas se pasa de "cuanto concreto lleva"
+    a "resiste": el modulo de seccion sale de ahi. Sin esto habia que
+    calcularlos a mano cada vez, que es justo lo que esta biblioteca trata
+    de no hacer.
+
+    points: los vertices, sin repetir el primero al final (es lo que
+    devuelve get_entity para una Polyline cerrada).
+    bulges: uno por vertice, si el contorno tiene arcos. Los arcos se
+    muestrean con densify, asi que el resultado es una APROXIMACION y se
+    dice: 'exact' viene en False.
+
+    El signo del area no importa -- se toma el valor absoluto -- pero los
+    momentos se devuelven respecto del CENTROIDE, que es como se usan para
+    dimensionar. Ixx flexiona alrededor del eje horizontal.
+
+    Unidades: las del dibujo. Un area en m2 da momentos en m4.
+    """
+    # 2 vertices con bulges SI son un contorno cerrado: dos semicircunferencias
+    # son un circulo, y asi lo guarda AutoCAD. Por eso el minimo de 3 se exige
+    # DESPUES de muestrear los arcos, no antes.
+    if not points or len(points) < 2:
+        raise ValueError(
+            "Hacen falta al menos 2 vertices; vinieron %d." % len(points or []))
+
+    exacto = True
+    pts = [[float(p[0]), float(p[1])] for p in points]
+    if bulges and any(abs(float(b)) > 1e-12 for b in bulges):
+        # densify espera el contorno abierto con el cierre explicito.
+        cerrado = pts + [pts[0]]
+        bs = [float(b) for b in bulges] + [0.0]
+        pts = densify(cerrado, bs, arc_segments)
+        if pts and math.dist(pts[0], pts[-1]) < 1e-9:
+            pts = pts[:-1]
+        exacto = False
+
+    if len(pts) < 3:
+        raise ValueError(
+            "Con %d vertices y sin arcos no hay area que calcular." % len(pts))
+
+    n = len(pts)
+    a2 = 0.0        # 2A
+    cx6 = 0.0       # 6*A*Cx
+    cy6 = 0.0
+    ixx12 = 0.0     # 12*Ixx respecto del origen
+    iyy12 = 0.0
+    perimetro = 0.0
+
+    for i in range(n):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % n]
+        cruz = x0 * y1 - x1 * y0
+        a2 += cruz
+        cx6 += (x0 + x1) * cruz
+        cy6 += (y0 + y1) * cruz
+        ixx12 += (y0 * y0 + y0 * y1 + y1 * y1) * cruz
+        iyy12 += (x0 * x0 + x0 * x1 + x1 * x1) * cruz
+        perimetro += math.hypot(x1 - x0, y1 - y0)
+
+    area_con_signo = a2 / 2.0
+    if abs(area_con_signo) < 1e-12:
+        raise ValueError(
+            "El contorno tiene area cero: los vertices son colineales o se "
+            "repiten.")
+
+    cx = cx6 / (6.0 * area_con_signo)
+    cy = cy6 / (6.0 * area_con_signo)
+    area = abs(area_con_signo)
+
+    # Steiner: del origen al centroide.
+    ixx = abs(ixx12 / 12.0) - area * cy * cy
+    iyy = abs(iyy12 / 12.0) - area * cx * cx
+
+    return {
+        "area": area,
+        "perimeter": perimetro,
+        "centroidX": cx,
+        "centroidY": cy,
+        "Ixx": ixx,
+        "Iyy": iyy,
+        "vertices": n,
+        "exact": exacto,
+    }

@@ -6,6 +6,7 @@ cargado dentro de AutoCAD (ver autocad_client.py).
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -23,6 +24,7 @@ import rebar as rebar_mod
 import roof as roof_mod
 import rules as rules_mod
 import furniture as fur_mod
+import geom as geom_mod
 import layers as layers_mod
 import sections as sect_mod
 import sheet as sheet_mod
@@ -2559,6 +2561,59 @@ def calculate_area(handle: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def calculate_properties(handle: str) -> dict[str, Any]:
+    """Área, perímetro, CENTROIDE y momentos de inercia de una sección cerrada.
+
+    `calculate_area` devuelve solo el área. El centroide y los momentos son lo
+    que hace falta apenas se pasa de "cuánto concreto lleva" a "resiste": el
+    módulo de sección sale de ahí. Sin esto había que calcularlos a mano cada
+    vez — que es justo lo que esta biblioteca existe para no hacer.
+
+    Sirve para Polyline cerrada y Circle. Lee la geometría REAL del dibujo
+    (get_entity) y calcula sobre esos vértices, no sobre lo que se creyó
+    dibujar.
+
+    Ixx / Iyy vienen respecto del CENTROIDE, que es como se usan para
+    dimensionar: Ixx flexiona alrededor del eje horizontal. Unidades las del
+    dibujo — un área en m2 da momentos en m4.
+
+    Un contorno con arcos se muestrea, así que el resultado es aproximado y
+    'exact' viene en False."""
+    e = acad.call("get_entity", {"handle": handle})
+    tipo = e.get("type")
+
+    if tipo == "Circle":
+        r = float(e["radius"])
+        cx, cy = float(e["center"][0]), float(e["center"][1])
+        i = math.pi * r ** 4 / 4.0
+        return {"handle": handle, "type": tipo,
+                "area": math.pi * r * r, "perimeter": 2 * math.pi * r,
+                "centroidX": cx, "centroidY": cy, "Ixx": i, "Iyy": i,
+                "vertices": 0, "exact": True, "warning": None}
+
+    pts = e.get("points")
+    if not pts:
+        raise ValueError(
+            "calculate_properties sirve para Polyline cerrada y Circle; el "
+            "handle %s es un %s. Para medir un contorno hecho de líneas "
+            "sueltas, unilas antes con union_regions." % (handle, tipo))
+
+    aviso = None
+    if e.get("closed") is False:
+        aviso = ("La polilínea está ABIERTA: se calcula como si cerrara del "
+                 "último vértice al primero. Si no era la intención, el área "
+                 "y el centroide no significan nada.")
+
+    r = geom_mod.section_properties(pts, e.get("bulges"))
+    r.update({"handle": handle, "type": tipo, "warning": aviso})
+    if not r["exact"]:
+        r["warning"] = ((aviso + " ") if aviso else "") + (
+            "El contorno tiene arcos: se muestrearon, así que los valores son "
+            "una aproximación muy fina, no exactos.")
+    return r
+
+
+@mcp.tool()
 def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
     """Cuantifica materiales a partir de lo YA DIBUJADO, no de números de memoria.
 
@@ -2825,13 +2880,39 @@ def set_dim_style(name: str, text_height: Optional[float] = None,
     text_style: nombre de un estilo creado con set_text_style.
 
     Después pasá style='<nombre>' a create_dimension para usarlo."""
-    return acad.call("set_dim_style", {
+    # La flecha en proporcion al texto. Sin esto quedaba el default del
+    # dibujo (0.18) junto a un texto de 2.5: el numero catorce veces mas
+    # grande que su propia flecha. En cualquier norma la flecha ronda la
+    # altura del texto, y esa proporcion no es una preferencia -- es lo que
+    # hace que una cota se lea como cota.
+    derivado = None
+    if arrow_size is None and text_height:
+        arrow_size = text_height
+        derivado = ("arrow_size no vino: se tomo %.4g, la altura del texto. "
+                    "Pasalo explicito si tu norma usa otra proporcion."
+                    % text_height)
+
+    r = acad.call("set_dim_style", {
         "name": name, "textHeight": text_height, "arrowSize": arrow_size,
         "scale": scale, "decimalPlaces": decimal_places,
         "textStyle": text_style, "unitsFactor": units_factor,
         "extensionOffset": extension_offset, "extensionBeyond": extension_beyond,
         "setCurrent": set_current,
     })
+
+    avisos = [a for a in (derivado,) if a]
+    # decimal_places sin pasar deja el default del dibujo, que suele ser 4:
+    # las cotas salen diciendo "30.0000". No se pisa en silencio -- se avisa.
+    dec = r.get("decimalPlaces")
+    if decimal_places is None and isinstance(dec, int) and dec > 3:
+        avisos.append(
+            "El estilo quedo con %d decimales, asi que las cotas van a decir "
+            "'30.%s'. Es el default del dibujo, no una eleccion: pasa "
+            "decimal_places=2 (o 0) si no es lo que queres." % (dec, "0" * dec))
+    if avisos:
+        r = dict(r)
+        r["warnings"] = avisos
+    return r
 
 
 @mcp.tool()
