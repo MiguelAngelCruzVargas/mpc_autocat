@@ -158,7 +158,9 @@ def test_un_texto_solo_no_se_estorba_a_si_mismo(g: Dibujo) -> None:
 
 
 @con([ent("T", "DBText", "TEXTOS", 0, 0, 2, 0.3),
-      ent("FONDO", "Polyline", "REFERENCIA", 0, 0, 5, 5)])
+      # CRUZA el texto sin contenerlo: si lo contuviera seria "encerrar", que
+      # es otra cosa y no un problema.
+      ent("FONDO", "Polyline", "REFERENCIA", 1, 0.1, 8, 5)])
 def test_ignore_layers_deja_pasar_lo_que_va_debajo(g: Dibujo) -> None:
     """Una capa de fondo o de referencia va debajo a proposito."""
     sin = placement.check_text_placement()
@@ -194,6 +196,40 @@ def test_margin_negativo_es_error(g: Dibujo) -> None:
         check("rechaza margin negativo", True)
 
 
+# ------------------------------------------- encerrar no es tapar
+
+@con([ent("CELDA", "Polyline", "TABLAS", 0, 0, 10, 1),
+      ent("TXT", "DBText", "TABLAS", 0.2, 0.2, 4, 0.8)])
+def test_el_texto_de_una_celda_no_es_un_problema(g: Dibujo) -> None:
+    """Un contorno que CONTIENE al texto entero no lo esta tapando: lo esta
+    encerrando. Sin distinguirlo, cada celda de cada tabla sale como
+    problema -- 107 falsos positivos en una sola lamina, medidos."""
+    r = placement.check_text_placement()
+    check("no lo marca como problema", r["ok"], r["problems"])
+    check("pero lo cuenta como encerrado", r["enclosed"] == 1, r["enclosed"])
+
+
+@con([ent("HATCH", "Hatch", "MUROS", 0, 0, 10, 1),
+      ent("TXT", "DBText", "TEXTOS", 0.2, 0.2, 4, 0.8)])
+def test_un_achurado_que_lo_contiene_SI_es_un_problema(g: Dibujo) -> None:
+    """El achurado le pasa por encima aunque lo contenga."""
+    r = placement.check_text_placement()
+    check("lo marca igual", not r["ok"], r)
+    check("como sobre el dibujo",
+          r["problems"] and r["problems"][0]["kind"] == "sobre el dibujo",
+          r["problems"])
+
+
+@con(BARDA)
+def test_la_barda_sigue_saliendo_marcada(g: Dibujo) -> None:
+    """La dala es 0.15x0.20 y el titulo mide 2.68 de ancho: NO lo contiene,
+    asi que lo esta tapando de verdad. La regla de 'encerrar' no puede
+    tragarse este caso."""
+    r = placement.check_text_placement(margin=0.05)
+    check("sigue detectando el titulo sobre la dala", not r["ok"], r)
+    check("y no lo cuenta como encerrado", r["enclosed"] == 0, r["enclosed"])
+
+
 def main() -> int:
     for fn in [test_detecta_el_titulo_sobre_la_dala,
                test_corriendo_el_titulo_queda_limpio,
@@ -202,7 +238,10 @@ def main() -> int:
                test_ignore_layers_deja_pasar_lo_que_va_debajo,
                test_lo_que_esta_lejos_no_molesta,
                test_un_texto_sin_caja_se_avisa_no_se_ignora,
-               test_margin_negativo_es_error]:
+               test_margin_negativo_es_error,
+               test_el_texto_de_una_celda_no_es_un_problema,
+               test_un_achurado_que_lo_contiene_SI_es_un_problema,
+               test_la_barda_sigue_saliendo_marcada]:
         print(fn.__name__)
         fn()
 

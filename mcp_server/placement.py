@@ -53,6 +53,15 @@ def _caja(handle: str) -> Optional[list[float]]:
     return [float(c) for c in caja]
 
 
+def _contiene(afuera: Optional[list[float]],
+              adentro: list[float]) -> bool:
+    """El primer rectangulo contiene ENTERO al segundo."""
+    if not afuera:
+        return False
+    return (afuera[0] <= adentro[0] and afuera[1] <= adentro[1]
+            and afuera[2] >= adentro[2] and afuera[3] >= adentro[3])
+
+
 def check_text_placement(margin: float = 0.0,
                          layers: Optional[list[str]] = None,
                          ignore_layers: Optional[list[str]] = None,
@@ -84,6 +93,7 @@ def check_text_placement(margin: float = 0.0,
     problemas: list[dict[str, Any]] = []
     revisados = 0
     sin_caja = 0
+    encerrados = 0
 
     for t in textos:
         caja = _caja(t["handle"])
@@ -99,14 +109,33 @@ def check_text_placement(margin: float = 0.0,
 
         dibujo: list[dict[str, str]] = []
         otros_textos: list[dict[str, str]] = []
+        recuadros: list[dict[str, str]] = []
         for o in cruzan.get("entities", []):
             if o["handle"] == t["handle"]:
                 continue
             if str(o.get("layer", "")).upper() in ignorar:
                 continue
-            destino = (otros_textos if o["type"] in TIPOS_ANOTACION else dibujo)
-            destino.append({"handle": o["handle"], "type": o["type"],
-                            "layer": o.get("layer")})
+            if o["type"] in TIPOS_ANOTACION:
+                otros_textos.append({"handle": o["handle"], "type": o["type"],
+                                     "layer": o.get("layer")})
+                continue
+            # Un contorno que CONTIENE al texto entero no lo esta tapando: lo
+            # esta encerrando. Es la celda de una tabla, la casilla de un
+            # rotulo, el contorno de un ambiente. Sin distinguirlo, cada celda
+            # de cada tabla sale como problema -- 107 falsos positivos en una
+            # sola lamina, medidos.
+            #
+            # Un Hatch es la excepcion: si el texto cae adentro de un achurado,
+            # el achurado le pasa POR ENCIMA aunque lo contenga.
+            if o["type"] != "Hatch" and _contiene(_caja(o["handle"]), caja):
+                recuadros.append({"handle": o["handle"], "type": o["type"],
+                                  "layer": o.get("layer")})
+                continue
+            dibujo.append({"handle": o["handle"], "type": o["type"],
+                           "layer": o.get("layer")})
+
+        if recuadros and not dibujo:
+            encerrados += 1
 
         if dibujo:
             problemas.append({
@@ -145,6 +174,7 @@ def check_text_placement(margin: float = 0.0,
     return {
         "ok": not problemas,
         "checked": revisados,
+        "enclosed": encerrados,
         "problems": problemas,
         "warning": aviso,
     }
