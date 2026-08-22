@@ -16,7 +16,7 @@
     SchemaVersion="1.0"
     AutodeskProduct="AutoCAD"
     Name="AutoCAD MCP"
-    AppVersion="0.3.0"
+    AppVersion="0.4.0"
     Description="Puente MCP: deja que Claude dibuje sobre el dibujo abierto"
     ProductType="Application">
 
@@ -27,7 +27,7 @@
                          SeriesMin="R23.0" SeriesMax="R24.3" />
     <ComponentEntry
         AppName="AutoCadMcpPlugin"
-        Version="0.3.0"
+        Version="0.4.0"
         ModuleName="./Contents/net48/AutoCadMcpPlugin.dll"
         AppDescription="Servidor MCP embebido en AutoCAD"
         LoadOnAutoCADStartup="True" />
@@ -38,7 +38,7 @@
                          SeriesMin="R25.0" />
     <ComponentEntry
         AppName="AutoCadMcpPlugin"
-        Version="0.3.0"
+        Version="0.4.0"
         ModuleName="./Contents/net8/AutoCadMcpPlugin.dll"
         AppDescription="Servidor MCP embebido en AutoCAD"
         LoadOnAutoCADStartup="True" />
