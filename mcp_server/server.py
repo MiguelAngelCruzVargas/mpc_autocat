@@ -2305,7 +2305,8 @@ def attach_image(path: str, x: float, y: float, width: float,
 
 @mcp.tool()
 def set_layer(name: str, color_index: Optional[int] = None, linetype: Optional[str] = None,
-              lineweight_hundredths_mm: Optional[int] = None) -> dict[str, Any]:
+              lineweight_hundredths_mm: Optional[int] = None,
+               set_current: bool = False) -> dict[str, Any]:
     """Crea (si no existe) y configura una capa: color ACI (1-255), tipo de línea
     (se carga de acad.lin si hace falta) y grosor en centésimas de mm
     (valores válidos: 0,5,9,13,15,18,20,25,30,35,40,50,53,60,70,80,90,100,106,
@@ -2335,6 +2336,7 @@ def set_layer(name: str, color_index: Optional[int] = None, linetype: Optional[s
     resultado = acad.call("set_layer", {
         "name": name, "colorIndex": color_index, "linetype": linetype,
         "lineweightHundredthsMm": lineweight_hundredths_mm,
+        "setCurrent": set_current,
     })
     # La capa se crea igual —el color lo elige quien dibuja— pero un indice
     # desaconsejado se avisa en el momento y no cuando el plano ya salio de

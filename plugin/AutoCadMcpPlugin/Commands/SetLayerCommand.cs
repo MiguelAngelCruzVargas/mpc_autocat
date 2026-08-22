@@ -60,8 +60,31 @@ namespace AutoCadMcpPlugin.Commands
                         pars["lineweightHundredthsMm"].GetValue<int>());
                 }
 
+                // Dejarla como capa ACTIVA del dibujo. Sin esto no habia forma
+                // de cambiar el CLAYER desde el MCP: todo lo dibujado tenia que
+                // llevar su 'layer' explicito. Funciona igual -- de hecho es mas
+                // robusto, porque no depende de un estado global -- pero "hacela
+                // la capa activa" era, literalmente, imposible.
+                //
+                // Una capa apagada o congelada NO puede ser la activa: AutoCAD
+                // lo rechaza, y lo dice antes de intentarlo.
+                bool current = pars["setCurrent"] != null
+                    && pars["setCurrent"].GetValue<bool>();
+                if (current)
+                {
+                    if (ltr.IsFrozen)
+                        throw new InvalidOperationException(
+                            $"La capa '{name}' esta congelada y AutoCAD no deja " +
+                            "hacer activa una capa congelada. Descongelala primero.");
+                    db.Clayer = ltr.ObjectId;
+                }
+
                 tr.Commit();
-                return new JsonObject { ["status"] = "ok" };
+                return new JsonObject
+                {
+                    ["status"] = "ok",
+                    ["isCurrent"] = current
+                };
             }
         }
     }

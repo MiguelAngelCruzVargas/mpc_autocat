@@ -45,12 +45,28 @@ created: list[str] = []
 results: list[tuple[str, bool, str]] = []
 
 
+skipped: list[tuple[str, str]] = []
+
+
+class Skip(Exception):
+    """La prueba no se puede correr en esta maquina, y no es una falla.
+
+    Algunas necesitan un archivo que depende de quien corra (una imagen, un
+    DWG de bloque). Reportarlas como FALLA hace que una corrida sana se vea
+    roja, y despues nadie mira las fallas de verdad porque "esas dos siempre
+    estan en rojo".
+    """
+
+
 def run(name: str, fn) -> None:
     """Corre una prueba y anota el resultado sin cortar el resto."""
     try:
         detail = fn()
         results.append((name, True, str(detail)[:110]))
         print(f"  ok   {name}: {str(detail)[:100]}")
+    except Skip as exc:
+        skipped.append((name, str(exc)[:150]))
+        print(f"  --   {name}: SALTEADA ({str(exc)[:90]})")
     except Exception as exc:  # noqa: BLE001 - queremos seguir probando
         results.append((name, False, str(exc)[:200]))
         print(f" FALLA {name}: {str(exc)[:200]}")
@@ -289,8 +305,7 @@ def t_insert_block_desde_dwg():
     """insert_block importando la definicion de un DWG externo."""
     path = os.environ.get("ACAD_TEST_DWG")
     if not path:
-        raise RuntimeError(
-            "sin DWG de prueba: pone ACAD_TEST_DWG=<ruta a un .dwg> para probar esto")
+        raise Skip("pone ACAD_TEST_DWG=<ruta a un .dwg> para probar esto")
     if not os.path.exists(path):
         raise RuntimeError(f"no existe el DWG: {path}")
     ins = track(acad.call("insert_block", {
@@ -303,8 +318,7 @@ def t_insert_block_desde_dwg():
 def t_attach_image():
     path = os.environ.get("ACAD_TEST_IMAGE")
     if not path:
-        raise RuntimeError(
-            "sin imagen de prueba: pone ACAD_TEST_IMAGE=<ruta a un .png>")
+        raise Skip("pone ACAD_TEST_IMAGE=<ruta a un .png> para probar esto")
     if not os.path.exists(path):
         raise RuntimeError(f"no existe la imagen: {path}")
     img = track(acad.call("attach_image", {
@@ -1357,6 +1371,11 @@ def main() -> int:
 
     print(f"\n{'=' * 60}")
     print(f"{ok}/{len(results)} pruebas OK")
+    if skipped:
+        print()
+        print("%d salteadas (no son fallas):" % len(skipped))
+        for n, d in skipped:
+            print(f"  - {n}: {d}")
     if fallas:
         print(f"\n{len(fallas)} fallas:")
         for n, d in fallas:
