@@ -17,6 +17,17 @@
 .PARAMETER SkipBuild
   Usa los DLL ya compilados en bin\Debug en lugar de recompilar.
 
+.PARAMETER CloseAutoCad
+  Cierra AutoCAD antes de instalar. Sin esto, con AutoCAD abierto el script
+  se niega: los DLL estan tomados y el bundle se rehace de cero, asi que
+  instalar ahi lo dejaria a medio copiar.
+
+  Le pide a AutoCAD que cierre como si apretaras la X. Si hay cambios sin
+  guardar, AutoCAD pregunta y el script espera. NUNCA lo mata.
+
+.PARAMETER Reopen
+  Vuelve a abrir AutoCAD despues de instalar (solo si lo cerro el script).
+
 .EXAMPLE
   .\tools\install_bundle.ps1
   .\tools\install_bundle.ps1 -Uninstall
@@ -24,8 +35,15 @@
 [CmdletBinding()]
 param(
     [switch]$Uninstall,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$CloseAutoCad,
+    [switch]$Reopen,
+    [int]$CloseTimeoutSeconds = 90
 )
+
+function Get-AutoCadProcess {
+    Get-Process acad -ErrorAction SilentlyContinue
+}
 
 $ErrorActionPreference = 'Stop'
 
@@ -43,6 +61,44 @@ if ($Uninstall) {
         Write-Output "No habia nada instalado en $target"
     }
     return
+}
+
+# --- 0. AutoCAD abierto? -------------------------------------------------
+# El bundle se rehace de cero (Remove-Item + copiar). Con AutoCAD abierto los
+# DLL estan tomados: el borrado falla a mitad y queda un bundle roto, que es
+# peor que no instalar. Por eso se chequea ANTES de tocar nada.
+$acadPath = $null
+$cerradoPorNosotros = $false
+$acad = Get-AutoCadProcess
+
+if ($acad) {
+    if (-not $CloseAutoCad) {
+        throw @"
+AutoCAD esta abierto y tiene tomado el DLL del plugin.
+
+  install_bundle.ps1 -CloseAutoCad           cierra AutoCAD e instala
+  install_bundle.ps1 -CloseAutoCad -Reopen   ademas lo vuelve a abrir
+
+-CloseAutoCad le pide a AutoCAD que cierre como si apretaras la X: si hay
+cambios sin guardar, AutoCAD pregunta y el script espera. Nunca lo mata.
+"@
+    }
+
+    $acadPath = ($acad | Select-Object -First 1).Path
+    Write-Output "Cerrando AutoCAD ($($acad.Count) proceso(s))..."
+    foreach ($p in $acad) { $null = $p.CloseMainWindow() }
+
+    $limite = (Get-Date).AddSeconds($CloseTimeoutSeconds)
+    while ((Get-AutoCadProcess) -and (Get-Date) -lt $limite) {
+        Start-Sleep -Milliseconds 500
+    }
+    if (Get-AutoCadProcess) {
+        throw ("AutoCAD sigue abierto despues de $CloseTimeoutSeconds s. " +
+               "Casi siempre es un dialogo esperando respuesta (guardar los " +
+               "cambios?): resolvelo en pantalla y volve a correr esto.")
+    }
+    Write-Output "AutoCAD cerrado."
+    $cerradoPorNosotros = $true
 }
 
 # --- 1. Compilar ---------------------------------------------------------
@@ -93,8 +149,14 @@ Write-Output ""
 Write-Output "Bundle instalado en: $target"
 Write-Output "  $count archivos"
 Write-Output ""
-Write-Output "CERRA Y VOLVE A ABRIR AutoCAD: los bundles se leen solo al arrancar."
-Write-Output "Al abrir deberias ver en la linea de comandos:"
+if ($Reopen -and $cerradoPorNosotros -and $acadPath) {
+    Write-Output "Volviendo a abrir AutoCAD..."
+    Start-Process -FilePath $acadPath | Out-Null
+    Write-Output "AutoCAD abriendo. Fijate en la linea de comandos:"
+} else {
+    Write-Output "CERRA Y VOLVE A ABRIR AutoCAD: los bundles se leen solo al arrancar."
+    Write-Output "Al abrir deberias ver en la linea de comandos:"
+}
 Write-Output "  [MCP] Plugin cargado. Escuchando en 127.0.0.1:8765"
 Write-Output ""
 Write-Output "Para desinstalarlo: .\tools\install_bundle.ps1 -Uninstall"

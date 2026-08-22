@@ -506,6 +506,159 @@ def t_undo():
     raise RuntimeError("el circulo sigue estando despues de esperar el undo")
 
 
+def t_rebar_elevation():
+    """El armado en elevacion, y CONTADO en el dibujo -- no creyendole al
+    valor que devolvio la tool. Nunca corrio contra AutoCAD hasta que se
+    verifico a mano, y ahi aparecio que el perimetro del estribo salia 4x."""
+    import rebar
+    r = rebar.create_rebar_elevation(
+        x=BASE_X + 180, y=BASE_Y, width=0.40, height=2.40, depth=0.40,
+        stirrup_spacing=0.20, bars_interior=1, cover=0.03,
+        confinement_length=0.50, confinement_spacing=0.10)
+    for h in r["handles"]:
+        track({"handle": h})
+
+    lineas = 0
+    for h in r["handles"]:
+        if acad.call("get_entity", {"handle": h})["type"] == "Line":
+            lineas += 1
+    esperado = r["stirrupCount"] + r["barCount"]
+    if lineas != esperado:
+        raise RuntimeError("hay %d lineas dibujadas y la tool dijo %d"
+                           % (lineas, esperado))
+
+    # 0.40x0.40 con 3 cm de recubrimiento: el estribo es 0.34x0.34.
+    if abs(r["stirrupPerimeter_m"] - 1.36) > 1e-6:
+        raise RuntimeError("el perimetro del estribo dio %.3f y son 1.360"
+                           % r["stirrupPerimeter_m"])
+    return ("%d estribos (confinados), %d varillas, perimetro %.3f m"
+            % (r["stirrupCount"], r["barCount"], r["stirrupPerimeter_m"]))
+
+
+def t_rebar_elevation_sin_depth_no_inventa():
+    """Una elevacion no ve la dimension de afuera del plano."""
+    import rebar
+    r = rebar.create_rebar_elevation(
+        x=BASE_X + 185, y=BASE_Y, width=0.30, height=1.0,
+        stirrup_spacing=0.20)
+    for h in r["handles"]:
+        track({"handle": h})
+    if r["stirrupPerimeter_m"] is not None:
+        raise RuntimeError("invento un perimetro sin saber la profundidad")
+    if not any("depth" in a for a in r["warnings"]):
+        raise RuntimeError("no explico por que no lo da")
+    return "sin depth devuelve None y lo explica"
+
+
+def t_compose_sheet():
+    """Acomodar dos vistas y verificar que quedaron alineadas EN EL DIBUJO."""
+    import compose
+    import space as space_mod
+    a = track(acad.call("create_polyline", {
+        "points": [[BASE_X + 200, BASE_Y], [BASE_X + 202, BASE_Y],
+                   [BASE_X + 202, BASE_Y + 3], [BASE_X + 200, BASE_Y + 3]],
+        "closed": True, "layer": "PRUEBA", "lineweight": None,
+        "colorIndex": None}))["handle"]
+    b = track(acad.call("create_polyline", {
+        "points": [[BASE_X + 210, BASE_Y + 20], [BASE_X + 211, BASE_Y + 20],
+                   [BASE_X + 211, BASE_Y + 21], [BASE_X + 210, BASE_Y + 21]],
+        "closed": True, "layer": "PRUEBA", "lineweight": None,
+        "colorIndex": None}))["handle"]
+
+    escala = space_mod.units_per_paper_mm()
+    r = compose.compose_sheet(
+        [{"name": "grande", "box": [BASE_X + 200, BASE_Y,
+                                    BASE_X + 202, BASE_Y + 3],
+          "handles": [a]},
+         {"name": "chica", "box": [BASE_X + 210, BASE_Y + 20,
+                                   BASE_X + 211, BASE_Y + 21],
+          "handles": [b], "below": "grande"}],
+        area=[BASE_X + 230, BASE_Y, BASE_X + 260, BASE_Y + 30],
+        scale=escala, draw_titles=False)
+
+    # La verificacion de verdad: donde quedaron las entidades.
+    cajas = {}
+    for nombre, h in (("grande", a), ("chica", b)):
+        pts = acad.call("get_entity", {"handle": h})["points"]
+        xs = [p[0] for p in pts]
+        cajas[nombre] = (min(xs) + max(xs)) / 2.0
+    if abs(cajas["grande"] - cajas["chica"]) > 1e-6:
+        raise RuntimeError("los centros no quedaron alineados: %s" % cajas)
+    return "2 vistas apiladas, centros alineados en el dibujo"
+
+
+def t_compose_sheet_avisa_huerfanas():
+    """Con handles a mano es facil dejarse algo adentro de la caja."""
+    import compose
+    import space as space_mod
+    p1 = track(acad.call("create_polyline", {
+        "points": [[BASE_X + 300, BASE_Y], [BASE_X + 302, BASE_Y],
+                   [BASE_X + 302, BASE_Y + 2], [BASE_X + 300, BASE_Y + 2]],
+        "closed": True, "layer": "PRUEBA", "lineweight": None,
+        "colorIndex": None}))["handle"]
+    track(acad.call("create_line", {
+        "x1": BASE_X + 300.5, "y1": BASE_Y + 0.5, "z1": 0,
+        "x2": BASE_X + 301.5, "y2": BASE_Y + 1.5, "z2": 0,
+        "layer": "PRUEBA", "lineweight": None, "colorIndex": None}))
+
+    r = compose.compose_sheet(
+        [{"name": "vista", "box": [BASE_X + 300, BASE_Y,
+                                   BASE_X + 302, BASE_Y + 2],
+          "handles": [p1]}],
+        area=[BASE_X + 320, BASE_Y, BASE_X + 340, BASE_Y + 20],
+        scale=space_mod.units_per_paper_mm(), draw_titles=False)
+    if not r.get("orphaned"):
+        raise RuntimeError("no aviso de la linea que se quedaba atras")
+    return "aviso: %s" % r["orphaned"]
+
+
+def t_compose_layout():
+    """Un layout con su viewport, y se le LEE la escala al viewport."""
+    import compose
+    nombre = "MCP-VERIF"
+    try:
+        acad.call("delete_layout", {"name": nombre})
+    except acad.AutoCadError:
+        pass
+    r = compose.compose_layout(
+        nombre, views=[{"name": "detalle",
+                        "box": [BASE_X + 180, BASE_Y, BASE_X + 183,
+                                BASE_Y + 3],
+                        "scale_denominator": 25, "title": "DETALLE"}],
+        model_units="m", paper_size="A1", draw_titles=False)
+
+    h = r["viewports"][0]["handle"]
+    e = acad.call("get_entity", {"handle": h})
+    cs = e.get("customScale") or 0
+    if not cs:
+        raise RuntimeError("el viewport no reporta escala")
+    denom = 1000.0 / cs           # modelo en metros, papel en mm
+    if abs(denom - 25) > 0.5:
+        raise RuntimeError("quedo en 1:%.1f y se pidio 1:25" % denom)
+    acad.call("delete_layout", {"name": nombre})
+    return "layout %.0fx%.0f mm, viewport medido en 1:%.0f" % (
+        r["paper"][0], r["paper"][1], denom)
+
+
+def t_close_document():
+    """Crear uno, cerrarlo, y que el descarte sea explicito."""
+    antes = acad.call("list_documents", {})["count"]
+    acad.call("new_document", {})
+    try:
+        acad.call("close_document", {"name": None, "save": False,
+                                     "discardUnsaved": False})
+        raise RuntimeError("cerro sin que nadie lo autorizara a descartar")
+    except acad.AutoCadError as exc:
+        if "discardUnsaved" not in str(exc):
+            raise RuntimeError("el error no dice como autorizarlo: %s" % exc)
+    r = acad.call("close_document", {"name": None, "save": False,
+                                     "discardUnsaved": True})
+    despues = acad.call("list_documents", {})["count"]
+    if despues != antes:
+        raise RuntimeError("quedaron %d dibujos y habia %d" % (despues, antes))
+    return "descarte explicito, y volvio a %s" % r["active"]
+
+
 def t_simbolos_de_convencion():
     """Nivel, titulo de vista y marca de corte contra AutoCAD real.
 
@@ -1079,6 +1232,12 @@ PRUEBAS = [
     ("capture_viewport", t_capture_viewport),
     ("undo", t_undo),
     ("simbolos de convencion", t_simbolos_de_convencion),
+    ("armado en elevacion", t_rebar_elevation),
+    ("armado sin depth -> no inventa", t_rebar_elevation_sin_depth_no_inventa),
+    ("compose_sheet", t_compose_sheet),
+    ("compose_sheet avisa huerfanas", t_compose_sheet_avisa_huerfanas),
+    ("compose_layout", t_compose_layout),
+    ("close_document", t_close_document),
     ("familia de dimstyles", t_familia_de_dimstyles),
     ("list_documents", t_list_documents),
     ("set_active_document", t_set_active_document),

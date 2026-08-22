@@ -16,13 +16,6 @@ namespace AutoCadMcpPlugin.Commands
     internal static class PlotHelper
     {
         /// <summary>
-        /// Plotea 'layoutId' al archivo 'path' con el driver 'device'
-        /// (p.ej. "DWG To PDF.pc3", "PublishToWeb PNG.pc3"). 'plotType'
-        /// decide el área: Layout para una hoja tal cual quedó armada,
-        /// Extents para encuadrar a lo que hay dibujado (espacio modelo,
-        /// sin layout de por medio).
-        /// </summary>
-        /// <summary>
         /// Cuanto esperar a que el driver termine de escribir el archivo.
         ///
         /// Era un fijo de 35s, y el techo real lo pone el dispatcher: si
@@ -36,6 +29,23 @@ namespace AutoCadMcpPlugin.Commands
         /// Derivarlo del timeout del dispatcher, en vez de un numero fijo,
         /// hace que subir ACAD_MCP_EXEC_TIMEOUT alcance para planos pesados.
         /// </summary>
+        /// <summary>
+        /// Tamano del archivo, o -1 si no existe o esta bloqueado por el
+        /// driver mientras escribe. Nunca tira: solo dice "todavia no".
+        /// </summary>
+        private static long TamanoDe(string path)
+        {
+            try
+            {
+                var fi = new FileInfo(path);
+                return fi.Exists ? fi.Length : -1;
+            }
+            catch (System.Exception)
+            {
+                return -1;
+            }
+        }
+
         private static int PlotWaitMs()
         {
             var raw = System.Environment.GetEnvironmentVariable("ACAD_MCP_EXEC_TIMEOUT");
@@ -45,6 +55,13 @@ namespace AutoCadMcpPlugin.Commands
             return ms < 10000 ? 10000 : ms;
         }
 
+        /// <summary>
+        /// Plotea 'layoutId' al archivo 'path' con el driver 'device'
+        /// (p.ej. "DWG To PDF.pc3", "PublishToWeb PNG.pc3"). 'plotType'
+        /// decide el área: Layout para una hoja tal cual quedó armada,
+        /// Extents para encuadrar a lo que hay dibujado (espacio modelo,
+        /// sin layout de por medio).
+        /// </summary>
         public static void PlotToFile(Document doc, ObjectId layoutId,
                                       Autodesk.AutoCAD.DatabaseServices.PlotType plotType,
                                       string device, string path)
@@ -203,17 +220,50 @@ namespace AutoCadMcpPlugin.Commands
             // 50s como mucho, por debajo de ACAD_MCP_EXEC_TIMEOUT (60s) —
             // si sumaran los dos máximos, el dispatcher cortaría la llamada
             // con timeout aunque el plot fuera a terminar bien.
+            // Que el archivo EXISTA no quiere decir que este terminado: el
+            // driver lo crea vacio y sigue escribiendo. Esperar solo por
+            // File.Exists devolvia "ok" sobre un PDF/PNG de 0 bytes, y el
+            // plot seguia corriendo -- envenenando al siguiente comando con
+            // "ya hay un plot en curso". Se vio en test_live: export_pdf y
+            // capture_viewport decian que si y no habia archivo.
+            //
+            // La condicion real es tamano > 0 y ESTABLE: tres lecturas
+            // seguidas iguales (300 ms sin crecer).
             int maxWaitMs = PlotWaitMs();
             const int stepMs = 100;
-            for (int waited = 0; waited < maxWaitMs && !File.Exists(fullPath); waited += stepMs)
+            const int lecturasEstables = 3;
+            long ultimo = -1;
+            int estables = 0;
+            int waited = 0;
+            for (; waited < maxWaitMs; waited += stepMs)
             {
                 System.Windows.Forms.Application.DoEvents();
                 System.Threading.Thread.Sleep(stepMs);
+
+                long tamano = TamanoDe(fullPath);
+                if (tamano <= 0)
+                {
+                    ultimo = -1;
+                    estables = 0;
+                    continue;
+                }
+                if (tamano == ultimo)
+                {
+                    if (++estables >= lecturasEstables)
+                        break;
+                }
+                else
+                {
+                    ultimo = tamano;
+                    estables = 0;
+                }
             }
 
-            if (!File.Exists(fullPath))
+            long final = TamanoDe(fullPath);
+            if (final <= 0)
                 throw new InvalidOperationException(
-                    $"El plot no escribió '{fullPath}' después de esperar {maxWaitMs / 1000}s. " +
+                    $"El plot no escribió '{fullPath}' después de esperar {maxWaitMs / 1000}s " +
+                    $"(el archivo {(File.Exists(fullPath) ? "quedó en 0 bytes" : "no existe")}). " +
                     $"Si el dispositivo '{device}' está instalado, el dibujo es " +
                     "simplemente pesado: subí ACAD_MCP_EXEC_TIMEOUT (y el " +
                     "ACAD_MCP_TIMEOUT del cliente, que tiene que ser mayor).");

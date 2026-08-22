@@ -269,17 +269,32 @@ namespace AutoCadMcpPlugin.Commands
                 }
             }
 
-            if (save)
-                target.CloseAndSave(target.Name);
-            else
-                target.CloseAndDiscard();
+            try
+            {
+                if (save)
+                    target.CloseAndSave(target.Name);
+                else
+                    target.CloseAndDiscard();
+            }
+            catch (System.Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"AutoCAD no pudo cerrar '{cerrado}': {ex.Message}");
+            }
 
+            // MdiActiveDocument puede quedar en null un instante despues de
+            // cerrar, y hacerle .Name reventaba con "Object reference not set
+            // to an instance of an object" -- pero como cuadro MODAL de
+            // AutoCAD, no como error del comando: la excepcion escapaba por
+            // fuera del try del dispatcher y bloqueaba el socket hasta que
+            // alguien apretaba Continue en pantalla. Paso de verdad corriendo
+            // test_live.
+            var activo = Application.DocumentManager.MdiActiveDocument;
             return new JsonObject
             {
                 ["closed"] = cerrado,
                 ["saved"] = save,
-                ["active"] = Path.GetFileName(
-                    Application.DocumentManager.MdiActiveDocument.Name)
+                ["active"] = activo == null ? null : Path.GetFileName(activo.Name)
             };
         }
 
@@ -317,6 +332,6 @@ namespace AutoCadMcpPlugin.Commands
     /// </summary>
     public static class PluginInfo
     {
-        public const string Version = "0.7.0";
+        public const string Version = "0.8.0";
     }
 }
