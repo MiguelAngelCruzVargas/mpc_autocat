@@ -7,3 +7,14 @@ plugin/**/obj/
 mcp_server/__pycache__/
 mcp_server/.venv/
 mcp_server/*.egg-info/
+mcp_server/.pytest_cache/
+
+# Salida de pruebas contra AutoCAD real: los DWG y las capturas que dejan
+# test_live.py y capture_viewport quedan en la raiz del repo. Son artefactos
+# de una corrida, no del proyecto -- si alguno hay que versionarlo (un DWG de
+# referencia, por ejemplo), va a examples/ y se agrega con `git add -f`.
+/*.dwg
+/*.bak
+/*.dwl
+/*.dwl2
+scratch_*.png

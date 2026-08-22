@@ -1,1 +1,11 @@
+# Dependencias del servidor MCP. Todo lo demas que hay en el venv
+# (pydantic, anyio, httpx...) entra como dependencia transitiva de esta.
+#
+#   py -3.10 -m venv mcp_server/.venv
+#   mcp_server/.venv/Scripts/python.exe -m pip install -r mcp_server/requirements.txt
+#
+# El plugin C# no necesita nada de aca: se compila con dotnet (ver README).
 mcp>=1.2.0,<2.0.0
+
+# Para correr la bateria: `python run_tests.py`. No hace falta pytest --
+# los tests son scripts sueltos con su propio main().
