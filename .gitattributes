@@ -1,0 +1,23 @@
+# Finales de linea, declarados a proposito.
+#
+# Sin esto, con core.autocrlf=true (el default de Git for Windows), cada
+# `git add` escupe una tanda de "warning: LF will be replaced by CRLF".
+# No son errores -- git avisa que va a convertir al hacer checkout -- pero
+# aparecen en cada commit, son varias lineas por archivo y parecen una falla.
+#
+# Se declara lo que cada lado ya escribe: Python y Markdown en LF, el
+# proyecto .NET y PowerShell en CRLF (que es lo que espera Visual Studio).
+* text=auto eol=lf
+
+*.cs      text eol=crlf
+*.csproj  text eol=crlf
+*.xml     text eol=crlf
+*.ps1     text eol=crlf
+
+# Binarios: que git ni intente diferenciarlos ni convertir nada.
+*.dwg  binary
+*.dwt  binary
+*.png  binary
+*.pdf  binary
+*.shx  binary
+*.ttf  binary
