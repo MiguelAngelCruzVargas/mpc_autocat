@@ -16,12 +16,16 @@ import autocad_client as acad
 import civil as civil_mod
 import electrical as elec_mod
 import profile as profile_mod
+import isometric as iso_mod
 import quantities as qty_mod
+import rebar as rebar_mod
+import roof as roof_mod
 import rules as rules_mod
 import furniture as fur_mod
 import layers as layers_mod
 import sections as sect_mod
 import sheet as sheet_mod
+import space as space_mod
 
 mcp = FastMCP("autocad")
 
@@ -34,6 +38,72 @@ def _style(lineweight: Optional[int], color_index: Optional[int]) -> dict[str, A
     15,18,20,25,30,35,40,50,53,60,70,80,90,100,106,120,140,158,200,211.
     """
     return {"lineweight": lineweight, "colorIndex": color_index}
+
+
+# Relación ancho/altura por carácter, misma constante que usa annotation._w
+# como respaldo cuando no vale la pena una llamada a measure_text.
+_CHAR_W_RATIO = 0.87
+
+
+def _track_text(text: str, x: float, y: float, height: float,
+                rotation_deg: float = 0.0, width: float = 0.0) -> None:
+    """Registra la huella aproximada de un texto recién creado, para que
+    check_annotations pueda avisar si otro texto (o una cota) lo pisa
+    después -- sin esto, un create_text/create_mtext/create_leader llamado
+    directo (en vez de con place_labels) queda invisible para el chequeo de
+    cierre. Es a propósito una aproximación axis-aligned, no exacta: avisar
+    de más ante un ángulo raro es mejor que no avisar nada."""
+    if not text:
+        return
+    ancho = width if width > 0 else len(text) * height * _CHAR_W_RATIO
+    alto = height * 1.2
+    if rotation_deg % 180 < 45 or rotation_deg % 180 > 135:
+        caja = (x, y, x + ancho, y + alto)
+    else:
+        caja = (x - alto, y, x, y + ancho)
+    space_mod.track(*caja, f"{space_mod.PREFIJO_TEXTO} {text[:40]}")
+
+
+def _reset_drawing_state(dibujo: str) -> list[str]:
+    """Olvida lo que este proceso cacheaba del dibujo ANTERIOR.
+
+    Varios módulos guardan estado de proceso que describe UN dibujo: las
+    huellas de muebles y las franjas de anotación ya ocupadas (space), y el
+    listado de capas que existen (layers, cacheado para no pedirlo en cada
+    set_layer). Nada de eso vale para otro DWG.
+
+    Sin este reset, con dos dibujos abiertos pasaba lo siguiente: place_labels
+    esquivaba una cama que está en el OTRO plano y mandaba el rótulo a un
+    lugar que acá está libre; y set_layer daba por existente —y por lo tanto
+    ya configurada— una capa que solo existe allá, dejándola sin color ni
+    grosor. Los dos son silenciosos: el dibujo sale mal sin ningún error.
+
+    Devuelve los avisos que corresponda mostrarle a quien cambió de dibujo.
+    """
+    avisos: list[str] = []
+    olvidadas = len(space_mod.OCCUPIED) + len(space_mod.FOOTPRINTS)
+
+    space_mod.clear()
+    fur_mod.reset_footprints()
+    layers_mod.reset()
+
+    if olvidadas:
+        avisos.append(
+            f"Se olvidaron {olvidadas} huellas/franjas del dibujo anterior: "
+            "place_labels y check_annotations arrancan de cero en "
+            f"'{dibujo}'. Lo que ya esté dibujado acá no lo conocen — si hace "
+            "falta que lo esquiven, pasáselo en 'obstacles'.")
+
+    # La escala (unidades del modelo por mm de papel) NO se toca: es un
+    # número por lámina, no por dibujo, y ponerlo en un default sería tan
+    # incorrecto como dejar el anterior. Pero hay que avisarlo, porque es
+    # justo el que no da error cuando está mal.
+    avisos.append(
+        f"La escala en vigencia sigue siendo {space_mod.units_per_paper_mm()} "
+        "unidades por mm de papel, la del dibujo anterior. Si esta lámina es "
+        "otra escala, llamá create_sheet (o pasá 'scale' explícito al acotar) "
+        "antes de anotar.")
+    return avisos
 
 
 # ------------------------------------------------- Lámina (cajón + rotulación)
@@ -156,6 +226,394 @@ def check_annotations(items: Optional[list[dict[str, Any]]] = None) -> dict[str,
     items: rectángulos a verificar SIN dibujarlos, para preguntar ANTES de
     ubicar algo a mano: [{"x0":.., "y0":.., "x1":.., "y1":.., "what":".."}]."""
     return rules_mod.check_annotations(items=items)
+
+
+@mcp.tool()
+def check_drawing_hygiene(sample_limit: int = 2000,
+                          max_duplicate_check: int = 800) -> dict[str, Any]:
+    """Audita el ARCHIVO en sí — no el proyecto: capas creadas y nunca
+    usadas, texto todavía en una fuente .shx (no mapea acentos ni Ø), y
+    entidades duplicadas exactas superpuestas en la misma capa.
+
+    Es un ángulo distinto de los demás check_*: esos validan que el proyecto
+    tenga sentido (el programa entra, la zonificación cumple); este valida
+    que el archivo no arrastre basura — capas fantasma que confunden a quien
+    abre el DWG después, texto que se va a ver con cuadraditos, líneas
+    encimadas que no se notan hasta que se selecciona una y aparecen dos.
+
+    sample_limit: hasta cuántas entidades revisa (2000 alcanza para casi
+    cualquier plano). max_duplicate_check: si hay más Line/Circle que esto,
+    se saltea la revisión de duplicados en vez de hacer cientos de consultas
+    de más — se avisa en 'problems' por qué."""
+    capas = acad.call("list_layers", {})["layers"]
+    entidades = acad.call("list_entities", {"limit": sample_limit})["entities"]
+
+    usadas = {e["layer"] for e in entidades if e.get("layer")}
+    capas_vacias = [c["name"] for c in capas
+                   if c["name"] not in usadas
+                   and c["name"] not in ("0", "Defpoints")]
+
+    estilos = acad.call("list_styles", {})
+    shx = [s["name"] for s in estilos.get("textStyles", [])
+          if str(s.get("font", "")).lower().endswith(".shx")]
+
+    problemas: list[str] = []
+    candidatos = [e for e in entidades if e.get("type") in ("Line", "Circle")]
+    duplicados: list[dict[str, Any]] = []
+    if len(candidatos) > max_duplicate_check:
+        problemas.append(
+            f"se salteó la revisión de duplicados: hay {len(candidatos)} "
+            f"Line/Circle, más que max_duplicate_check ({max_duplicate_check}). "
+            "Subilo si igual querés que se revise.")
+    else:
+        firmas: dict[tuple, list[str]] = {}
+        for e in candidatos:
+            handle = e.get("handle")
+            if not handle:
+                continue
+            detalle = acad.call("get_entity", {"handle": handle})
+            if e["type"] == "Line":
+                clave = ("Line", e.get("layer"),
+                         round(detalle["startPoint"][0], 4), round(detalle["startPoint"][1], 4),
+                         round(detalle["endPoint"][0], 4), round(detalle["endPoint"][1], 4))
+            else:
+                clave = ("Circle", e.get("layer"),
+                         round(detalle["center"][0], 4), round(detalle["center"][1], 4),
+                         round(detalle["radius"], 4))
+            firmas.setdefault(clave, []).append(handle)
+        duplicados = [{"type": clave[0], "layer": clave[1], "handles": hs}
+                      for clave, hs in firmas.items() if len(hs) > 1]
+
+    if capas_vacias:
+        problemas.append(f"{len(capas_vacias)} capa(s) creada(s) y sin usar: "
+                         + ", ".join(capas_vacias))
+    if shx:
+        problemas.append(f"{len(shx)} estilo(s) de texto todavía en fuente .shx "
+                         "(no mapea acentos ni Ø): " + ", ".join(shx))
+    if duplicados:
+        total = sum(len(d["handles"]) for d in duplicados)
+        problemas.append(f"{len(duplicados)} grupo(s) de entidades duplicadas "
+                         f"exactas ({total} entidades en total)")
+
+    return {
+        "ok": not problemas,
+        "emptyLayers": capas_vacias,
+        "shxTextStyles": shx,
+        "duplicates": duplicados,
+        "problems": problemas,
+    }
+
+
+@mcp.tool()
+def check_retaining_wall(height: float,
+                         soil_unit_weight: float = 1800.0,
+                         friction_angle_deg: float = 30.0,
+                         surcharge: float = 0.0,
+                         concrete_unit_weight: float = 2400.0,
+                         friction_coefficient: float = 0.5,
+                         min_fs_overturning: float = 1.5,
+                         min_fs_sliding: float = 1.5,
+                         stem_thickness: Optional[float] = None,
+                         footing_thickness: Optional[float] = None,
+                         max_base_width: Optional[float] = None) -> dict[str, Any]:
+    """Proporción PRELIMINAR de un muro de contención por empuje activo de
+    Rankine. LLAMALA ANTES DE DIBUJAR un muro que retiene tierra -- un muro
+    de 3.5 m de altura no es un muro de 15 cm con más lineweight: necesita
+    una base y un espesor que resistan volteo y deslizamiento, y hasta ahora
+    esta biblioteca no tenía ninguna cuenta para eso.
+
+    Modelo: cantiléver en T (vástago a base/3 del paño, talón del lado de
+    la tierra cargando el peso del relleno que tiene encima) -- conservador
+    en lo demás (ignora empuje pasivo y diente de cortante), pero con el
+    talón puesto, porque sin él la base sale desproporcionada (un muro de
+    gravedad puro sin talón necesita más de 12 m de base para 3.5 m de
+    altura). Esto es lo que create_walls (vástago) + una zapata asimétrica
+    dibujada con create_polyline (toe/heel según toeLength/heelLength)
+    pueden trazar de verdad.
+
+    height: altura de tierra retenida (desplante a corona), en metros.
+    soil_unit_weight (kg/m3, default 1800), friction_angle_deg (default 30°)
+    y surcharge (kg/m2, sobrecarga sobre el relleno) describen el suelo.
+    concrete_unit_weight (kg/m3) y friction_coefficient (concreto-suelo en
+    la base) describen el muro. min_fs_overturning/min_fs_sliding son los
+    factores de seguridad mínimos exigidos (1.5 es lo habitual).
+
+    Devuelve 'ok' y, si cumple, baseWidth/stemThickness/footingThickness ya
+    verificados -- junto con activeThrust, overturningMoment y los factores
+    de seguridad alcanzados, para poder revisar la cuenta sin recalcularla."""
+    return rules_mod.check_retaining_wall(
+        height=height, soil_unit_weight=soil_unit_weight,
+        friction_angle_deg=friction_angle_deg, surcharge=surcharge,
+        concrete_unit_weight=concrete_unit_weight,
+        friction_coefficient=friction_coefficient,
+        min_fs_overturning=min_fs_overturning, min_fs_sliding=min_fs_sliding,
+        stem_thickness=stem_thickness, footing_thickness=footing_thickness,
+        max_base_width=max_base_width)
+
+
+@mcp.tool()
+def check_footing(axial_load: float,
+                  column_width: float = 0.30,
+                  column_length: float = 0.30,
+                  allow_bearing: float = 15000.0,
+                  concrete_fc: float = 200.0,
+                  concrete_unit_weight: float = 2400.0,
+                  soil_unit_weight: float = 1700.0,
+                  depth_to_footing: float = 1.0,
+                  phi_shear: float = 0.85,
+                  min_thickness: float = 0.20,
+                  max_side: Optional[float] = None) -> dict[str, Any]:
+    """Proporción PRELIMINAR de una zapata aislada. LLAMALA ANTES DE DIBUJAR
+    una zapata bajo una columna cargada -- "1.00 x 1.00 x 0.30, típico de
+    vivienda" es una frase que no dice si ESA columna con ESA carga entra
+    ahí; esta tool contesta las dos preguntas que sí importan:
+
+    - CARGA: el lado sale de repartir la carga (más el peso propio de la
+      zapata y la tierra que le queda encima) sobre la capacidad admisible
+      del suelo.
+    - PUNZONAMIENTO: con el lado ya fijo, el peralte tiene que resistir el
+      cortante que la columna punzona en el perímetro crítico a d/2 (ACI,
+      vc=1.06·√f'c en kg/cm²) -- típicamente esto gobierna antes que la
+      carga misma, y es justo lo que una proporción a ojo no revisa.
+
+    axial_load: carga de servicio sobre la columna, kg. column_width /
+    column_length: sección de la columna, m. allow_bearing: capacidad
+    admisible del suelo, kg/m2 (15000 = 15 t/m2, moderado sin estudio de
+    mecánica de suelos). concrete_fc: f'c del concreto, kg/cm2 (200 típico
+    en vivienda). depth_to_footing: desplante, m.
+
+    Devuelve 'ok' y, si cumple, side/thickness ya verificados, junto con la
+    carga total, el cortante actuante y resistente -- para poder revisar la
+    cuenta, no solo confiar en el número."""
+    return rules_mod.check_footing(
+        axial_load=axial_load, column_width=column_width,
+        column_length=column_length, allow_bearing=allow_bearing,
+        concrete_fc=concrete_fc, concrete_unit_weight=concrete_unit_weight,
+        soil_unit_weight=soil_unit_weight, depth_to_footing=depth_to_footing,
+        phi_shear=phi_shear, min_thickness=min_thickness, max_side=max_side)
+
+
+@mcp.tool()
+def check_slab_span(span: float,
+                    live_load: float = 400.0,
+                    width: float = 1.0,
+                    concrete_fc: float = 250.0,
+                    steel_fy: float = 4200.0,
+                    concrete_unit_weight: float = 2400.0,
+                    min_thickness: float = 0.12,
+                    cover: float = 0.03,
+                    max_steel_ratio: float = 0.016) -> dict[str, Any]:
+    """Proporción PRELIMINAR de una losa maciza simplemente apoyada entre
+    dos apoyos. Sirve tanto para una losa de entrepiso como para el
+    tablero de un puente peatonal entre sus dos estribos -- es la misma
+    cuenta: un claro, una carga viva distribuida, un peralte que aguante
+    el momento sin pasarse de cuantía.
+
+    span: claro libre entre apoyos, m. live_load: carga viva, kg/m2 (400
+    es referencia para pasarela peatonal; una losa de entrepiso de
+    vivienda va más baja, ~170-250 kg/m2). concrete_fc/steel_fy: kg/cm2
+    (250 y 4200 típicos de obra en México).
+
+    Método: peralte semilla L/20, momento w·L²/8, acero por flexión
+    simplificada -- engorda el peralte solo si la cuantía se pasa de
+    max_steel_ratio. Chequeo PRELIMINAR, no reemplaza cortante ni
+    deflexión de un cálculo completo.
+
+    Devuelve 'ok', 'thickness' y 'mainSteelArea_cm2_per_m' verificados."""
+    return rules_mod.check_slab_span(
+        span=span, live_load=live_load, width=width,
+        concrete_fc=concrete_fc, steel_fy=steel_fy,
+        concrete_unit_weight=concrete_unit_weight,
+        min_thickness=min_thickness, cover=cover,
+        max_steel_ratio=max_steel_ratio)
+
+
+@mcp.tool()
+def check_bridge_girder(span: float,
+                        girder_spacing: float,
+                        girder_width: float = 0.30,
+                        slab_thickness: float = 0.20,
+                        concrete_fc: float = 250.0,
+                        steel_fy: float = 4200.0,
+                        concrete_unit_weight: float = 2400.0,
+                        min_depth: float = 0.5,
+                        cover: float = 0.05,
+                        max_steel_ratio: float = 0.016) -> dict[str, Any]:
+    """Proporción PRELIMINAR de una trabe principal de puente bajo carga
+    vehicular real -- un claro largo con tráfico pesado necesita un
+    vehículo de diseño, no una carga viva inventada. Usa la CARGA DE
+    CARRIL HS20-44 de AASHTO (uniforme + concentrada para momento), la
+    alternativa que la propia norma permite en vez de mover el camión eje
+    por eje a mano.
+
+    span: claro libre entre apoyos, m. girder_spacing: separación entre
+    ejes de trabe, m (define cuánta losa tributa a esta trabe y el factor
+    de distribución). slab_thickness: espesor YA resuelto de la losa de
+    rodadura (con check_slab_span) -- se toma como dato, no se recalcula.
+    concrete_fc/steel_fy: kg/cm2 (250/4200 típicos en México).
+
+    Método: DF=girder_spacing/1.83 (AASHTO S/6.0 convertido), impacto
+    AASHTO 50/(125+L_pies) con tope 0.3, peralte semilla L/12. Chequeo
+    PRELIMINAR -- no reemplaza el análisis de carga móvil completo
+    (posición crítica de ejes), cortante, ni deflexión.
+
+    Devuelve 'ok', 'depth' y 'mainSteelArea_cm2' verificados, junto con
+    el factor de distribución, el de impacto y los momentos con los que
+    se calculó."""
+    return rules_mod.check_bridge_girder(
+        span=span, girder_spacing=girder_spacing, girder_width=girder_width,
+        slab_thickness=slab_thickness, concrete_fc=concrete_fc,
+        steel_fy=steel_fy, concrete_unit_weight=concrete_unit_weight,
+        min_depth=min_depth, cover=cover, max_steel_ratio=max_steel_ratio)
+
+
+@mcp.tool()
+def check_roof_truss(span: float,
+                     truss_spacing: float,
+                     rise: float,
+                     roof_dead_load: float = 15.0,
+                     roof_live_load: float = 40.0,
+                     wind_uplift: float = 0.0,
+                     dead_load_factor_uplift: float = 0.6) -> dict[str, Any]:
+    """Reacción PRELIMINAR de una armadura de techo a dos aguas sobre sus
+    dos apoyos -- lo que hace falta para dimensionar la columna y la
+    zapata que la reciben (check_column/check_footing) en vez de inventar
+    la carga axial a ojo. En una nave o cancha techada, con cubierta
+    liviana y mucha área de techo, la succión de viento puede superar al
+    peso propio: la reacción puede terminar siendo hacia ARRIBA, y el
+    apoyo necesita anclaje a tensión, no un simple apoyo.
+
+    span: distancia entre apoyos (columnas), m. truss_spacing: separación
+    entre armaduras, m -- junto con span define el área tributaria de
+    ESTA armadura. rise: altura de cumbrera sobre el apoyo, m.
+    roof_dead_load/roof_live_load: kg/m2 de proyección horizontal (15/40
+    son valores de referencia para lámina liviana sobre estructura
+    ligera). wind_uplift: succión de viento, kg/m2 -- 0.0 no inventa una
+    carga que el proyecto no dio; si el sitio la tiene, pasala.
+
+    Método: viga simplemente apoyada sobre el área tributaria; reacción de
+    gravedad (muerta+viva)/2 por apoyo; reacción de viento
+    (0.6·muerta-succión)/2, negativa = levantamiento neto. Fuerza de
+    cuerda equivalente = momento máximo / peralte de armadura. Chequeo
+    PRELIMINAR -- no reemplaza el análisis por nudos ni el estudio de
+    viento del reglamento aplicable.
+
+    Devuelve 'ok' (False si hay levantamiento neto), 'gravityReaction_kg'
+    (la carga para check_column) y 'windUpliftReaction_kg'."""
+    return rules_mod.check_roof_truss(
+        span=span, truss_spacing=truss_spacing, rise=rise,
+        roof_dead_load=roof_dead_load, roof_live_load=roof_live_load,
+        wind_uplift=wind_uplift, dead_load_factor_uplift=dead_load_factor_uplift)
+
+
+@mcp.tool()
+def check_column(axial_load: float,
+                 height: float,
+                 width: float = 0.30,
+                 depth: float = 0.30,
+                 concrete_fc: float = 200.0,
+                 steel_fy: float = 4200.0,
+                 k_factor: float = 1.0,
+                 steel_ratio: float = 0.01,
+                 phi: float = 0.65,
+                 max_slenderness: float = 22.0,
+                 max_side: Optional[float] = None) -> dict[str, Any]:
+    """Proporción PRELIMINAR de una columna/castillo de concreto bajo carga
+    axial. Lo que "30x30, típico" no contesta es si ESA columna, con ESA
+    altura libre, sigue siendo columna corta o ya es esbelta -- una
+    sección que sobra por capacidad pura puede fallar por pandeo antes de
+    aplastarse, el caso típico de una nave/cancha techada con columnas de
+    4 a 6 m sin apoyo intermedio.
+
+    Dos chequeos independientes: CAPACIDAD AXIAL (Pn de columna estribada
+    con excentricidad mínima, ACI 10.3.6.2, φ=0.65) y ESBELTEZ (k·lu/r,
+    r=0.3·lado menor; por encima de max_slenderness=22 ya no es columna
+    corta sin magnificar momentos).
+
+    axial_load: carga de servicio, kg (sin factorizar; si viene de
+    check_roof_truss, usá 'gravityReaction_kg'). height: altura libre sin
+    arriostrar, m. width/depth: sección a probar, m. k_factor: factor de
+    longitud efectiva (1.0 = articulada en los dos extremos).
+    steel_ratio: cuantía de acero a probar (0.01 = 1%, mínimo ACI).
+
+    Chequeo PRELIMINAR de proporción -- no reemplaza el diseño biaxial ni
+    el análisis de columna esbelta con magnificación de momentos.
+
+    Devuelve 'ok' y, si cumple, 'width'/'depth' ya verificados por los dos
+    chequeos, junto con la capacidad axial y la esbeltez."""
+    return rules_mod.check_column(
+        axial_load=axial_load, height=height, width=width, depth=depth,
+        concrete_fc=concrete_fc, steel_fy=steel_fy, k_factor=k_factor,
+        steel_ratio=steel_ratio, phi=phi, max_slenderness=max_slenderness,
+        max_side=max_side)
+
+
+@mcp.tool()
+def check_all(rooms: Optional[list[dict[str, Any]]] = None,
+              doors: Optional[list[dict[str, Any]]] = None,
+              windows: Optional[list[dict[str, Any]]] = None,
+              lot_width: Optional[float] = None,
+              lot_depth: Optional[float] = None,
+              walls: Optional[list[dict[str, Any]]] = None,
+              wall_tolerance: float = 0.05,
+              wall_min_length: float = 0.40,
+              annotation_items: Optional[list[dict[str, Any]]] = None,
+              hygiene_sample_limit: int = 2000,
+              hygiene_max_duplicate_check: int = 800) -> dict[str, Any]:
+    """Corre TODOS los check_* de cierre en una sola llamada y devuelve un
+    reporte único, en vez de tener que acordarse de invocar cada uno por
+    separado y juntar los resultados a mano.
+
+    No incluye check_program: ese responde una pregunta de otra etapa (¿el
+    programa entra en el terreno?, ANTES de que haya rooms/walls) con un
+    vocabulario distinto (spaces, no rooms con x0/y0/x1/y1) — se sigue
+    llamando aparte, al arrancar.
+
+    rooms/doors/windows/lot_width/lot_depth: si se pasan rooms Y doors, corre
+    check_layout y check_geometry. walls: si se pasa, corre check_walls.
+    Lo que no se pase se saltea (se avisa en 'skipped'), para poder llamarla
+    también en un dibujo que todavía no tiene muros.
+
+    check_annotations y check_drawing_hygiene SIEMPRE corren: leen el dibujo
+    activo, no necesitan que se les describa el proyecto.
+
+    Devuelve 'ok' (True solo si TODOS los checks corridos salieron limpios),
+    'problems' con todos los problemas de todos los checks juntos en una
+    sola lista plana (cada uno con 'check' diciendo de cuál vino), y 'checks'
+    con el resultado completo de cada uno por separado para el detalle."""
+    checks: dict[str, Any] = {}
+    skipped: list[str] = []
+
+    if rooms is not None and doors is not None:
+        checks["layout"] = check_layout(rooms=rooms, doors=doors,
+                                        lot_width=lot_width, lot_depth=lot_depth,
+                                        windows=windows)
+        checks["geometry"] = check_geometry(rooms=rooms, doors=doors)
+    else:
+        skipped.append("layout/geometry (falta rooms y/o doors)")
+
+    if walls is not None:
+        checks["walls"] = check_walls(walls=walls, tolerance=wall_tolerance,
+                                      min_length=wall_min_length)
+    else:
+        skipped.append("walls (falta walls)")
+
+    checks["annotations"] = check_annotations(items=annotation_items)
+    checks["hygiene"] = check_drawing_hygiene(
+        sample_limit=hygiene_sample_limit,
+        max_duplicate_check=hygiene_max_duplicate_check)
+
+    problems: list[dict[str, Any]] = []
+    for nombre, resultado in checks.items():
+        for p in resultado.get("problems", []):
+            # check_drawing_hygiene devuelve strings sueltos; los demás,
+            # dicts con rule/problem/fix -- se normalizan al mismo formato.
+            entry = {"problem": p} if isinstance(p, str) else dict(p)
+            entry["check"] = nombre
+            problems.append(entry)
+
+    return {"ok": not problems, "problems": problems, "count": len(problems),
+           "checks": checks, "skipped": skipped}
 
 
 @mcp.tool()
@@ -356,6 +814,47 @@ def create_axis_grid(
         x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max,
         extension=extension, bubble_radius=bubble_radius,
         text_height=text_height, layer=layer,
+    )
+
+
+@mcp.tool()
+def create_stairs(start_x: float, start_y: float, total_rise: float,
+                  width: float = 1.00, tread: float = 0.28, riser: float = 0.17,
+                  direction_deg: float = 90.0, view: str = "planta",
+                  handrail: bool = True, handrail_offset: float = 0.05,
+                  bottom_level_label: str = "N.P.T. +0.00",
+                  top_level_label: Optional[str] = None,
+                  layer: str = "ESCALERAS",
+                  lineweight: int = 30) -> dict[str, Any]:
+    """Escalera de un tramo recto, en planta o en corte, con la cantidad de
+    escalones resuelta por la fórmula de Blondel — no a ojo.
+
+    view='planta': contorno del tramo (dos zancas), cada huella, baranda
+    opcional y la flecha de sentido — rotulala vos con place_labels usando
+    el punto que devuelve en 'upArrowTip' (texto "SUBE").
+    view='corte': perfil en zigzag (contrahuella + huella de cada escalón)
+    más los niveles de piso terminado abajo y arriba.
+
+    total_rise: altura total a salvar (piso a piso). width: ancho libre del
+    tramo. tread/riser: huella y contrahuella DESEADAS — la tool calcula
+    cuántos escalones entran, recalcula la contrahuella real para que el
+    reparto sea exacto, y valida contra la regla de Blondel
+    (2×contrahuella + huella entre 0.60 y 0.64m): si no cumple, el error
+    dice qué huella sí cumple en vez de dibujar una escalera incómoda o
+    insegura.
+
+    No arma tramos con descanso (en L o en U): un tramo recto por llamada,
+    con el descanso dibujado aparte si hace falta doblar.
+
+    Devuelve 'steps', 'riser' (la contrahuella REAL, no la pedida), 'tread',
+    'totalRun', 'blondel' y 'formula' (el cálculo completo, p.ej. "17 CH x
+    16.5cm = 2.80m ; 16 H x 28cm = 4.48m") para poner en el plano."""
+    return arch_mod.create_stairs(
+        start_x=start_x, start_y=start_y, total_rise=total_rise,
+        width=width, tread=tread, riser=riser, direction_deg=direction_deg,
+        view=view, handrail=handrail, handrail_offset=handrail_offset,
+        bottom_level_label=bottom_level_label, top_level_label=top_level_label,
+        layer=layer, lineweight=lineweight,
     )
 
 
@@ -693,7 +1192,8 @@ def create_conduit(points: list[list[float]], sag: float = 0.0,
 def create_table(x: float, y: float, rows: list[list[str]],
                   col_widths: list[float], row_height: float,
                   text_height: float, title: str = "",
-                  header: bool = True, layer: str = "TABLAS") -> dict[str, Any]:
+                  header: bool = True, layer: str = "TABLAS",
+                  avoid: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     """Tabla con grilla y texto: resumen de obra, cuadro de acabados,
     cuantificación, cuadro de construcción.
 
@@ -705,10 +1205,18 @@ def create_table(x: float, y: float, rows: list[list[str]],
     row_height / text_height: en unidades del modelo. A 1:50 en metros, un
     texto de 2.5mm de papel es 0.125 y una fila cómoda es 0.35.
 
+    Esta tool NO sabe qué más hay dibujado: (x, y) es una posición fija, así
+    que si al lado va una ilustración (un detalle constructivo, una planta)
+    puede terminar tapándola sin ningún aviso. Si ya sabés dónde está esa
+    ilustración, pasala en avoid ([{"x0":.., "y0":.., "x1":.., "y1":..,
+    "what":".."}]) y si la tabla cae encima vas a ver 'warning' en la
+    respuesta en vez de descubrirlo al mirar el dibujo.
+
     Devuelve 'bottom' y 'right' para poder encadenar otra cosa debajo o al lado."""
     return ann_mod.create_table(x=x, y=y, rows=rows, col_widths=col_widths,
                                 row_height=row_height, text_height=text_height,
-                                title=title, header=header, layer=layer)
+                                title=title, header=header, layer=layer,
+                                avoid=avoid)
 
 
 @mcp.tool()
@@ -925,6 +1433,194 @@ def create_building_section(
         text_height=text_height)
 
 
+@mcp.tool()
+def create_gable_roof(x: float, y: float, span: float, rise: float,
+                      overhang: float = 0.0, layer: Optional[str] = None,
+                      lineweight: int = roof_mod.LW_ROOF) -> dict[str, Any]:
+    """Perfil de una cubierta a dos aguas (alero-cumbrera-alero), para un
+    corte o una fachada -- lo que create_building_section no dibuja,
+    porque ahí los niveles son horizontales y esto tiene pendiente.
+
+    (x, y) es el apoyo IZQUIERDO (eje de columna o cara de muro), a la
+    cota del alero. span es la distancia horizontal entre los dos apoyos;
+    rise es la altura de la cumbrera SOBRE el alero (no cota absoluta: si
+    el alero está a NPT+5.00 y la cumbrera a NPT+7.46, rise=2.46).
+    overhang prolonga cada agua más allá del apoyo, en línea con la
+    pendiente de esa agua -- 0 si el alero coincide con el eje de apoyo.
+
+    Devuelve los handles de las dos aguas, el punto de cumbrera, la
+    pendiente (m/m y grados) y el largo real de cada agua -- ese largo es
+    el que hace falta para pedir la lámina con el desarrollo correcto, no
+    la proyección horizontal del claro."""
+    return roof_mod.create_gable_roof(x=x, y=y, span=span, rise=rise,
+                                      overhang=overhang, layer=layer,
+                                      lineweight=lineweight)
+
+
+@mcp.tool()
+def create_truss(x: float, y: float, span: float, rise: float,
+                 panels: int = 3, layer: Optional[str] = None,
+                 chord_lineweight: int = roof_mod.LW_ROOF,
+                 web_lineweight: int = roof_mod.LW_TRUSS) -> dict[str, Any]:
+    """Símbolo ESQUEMÁTICO de una armadura de techo a dos aguas: cuerda
+    inferior horizontal, cuerda superior con pendiente y montantes
+    verticales de alma -- para que un corte estructural se lea como corte
+    estructural (con su "ARMADURA EST-1") y no como una cubierta sin nada
+    debajo.
+
+    Esto NO es un diseño de armadura -- no calcula fuerza por barra ni
+    tamaño de perfil, es la geometría que se ve en el corte. Para la
+    reacción que baja a la columna usá check_roof_truss; para verificar
+    esa columna, check_column.
+
+    (x, y) es el apoyo izquierdo, a la cota de la cuerda inferior (el
+    alero). span: distancia entre apoyos. rise: altura de cumbrera sobre
+    la cuerda inferior. panels: paños por CADA media armadura (3 es un
+    valor de referencia razonable para una armadura chica).
+
+    Devuelve los handles de cuerda inferior, cuerdas superiores y
+    montantes, más la misma cumbrera/pendiente que create_gable_roof."""
+    return roof_mod.create_truss(x=x, y=y, span=span, rise=rise,
+                                 panels=panels, layer=layer,
+                                 chord_lineweight=chord_lineweight,
+                                 web_lineweight=web_lineweight)
+
+
+@mcp.tool()
+def create_column_section(x: float, y: float, width: float, depth: float,
+                          bars_top_bottom: int = 0,
+                          bars_left_right: int = 0,
+                          bar_diameter: float = 0.0127,
+                          cover: float = 0.03,
+                          stirrup_diameter: float = 0.0095,
+                          hatch_pattern: str = rebar_mod.DEFAULT_CONCRETE_HATCH,
+                          hatch_scale: float = 1.0,
+                          layer: Optional[str] = None) -> dict[str, Any]:
+    """Sección de una columna/castillo de concreto en corte, con estribo y
+    varillas longitudinales -- el detalle que "30x30, típico" no dibuja y
+    que un corte estructural real sí muestra.
+
+    (x, y) es la esquina inferior izquierda de la sección (cara exterior
+    de concreto). width/depth: dimensiones de la sección, m -- si vienen
+    de check_column, usá 'width'/'depth' de ese resultado.
+
+    Las varillas de esquina son automáticas (las 4 esquinas del estribo).
+    bars_top_bottom/bars_left_right: varillas ADICIONALES repartidas
+    parejo en el interior de CADA cara horizontal/vertical (no un total,
+    por cara) -- si no le pasás nada, dibuja las 4 de esquina nomás; no
+    inventa una cuantía.
+
+    bar_diameter: diámetro de la varilla longitudinal, m (0.0127 = #4).
+    cover: recubrimiento libre de la cara de concreto al estribo, m.
+    hatch_pattern: 'AR-CONC' (textura de concreto) por default -- si esta
+    instalación no lo tiene, confirmá con list_hatch_patterns.
+
+    Devuelve 'stirrupHandle' (la Polyline cerrada del estribo, lista para
+    pasar como stirrup_handle a calculate_quantities tipo steel_weight),
+    'barCount' y 'totalSteelArea_cm2' (para comparar contra lo que
+    check_column pidió, no para reemplazarlo)."""
+    return rebar_mod.create_column_section(
+        x=x, y=y, width=width, depth=depth,
+        bars_top_bottom=bars_top_bottom, bars_left_right=bars_left_right,
+        bar_diameter=bar_diameter, cover=cover,
+        stirrup_diameter=stirrup_diameter, hatch_pattern=hatch_pattern,
+        hatch_scale=hatch_scale, layer=layer)
+
+
+@mcp.tool()
+def create_footing_plan(x: float, y: float, width: float, length: float,
+                        bar_spacing_x: float,
+                        bar_spacing_y: Optional[float] = None,
+                        bar_diameter: float = 0.0127,
+                        cover: float = 0.05,
+                        support_width: float = 0.0,
+                        support_length: float = 0.0,
+                        corner_bar_leg: float = 0.0,
+                        layer: Optional[str] = None) -> dict[str, Any]:
+    """Planta de una zapata aislada con parrilla de armado en DOS sentidos
+    -- lo que create_column_section no dibuja, porque esa es una sección
+    en elevación y esto es una vista en planta con una malla de varillas
+    cruzadas.
+
+    (x, y) es la esquina inferior izquierda de la zapata. width/length:
+    dimensiones en planta, m -- si vienen de check_footing, width=length=
+    'side' es el caso típico (zapata cuadrada), pero acepta rectangular.
+
+    bar_spacing_x: separación de las varillas que corren en Y (repartidas
+    a lo largo de X), m -- el dato de obra "varilla del #4 @ 15cm". Si
+    bar_spacing_y se omite, usa el mismo paso ("doble armado en ambos
+    sentidos", el caso más común).
+
+    support_width/support_length: si se pasan (>0), dibuja el contorno de
+    referencia (línea punteada) del elemento que apoya centrado encima --
+    columna o dado, para leer la planta junto con el corte.
+
+    corner_bar_leg: si se pasa (>0), agrega una varilla diagonal
+    ESQUEMÁTICA en cada esquina (a 45°, ese largo de pata) -- no calcula
+    gancho ni desarrollo real del doblez, esa decisión es de quien
+    proyecta.
+
+    Devuelve 'barCountX'/'barCountY' (con el paso ya ajustado para cerrar
+    parejo, igual criterio que create_axis_grid) y 'totalBarLength_m',
+    listo para pasar como 'length' a calculate_quantities tipo
+    steel_weight -- mide la parrilla que se dibujó, no la recalcula."""
+    return rebar_mod.create_footing_plan(
+        x=x, y=y, width=width, length=length,
+        bar_spacing_x=bar_spacing_x, bar_spacing_y=bar_spacing_y,
+        bar_diameter=bar_diameter, cover=cover,
+        support_width=support_width, support_length=support_length,
+        corner_bar_leg=corner_bar_leg, layer=layer)
+
+
+@mcp.tool()
+def create_isometric_box(x: float, y: float, z: float,
+                         dx: float, dy: float, dz: float,
+                         layer: Optional[str] = None,
+                         lineweight: int = iso_mod.LW_FACE,
+                         hatch_pattern: Optional[str] = None,
+                         hatch_scale: float = 1.0,
+                         color_index: Optional[int] = None) -> dict[str, Any]:
+    """Un prisma rectangular (columna, dado, trabe, zapata) en proyección
+    ISOMÉTRICA (30° clásicos) -- las 3 caras visibles, sin geometría 3D
+    real: este repo es 2D puro, esto proyecta cada vértice con
+    x'=(X-Y)cos30°, y'=(X+Y)sin30°+Z y dibuja polígonos planos, el mismo
+    truco de cualquier isométrico de obra dibujado en un CAD 2D.
+
+    Para una cimentación completa (columna + dado + trabe de liga +
+    zapata apilados), llamala una vez por elemento con el mismo (x, y) en
+    planta y el 'z' real de arranque de cada uno -- dibujá de ABAJO hacia
+    ARRIBA (zapata primero) para que el apilado se vea bien: lo que se
+    dibuja último tapa a lo anterior, igual que en obra.
+
+    (x, y, z): esquina de coordenadas MÍNIMAS del prisma, medidas reales
+    (x, y en planta, z altura sobre el datum del isométrico). dx, dy, dz:
+    dimensiones reales en cada eje.
+
+    hatch_pattern: None deja solo contorno; 'SOLID' rellena de color --
+    un color POR ELEMENTO es lo que hace legible un isométrico (evitá los
+    puros 1-6, ver layers.EVITAR; la paleta 32/12/152/96/172 de
+    layers.py ya sirve para distinguir elementos).
+
+    Devuelve los 3 handles de cara y 'topCenter'/'frontBottomCorner' ya
+    en coordenadas 2D de la lámina, para apuntar un leader con el nombre
+    del elemento sin calcular la proyección a mano."""
+    return iso_mod.create_isometric_box(
+        x=x, y=y, z=z, dx=dx, dy=dy, dz=dz, layer=layer,
+        lineweight=lineweight, hatch_pattern=hatch_pattern,
+        hatch_scale=hatch_scale, color_index=color_index)
+
+
+@mcp.tool()
+def iso_project(x: float, y: float, z: float) -> dict[str, Any]:
+    """Proyecta un punto 3D real (x, y en planta, z altura) al punto 2D de
+    la lámina con la misma fórmula isométrica que create_isometric_box --
+    para ubicar un leader o un texto apuntando a un punto preciso (una
+    esquina, el punto medio de una arista) sin recalcular la proyección a
+    mano."""
+    px, py = iso_mod.iso_project(x, y, z)
+    return {"x": px, "y": py}
+
+
 # ---------------------------------------------------------------- Geometría
 
 @mcp.tool()
@@ -1012,11 +1708,13 @@ def create_text(
     lineweight: grosor del trazo del texto en centésimas de mm (los títulos
     suelen ir 35-50 para que "pesen" frente al cuerpo); si se omite hereda el
     de la capa. color_index: color ACI 1-255."""
-    return acad.call("create_text", {
+    resultado = acad.call("create_text", {
         "text": text, "x": x, "y": y, "z": z, "height": height,
         "layer": layer, "rotationDeg": rotation_deg, "style": style,
         **_style(lineweight, color_index),
     })
+    _track_text(text, x, y, height, rotation_deg)
+    return resultado
 
 
 @mcp.tool()
@@ -1030,10 +1728,12 @@ def create_mtext(
 
     lineweight: grosor del trazo del texto en centésimas de mm; si se omite
     hereda el de la capa. color_index: color ACI 1-255."""
-    return acad.call("create_mtext", {
+    resultado = acad.call("create_mtext", {
         "text": text, "x": x, "y": y, "z": z, "height": height, "width": width,
         "layer": layer, "style": style, **_style(lineweight, color_index),
     })
+    _track_text(text, x, y, height, width=width)
+    return resultado
 
 
 @mcp.tool()
@@ -1221,11 +1921,14 @@ def create_leader(
     mismo plano; si no hay ninguno configurado, cae a text_height * 0.6.
     lineweight: grosor de la flecha y el texto en centésimas de mm (13-18 es lo
     habitual). color_index: color ACI 1-255."""
-    return acad.call("create_leader", {
+    resultado = acad.call("create_leader", {
         "points": points, "text": text, "textHeight": text_height,
         "arrowSize": arrow_size, "layer": layer,
         **_style(lineweight, color_index),
     })
+    if points:
+        _track_text(text, points[-1][0], points[-1][1], text_height)
+    return resultado
 
 
 @mcp.tool()
@@ -1418,6 +2121,121 @@ def offset_entity(handle: str, distance: float,
     })
 
 
+@mcp.tool()
+def mirror_entity(handle: str, x1: float, y1: float, x2: float, y2: float,
+                  copy: bool = True) -> dict[str, Any]:
+    """Espeja una entidad respecto del eje que pasa por (x1,y1)-(x2,y2).
+
+    copy=True (default) deja el original y agrega el reflejo como entidad
+    nueva — lo normal para una planta simétrica (dos recámaras en espejo,
+    una unidad dupla). copy=False transforma la entidad en el lugar, sin
+    dejar el original.
+
+    Es un espejo geométrico real: un texto espejado sale invertido (mismo
+    criterio que MIRRTEXT=1 de AutoCAD), no "legible del otro lado". Si lo
+    que hace falta es un rótulo legible en la posición reflejada, escribilo
+    de nuevo con create_text en vez de espejar el existente."""
+    return acad.call("mirror_entity", {
+        "handle": handle, "x1": x1, "y1": y1, "x2": x2, "y2": y2, "copy": copy,
+    })
+
+
+@mcp.tool()
+def array_entity(handle: str, mode: str = "rectangular",
+                 rows: int = 1, cols: int = 1,
+                 row_spacing: float = 0.0, col_spacing: float = 0.0,
+                 center_x: Optional[float] = None, center_y: Optional[float] = None,
+                 count: Optional[int] = None, angle_total: float = 360.0,
+                 rotate_items: bool = True) -> dict[str, Any]:
+    """Arreglo rectangular o polar de una entidad ya dibujada: copias reales,
+    cada una con su propio handle — no un objeto Array asociativo.
+
+    mode='rectangular': rows x cols copias, separadas row_spacing/col_spacing
+    (unidades del modelo). Sirve para una fila de columnas o ventanas.
+    mode='polar': count copias repartidas alrededor de (center_x, center_y).
+    angle_total=360 (default) reparte el círculo completo a partes iguales;
+    un ángulo menor reparte ese arco entre count-1 tramos, así el último
+    elemento cae justo en angle_total. rotate_items=False traslada cada
+    copia al punto del arco sin girarla (para un símbolo que tiene que
+    quedar siempre "parado", tipo columna).
+
+    El original ya cuenta como la primera pieza: rows x cols o count es el
+    TOTAL resultante, original incluido — no se duplica la posición [0,0]."""
+    params: dict[str, Any] = {"handle": handle, "mode": mode}
+    if mode == "rectangular":
+        params.update({"rows": rows, "cols": cols,
+                       "rowSpacing": row_spacing, "colSpacing": col_spacing})
+    elif mode == "polar":
+        if center_x is None or center_y is None or count is None:
+            raise ValueError(
+                "mode='polar' necesita center_x, center_y y count.")
+        params.update({"centerX": center_x, "centerY": center_y, "count": count,
+                       "angleTotal": angle_total, "rotateItems": rotate_items})
+    else:
+        raise ValueError(f"mode tiene que ser 'rectangular' o 'polar', no {mode!r}.")
+    return acad.call("array_entity", params)
+
+
+@mcp.tool()
+def attach_xref(path: str, name: str, x: float, y: float, z: float = 0.0,
+                scale: float = 1.0, rotation_deg: float = 0.0,
+                layer: Optional[str] = None, lineweight: Optional[int] = None,
+                color_index: Optional[int] = None) -> dict[str, Any]:
+    """Adjunta OTRO dibujo como referencia externa (xref) — para coordinar
+    disciplinas separadas (arquitectura, estructura, instalaciones) como
+    archivos vinculados, en vez de copiar geometría con insert_block.
+
+    La diferencia real con insert_block: un xref se puede recargar
+    (reload_xref) cuando el archivo de origen cambia — un bloque importado
+    queda congelado en el momento en que se insertó.
+
+    path: ruta al .dwg de origen. name: cómo se lo referencia en este
+    dibujo (list_xrefs, detach_xref, reload_xref lo usan)."""
+    return acad.call("attach_xref", {
+        "path": path, "name": name, "x": x, "y": y, "z": z, "scale": scale,
+        "rotationDeg": rotation_deg, "layer": layer,
+        **_style(lineweight, color_index),
+    })
+
+
+@mcp.tool()
+def list_xrefs() -> dict[str, Any]:
+    """Lista las referencias externas adjuntas a este dibujo, con su ruta y
+    estado (Resolved, Unresolved, FileNotFound, Unloaded)."""
+    return acad.call("list_xrefs", {})
+
+
+@mcp.tool()
+def detach_xref(name: str) -> dict[str, Any]:
+    """Desprende un xref — borra la referencia Y todas sus inserciones en
+    este dibujo. Para sacar geometría de otra disciplina sin que quede
+    colgada, en vez de borrar la inserción a mano y dejar la definición
+    huérfana."""
+    return acad.call("detach_xref", {"name": name})
+
+
+@mcp.tool()
+def reload_xref(name: Optional[str] = None) -> dict[str, Any]:
+    """Recarga un xref desde el archivo de origen (o todos, si se omite
+    'name') — para traer los cambios que el otro consultor hizo en su
+    disciplina sin tener que volver a adjuntar nada."""
+    return acad.call("reload_xref", {"name": name})
+
+
+@mcp.tool()
+def find_replace_text(find: str, replace: str,
+                      case_sensitive: bool = False) -> dict[str, Any]:
+    """Busca y reemplaza texto en TODO el espacio activo: DBText, MText y
+    atributos de bloque. Para corregir un dato repetido (un número de lámina,
+    un nombre mal escrito) de una sola pasada, en vez de rótulo por rótulo.
+
+    Devuelve 'changed': qué entidades tocó (handle, tipo, y el tag si era un
+    atributo), para poder revisar qué cambió."""
+    return acad.call("find_replace_text", {
+        "find": find, "replace": replace, "caseSensitive": case_sensitive,
+    })
+
+
 # --------------------------------------------------------------- Consulta
 
 @mcp.tool()
@@ -1462,26 +2280,67 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
     varilla en corte es un círculo esquemático de 1cm), así que ahí se toma
     la especificación que ya quedó anotada en el plano.
 
+    No es un catálogo cerrado de materiales — son operaciones geométricas
+    genéricas (área×profundidad, perímetro×longitud, módulo de pieza+merma)
+    que sirven para cualquier concepto del proyecto, no solo los que
+    aparecen de ejemplo acá.
+
     items: lista de conceptos, cada uno con 'type' y 'label':
-      "concrete_volume": {"handles": [...], "depth": 0.15} — mide el área de
-        cada handle y la multiplica por 'depth' (la profundidad que ESA vista
-        no muestra, p.ej. el espesor hacia adentro del muro en una elevación).
+      "concrete_volume": {"handles": [...], "depth": 0.15, "waste_pct": 5.0}
+        — mide el área de cada handle y la multiplica por 'depth' (la
+        profundidad que ESA vista no muestra, p.ej. el espesor hacia
+        adentro del muro en una elevación); 'waste_pct' (default 0) es el
+        desperdicio real de colado.
+      "concrete_mix": {"handles": [...], "depth": 0.15} o, si el volumen
+        ya se calculó en un item de concrete_volume, {"volume": 1.61} en
+        vez de remedirlo — más "cement_bags_per_m3"/"sand_m3_per_m3"/
+        "gravel_m3_per_m3" (default 7.5, 0.50, 0.80: referencia de obra
+        para f'c≈200 kg/cm² ~1:2:3, reemplazable por el diseño de mezcla
+        real del proyecto). Bolsas de cemento (50kg, redondeadas hacia
+        arriba), arena y grava en m³ para colar ese volumen.
       "brick_count": {"handles": [...], "brick_w": 0.28, "brick_h": 0.07,
         "joint": 0.015, "waste_pct": 5.0} — piezas = área medida / módulo
         pieza+junta, con la merma.
       "mortar_volume": {"handles": [...], "thickness": 0.14, "brick_w":..,
-        "brick_h":.., "brick_depth":.., "joint":..} — mortero = volumen del
-        muro menos el volumen real que ocupan las piezas.
-      "steel_weight": {"count": 3, "length": 2.5, "long_bars": 4,
-        "long_bar_size": "#3", "stirrup_size": "#2", "stirrup_spacing": 0.15,
-        "stirrup_handle": "466"} — peso de varilla longitudinal + estribos;
-        stirrup_handle mide el PERÍMETRO REAL del estribo ya dibujado
-        (closed Polyline) en vez de recalcularlo a mano.
+        "brick_h":.., "brick_depth":.., "joint":.., "waste_pct": 5.0} —
+        mortero = volumen del muro menos el volumen real que ocupan las
+        piezas, más 'waste_pct' de sobrante de mezcla.
+      "steel_weight": longitudinal + estribos + malla, sumables en el mismo
+        item: {"count": 3, "length": 2.5, "long_bars": 4,
+        "long_bar_size": "#3", "commercial_length": 9.0,
+        "lap_diam_factor": 40, "stirrup_size": "#2", "stirrup_spacing": 0.15,
+        "stirrup_handle": "466", "waste_pct": 5.0} — peso de varilla
+        longitudinal + estribos; stirrup_handle mide el PERÍMETRO REAL del
+        estribo ya dibujado (closed Polyline) en vez de recalcularlo a
+        mano. 'commercial_length'+'lap_diam_factor' suman el traslape real
+        cuando 'length' supera el largo comercial de la varilla. Para malla
+        electrosoldada de losa: {"handles": [...], "mesh_kg_m2": 2.86,
+        "waste_pct": 3.0} — kg = área medida × peso de catálogo de la malla.
+      "earthwork": excavación —
+        {"mode": "excavation", "handles": [...], "depth": 0.60,
+        "swell_pct": 25.0} — volumen = área medida × depth;
+        'swell_pct' (esponjamiento al sacarlo del banco) solo informa
+        'volumeSwollen' para acarreo. Relleno —
+        {"mode": "backfill", "handles": [...], "depth": 0.60,
+        "structure_volume": 0.42} — volumen = (área medida × depth) menos
+        el volumen YA calculado de la estructura que ocupa el mismo hueco.
+      "formwork": cimbra/encofrado — cara ya dibujada directo:
+        {"handles": [...], "faces": 1, "waste_pct": 5.0}; o por sección de
+        elemento: {"count": 3, "length": 2.5, "section_handle": "h1",
+        "waste_pct": 5.0} — área = count × perímetro MEDIDO de la sección
+        × length, mismo criterio que el perímetro del estribo.
+      "area_finish": acabados por área (aplanados, piso, pintura,
+        impermeabilizante, lo que sea del proyecto) —
+        {"material": "aplanado", "handles": [...], "coats": 1,
+        "thickness": 0.015, "waste_pct": 5.0} — 'material' es texto libre y
+        agrupa el total (aplanado_m2, pintura_m2, etc.); 'coats' (manos)
+        escala el área a cubrir; 'thickness' opcional agrega el volumen.
 
     Devuelve 'items' (una fila resuelta por concepto, con el detalle de cómo
     se midió) y 'totals' (sumado por material: concreto_m3, ladrillo_piezas,
-    mortero_m3, acero_kg). Pasale el resultado a create_quantities_table
-    para dibujarlo."""
+    mortero_m3, acero_kg, excavacion_m3, relleno_m3, cimbra_m2, y un
+    <material>_m2/<material>_m3 por cada 'material' de area_finish). Pasale
+    el resultado a create_quantities_table para dibujarlo."""
     return qty_mod.calculate_quantities(items)
 
 
@@ -1505,6 +2364,21 @@ def create_quantities_table(x: float, y: float, result: dict[str, Any],
     return qty_mod.create_quantities_table(
         x=x, y=y, result=result, text_height=text_height, title=title,
         layer=layer, col_widths=col_widths)
+
+
+@mcp.tool()
+def export_quantities_csv(result: dict[str, Any], path: str) -> dict[str, Any]:
+    """Vuelca el resultado de calculate_quantities a un .csv real en disco,
+    para armar el presupuesto en Excel/Sheets afuera de AutoCAD.
+
+    No recalcula nada — escribe los mismos números que ya devolvió
+    calculate_quantities, uno por fila con su fórmula (columna 'MEDICIÓN Y
+    CÁLCULO') y su cantidad ya en la unidad correspondiente, más las filas de
+    'totals' al final. No necesita AutoCAD conectado: es un volcado del
+    resultado en memoria.
+
+    path: ruta absoluta de salida, p.ej. "C:/obra/cuantificacion.csv"."""
+    return qty_mod.export_quantities_csv(result=result, path=path)
 
 
 @mcp.tool()
@@ -1689,8 +2563,63 @@ def list_documents() -> dict[str, Any]:
 @mcp.tool()
 def set_active_document(name: str) -> dict[str, Any]:
     """Cambia el dibujo activo, sobre el que van a operar las demás tools.
-    Alcanza con el nombre de archivo ('Casa.dwg'), sin la ruta completa."""
-    return acad.call("set_active_document", {"name": name})
+    Alcanza con el nombre de archivo ('Casa.dwg'), sin la ruta completa.
+
+    Al cambiar de dibujo se olvida lo cacheado del anterior (huellas de
+    mobiliario, franjas de anotación ocupadas, capas existentes): son datos
+    de ESE plano y no valen acá. Revisá los 'warnings' que devuelve."""
+    r = acad.call("set_active_document", {"name": name})
+    if r.get("changed"):
+        avisos = _reset_drawing_state(r.get("active", name))
+        if avisos:
+            r = dict(r)
+            r["warnings"] = avisos
+    return r
+
+
+@mcp.tool()
+def open_document(path: str, read_only: bool = False) -> dict[str, Any]:
+    """Abre un .dwg del disco y lo deja activo.
+
+    Es la entrada para CORREGIR un plano ya entregado: hasta acá el MCP sabía
+    guardar, plotear y exportar, pero el dibujo tenía que estar abierto a mano
+    en AutoCAD. Con esto el ciclo cierra solo: open_document →
+    select_entities → delete_entities → redibujar → save_drawing.
+
+    Si el archivo ya está abierto en AutoCAD no lo reabre (perdería los
+    cambios sin guardar): activa el que hay y lo avisa en 'alreadyOpen'.
+
+    read_only=True para consultar un plano de otro consultor sin riesgo de
+    pisarlo. Para vincular su geometría a ESTE dibujo no es el camino: eso es
+    attach_xref.
+
+    Olvida lo cacheado del dibujo anterior — ver los 'warnings'."""
+    r = acad.call("open_document", {"path": path, "readOnly": read_only})
+    avisos = _reset_drawing_state(r.get("active", path))
+    if avisos:
+        r = dict(r)
+        r["warnings"] = avisos
+    return r
+
+
+@mcp.tool()
+def new_document(template: Optional[str] = None) -> dict[str, Any]:
+    """Crea un dibujo nuevo y lo deja activo.
+
+    template: ruta a un .dwt propio (el de la oficina, con sus capas y
+    estilos ya armados). Sin él sale la plantilla por defecto de AutoCAD.
+
+    El dibujo nace sin nombre y vive SOLO en memoria: `save_drawing(path=...)`
+    con ruta explícita antes de dibujar nada serio — ver la nota de
+    save_drawing sobre dónde termina el archivo si no se le pasa path.
+
+    Olvida lo cacheado del dibujo anterior — ver los 'warnings'."""
+    r = acad.call("new_document", {"template": template})
+    avisos = _reset_drawing_state(r.get("active", "dibujo nuevo"))
+    if avisos:
+        r = dict(r)
+        r["warnings"] = avisos
+    return r
 
 
 @mcp.tool()
@@ -1851,6 +2780,63 @@ def ping() -> dict[str, Any]:
 def zoom_extents() -> dict[str, Any]:
     """Hace zoom a la extensión completa del dibujo activo."""
     return acad.call("zoom_extents", {})
+
+
+@mcp.tool()
+def export_pdf(layout: str, path: str, device: Optional[str] = None) -> dict[str, Any]:
+    """Plotea un layout a un archivo por API — sin tener que ir a AutoCAD y
+    hacer PLOT a mano.
+
+    layout: nombre del layout a plotear (el que armaste con create_layout).
+    path: ruta absoluta de salida, p.ej. "C:/obra/casa_planta.pdf".
+    device: dispositivo de impresión (.pc3). Por default "DWG To PDF.pc3" —
+    el mismo que create_layout deja configurado si no le pasaste otro, así
+    que en el caso normal ni hace falta pasarlo. Si el layout se armó con un
+    plotter físico, pasá ese device o el PDF sale con el papel/escala de la
+    impresora en vez de un tamaño de archivo razonable.
+
+    Se plotea con la configuración YA guardada en el layout (papel, escala):
+    no vuelve a calcular nada, solo manda a imprimir lo que create_layout +
+    create_viewport ya dejaron armado."""
+    return acad.call("export_pdf", {"layout": layout, "path": path, "device": device})
+
+
+@mcp.tool()
+def capture_viewport(path: str, layout: Optional[str] = None) -> dict[str, Any]:
+    """Saca una imagen PNG de lo que hay dibujado, para poder MIRAR el
+    resultado en vez de confiar solo en los números que devuelven las demás
+    tools (get_extents, list_entities, los check_*).
+
+    layout: qué capturar. Si se omite, captura el espacio ACTIVO (modelo o el
+    layout que esté actual) — mismo criterio que usan las demás tools de
+    inspección. Pasando un nombre, captura ese layout puntual sin cambiar cuál
+    está activo.
+
+    Si es el espacio modelo, encuadra a la extensión del dibujo (equivalente
+    a un zoom_extents antes de la foto); si es un layout, captura la hoja
+    completa tal como quedaría al imprimir.
+
+    No sirve para nada 3D ni para depurar colores de pantalla — es una foto
+    plana de lo que hay, pensada para chequear que nada se encimó o quedó
+    fuera de lugar antes de dar un plano por terminado."""
+    return acad.call("capture_viewport", {"path": path, "layout": layout})
+
+
+@mcp.tool()
+def undo(steps: int = 1) -> dict[str, Any]:
+    """Deshace las últimas 'steps' operaciones del dibujo activo.
+
+    Cada llamada de este MCP que modifica el dibujo queda como una operación
+    de UNDO normal de AutoCAD, así que sirve para deshacer una serie de
+    tool calls que salió mal sin tener que borrar entidad por entidad con
+    delete_entity/delete_entities.
+
+    Se encola en la línea de comandos (igual que zoom_extents), así que no
+    devuelve confirmación de qué se deshizo — si hace falta verificar,
+    segui con get_drawing_info o list_entities después."""
+    if steps < 1:
+        raise ValueError("steps tiene que ser >= 1.")
+    return acad.call("undo", {"steps": steps})
 
 
 if __name__ == "__main__":

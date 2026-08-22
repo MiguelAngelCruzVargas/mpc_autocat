@@ -16,8 +16,11 @@ import annotation
 import arch
 import autocad_client
 import furniture
+import isometric
 import layers
 import quantities
+import rebar
+import roof
 import sections
 import sheet
 import space
@@ -38,6 +41,8 @@ LAYER_COLORS = {
     "CORTES-ARQ": "#111111",
     "CORTES-ARQ-VISTO": "#5b6b7a",
     "FACHADAS": "#356fb5",
+    "CUBIERTA": "#111111",
+    "ESTRUCTURA-TECHO": "#5b6b7a",
 }
 DEFAULT_COLOR = "#444444"
 
@@ -143,7 +148,7 @@ def install() -> None:
     """Desvía todas las llamadas al plugin hacia el mock."""
     DRAWN.clear()
     autocad_client.call = fake_call
-    for modulo in (sheet, arch, furniture, annotation, sections):
+    for modulo in (sheet, arch, furniture, annotation, sections, roof, rebar, isometric):
         modulo.acad.call = fake_call
     # El preview arranca de cero: sin esto, dos corridas seguidas en el mismo
     # proceso apilan las cotas sobre franjas del plano anterior.

@@ -16,10 +16,20 @@ Ademas guarda la escala de la lamina (unidades del modelo por mm de papel),
 que create_sheet ya calcula y hasta ahora se perdia: es lo que permite pedir
 "6 mm de papel" y que salga bien en metros a 1:50 y en milimetros a 1:20.
 
+Esa escala se persiste en disco (mismo criterio que autocad_client.PORT_FILE
+para el puerto del plugin): vive en un global de proceso, y si el servidor
+MCP se reinicia a mitad de sesion (reconectar para levantar una tool nueva,
+por ejemplo) ese global se perdia en silencio -create_dimension_chain(scale=0)
+caia al default de 1:100 aunque la lamina activa fuera 1:25, sin ningun error
+que lo avisara. Guardarlo en archivo hace que un proceso nuevo arranque con
+la ultima escala registrada en vez de con un default que puede no ser el de
+la lamina activa.
+
 Unidades: las del modelo. Nada de esto habla con AutoCAD.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 # Franjas ocupadas al margen del dibujo. Cada una es un bounding box mas una
@@ -27,10 +37,26 @@ from typing import Any, Optional
 # cuando algo no entra.
 OCCUPIED: list[dict[str, Any]] = []
 
+# Mismo directorio que usa autocad_client.PORT_FILE para el puerto del
+# plugin: un lugar por maquina, no por proceso.
+_SCALE_FILE = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "AutoCadMcp", "scale")
+
+
+def _leer_escala_persistida() -> float:
+    try:
+        with open(_SCALE_FILE, encoding="utf-8") as fh:
+            valor = float(fh.read().strip())
+            return valor if valor > 0 else 0.1
+    except (OSError, ValueError):
+        return 0.1
+
+
 # Unidades del modelo por milimetro de papel. Es el mismo numero que
 # create_sheet devuelve como unitsPerPaperMm y que DIMSCALE espera: dibujando
-# en metros a 1:50, 1 mm de papel son 0.05 unidades.
-_UNITS_PER_PAPER_MM = [0.1]
+# en metros a 1:50, 1 mm de papel son 0.05 unidades. Arranca con lo ultimo
+# que haya quedado persistido (ver _SCALE_FILE), no siempre con el default.
+_UNITS_PER_PAPER_MM = [_leer_escala_persistida()]
 
 SIDES = ("bottom", "top", "left", "right")
 
@@ -67,6 +93,14 @@ def set_scale(units_per_paper_mm: float) -> None:
     if units_per_paper_mm <= 0:
         raise ValueError("units_per_paper_mm tiene que ser > 0.")
     _UNITS_PER_PAPER_MM[0] = float(units_per_paper_mm)
+    try:
+        os.makedirs(os.path.dirname(_SCALE_FILE), exist_ok=True)
+        with open(_SCALE_FILE, "w", encoding="utf-8") as fh:
+            fh.write(repr(_UNITS_PER_PAPER_MM[0]))
+    except OSError:
+        # Que no se pueda persistir no rompe la corrida actual -el global en
+        # memoria ya quedo bien, solo no sobrevive a un reinicio del proceso.
+        pass
 
 
 def units_per_paper_mm() -> float:
@@ -168,6 +202,21 @@ def free_offset(side: str, reference: float, along_min: float, along_max: float,
 # quedar entera del otro lado sin tocarlo, que es peor- hay que mirar si el
 # segmento del elemento a su rotulo lo atraviesa.
 PREFIJOS_BARRERA = ("muro",)
+
+# Mismo criterio: create_text/create_mtext/create_leader se auto-registran
+# con el prefijo "texto:" (ver server.py), y place_labels con "rotulo " (ver
+# annotation.py) -- entre los dos, check_annotations puede revisar CUALQUIER
+# texto sin que quien dibuja se acuerde de pasarlo en 'items'. Si alguien
+# ubica un texto a mano en vez de con place_labels, igual queda atrapado acá:
+# no depende de que el agente que dibuja haya leido CLAUDE.md, el aviso sale
+# del propio dato ya registrado.
+PREFIJO_TEXTO = "texto:"
+PREFIJOS_TEXTO = ("texto:", "rotulo ")
+
+
+def text_footprints() -> list[dict[str, Any]]:
+    """Los textos que se registraron solos. Ver PREFIJOS_TEXTO."""
+    return [h for h in FOOTPRINTS if str(h.get("what", "")).startswith(PREFIJOS_TEXTO)]
 
 
 def barriers(extra: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:

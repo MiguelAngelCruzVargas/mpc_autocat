@@ -234,6 +234,75 @@ def test_el_preview_dibuja_las_cotas() -> None:
           f"{len(lineas)} lineas")
 
 
+def test_spanmismatch_solo_si_se_solapan() -> None:
+    """Dos cadenas 'bottom' que miden el MISMO tramo con distinto total tienen
+    que avisar -- pero dos laminas separadas (una barda a x=0..30, su detalle
+    a x=100..103, mismo espacio modelo con origin_x corrido) no, porque no
+    estan midiendo lo mismo. Antes de la correccion, compartir el lado
+    alcanzaba para el aviso sin importar la distancia."""
+    limpiar()
+    ann.create_dimension_chain([0.0, 9.0], "bottom", 0.0)
+    solapada = ann.create_dimension_chain([0.15, 9.30], "bottom", 0.0)
+    check("avisa cuando el mismo tramo no cierra", "spanMismatch" in solapada,
+          str(solapada.get("warning")))
+
+    limpiar()
+    ann.create_dimension_chain([0.0, 9.0], "bottom", 0.0)
+    lejana = ann.create_dimension_chain([100.0, 103.0], "bottom", -0.2)
+    check("no avisa entre laminas separadas sin relacion",
+          "spanMismatch" not in lejana, str(lejana.get("warning")))
+
+
+def test_create_table_avisa_si_tapa_una_ilustracion() -> None:
+    """El bug reportado: la tabla de especificaciones tapando el detalle de
+    castillo/zapata, sin ningun aviso porque create_table no sabia que ahi
+    habia algo dibujado."""
+    limpiar()
+    ilustracion = {"x0": 0.0, "y0": -3.0, "x1": 4.0, "y1": 0.0,
+                  "what": "detalle castillo C-1"}
+    tapada = ann.create_table(2.0, -1.0, [["CASTILLO", "TIPO"], ["C-1", "15x15"]],
+                              [2.0, 2.0], 0.35, 0.20, avoid=[ilustracion])
+    check("avisa el choque", "warning" in tapada, str(tapada))
+    check("nombra la ilustracion", "detalle castillo C-1" in tapada.get("warning", ""),
+          tapada.get("warning", ""))
+
+    limpia = ann.create_table(10.0, -1.0, [["CASTILLO", "TIPO"], ["C-1", "15x15"]],
+                              [2.0, 2.0], 0.35, 0.20, avoid=[ilustracion])
+    check("no inventa un choque cuando no lo hay", "warning" not in limpia,
+          str(limpia))
+
+
+def test_create_table_corta_si_el_texto_no_entra_ni_de_cerca() -> None:
+    """Desborde grave: la tabla NO se dibuja (nada queda en el DWG a medio
+    encimar) y la llamada se corta con un error que dice donde y cuanto
+    falta -- en vez de dibujarla con el texto ya montado y avisarlo recien
+    en 'warning', que es el mismo bug reportado leido tarde."""
+    limpiar()
+    try:
+        ann.create_table(
+            0.0, 0.0,
+            [["CONCEPTO", "MEDICIÓN Y CÁLCULO"],
+             ["Concreto", "11.97 m2 / modulo 0.0251 m2 = 502 pzas"]],
+            [2.0, 1.0], 0.4, 0.25)
+        check("corta con ValueError", False, "no elevo ninguna excepcion")
+    except ValueError as exc:
+        check("el mensaje explica el desborde",
+              "no entra" in str(exc) or "columna" in str(exc), str(exc))
+    check("no dibuja nada de la tabla", not preview.DRAWN, str(preview.DRAWN))
+
+
+def test_create_table_avisa_desborde_leve_sin_cortar() -> None:
+    """Un desborde chico -- el texto se pasa un poco de su columna, pero no
+    30% ni nada parecido -- sigue dibujandose con el aviso en 'warning' en
+    vez de cortar la llamada: frenar por un margen minimo molesta mas de lo
+    que ayuda."""
+    limpiar()
+    r = ann.create_table(0.0, 0.0, [["CASTILLO", "TIPO"], ["C-1", "15x15 cm"]],
+                         [1.0, 0.975], 0.35, 0.15)
+    check("dibuja la tabla igual", bool(preview.DRAWN), "no dibujo nada")
+    check("avisa el desborde leve", "warning" in r, str(r))
+
+
 def main() -> int:
     for fn in [test_cadena_apila_a_8mm, test_total_va_un_nivel_afuera,
                test_burbujas_salen_afuera_de_las_cotas,
@@ -244,7 +313,11 @@ def main() -> int:
                test_tramo_apretado_avisa,
                test_offset_a_mano_se_respeta_y_se_reserva,
                test_check_annotations_detecta_lo_puesto_a_mano,
-               test_errores_claros, test_el_preview_dibuja_las_cotas]:
+               test_errores_claros, test_el_preview_dibuja_las_cotas,
+               test_spanmismatch_solo_si_se_solapan,
+               test_create_table_avisa_si_tapa_una_ilustracion,
+               test_create_table_corta_si_el_texto_no_entra_ni_de_cerca,
+               test_create_table_avisa_desborde_leve_sin_cortar]:
         print(fn.__name__)
         fn()
 

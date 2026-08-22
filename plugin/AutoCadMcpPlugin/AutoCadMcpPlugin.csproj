@@ -21,6 +21,10 @@
     <PackageReference Include="AutoCAD-2022.Net.Base" Version="1.0.0" ExcludeAssets="runtime" />
     <!-- System.Text.Json no viene con net48, hay que traerlo por NuGet. -->
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <!-- Application.DoEvents() para bombear mensajes durante el plot (ver
+         PlotHelper.cs) — ya está cargada en el proceso de acad.exe, esto
+         solo trae la referencia de compilación. -->
+    <Reference Include="System.Windows.Forms" />
   </ItemGroup>
 
   <!-- AutoCAD 2025+ (.NET 8) -->

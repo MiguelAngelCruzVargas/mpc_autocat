@@ -83,6 +83,105 @@ namespace AutoCadMcpPlugin.Commands
         }
 
         /// <summary>
+        /// Abre un DWG del disco y lo deja activo.
+        ///
+        /// Hasta que existió esto, todo el MCP asumía que alguien ya había
+        /// abierto el dibujo a mano en AutoCAD: se podía guardar, plotear y
+        /// exportar, pero no abrir. Corregir un plano entregado obligaba a ir
+        /// a la ventana de AutoCAD.
+        ///
+        /// OJO: corre SIN el lock del documento (ver CommandDispatcher).
+        /// Abrir un dibujo teniendo tomado el lock de otro tira eLockViolation.
+        ///
+        /// params: path (ruta al .dwg), readOnly (opcional, false por defecto)
+        /// </summary>
+        public static JsonObject Open(Document doc, JsonObject pars)
+        {
+            string path = pars["path"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Falta 'path': la ruta del .dwg a abrir.");
+
+            path = Path.GetFullPath(path);
+            if (!File.Exists(path))
+                throw new FileNotFoundException(
+                    $"No existe el archivo '{path}'. Pasá la ruta completa al .dwg.");
+
+            bool readOnly = pars["readOnly"]?.GetValue<bool>() ?? false;
+            var dm = Application.DocumentManager;
+
+            // Si ya está abierto, AutoCAD no lo abre dos veces: se activa el
+            // que hay. Reabrirlo perdería los cambios sin guardar.
+            foreach (Document d in dm)
+            {
+                if (string.Equals(Path.GetFullPath(d.Name), path,
+                                  StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!ReferenceEquals(d, dm.MdiActiveDocument))
+                        dm.MdiActiveDocument = d;
+                    return new JsonObject
+                    {
+                        ["active"] = Path.GetFileName(d.Name),
+                        ["fullPath"] = d.Name,
+                        ["alreadyOpen"] = true,
+                        ["isReadOnly"] = d.IsReadOnly
+                    };
+                }
+            }
+
+            Document abierto = dm.Open(path, readOnly);
+            if (abierto == null)
+                throw new InvalidOperationException(
+                    $"AutoCAD no pudo abrir '{path}'. ¿Está en uso por otro programa?");
+
+            dm.MdiActiveDocument = abierto;
+            return new JsonObject
+            {
+                ["active"] = Path.GetFileName(abierto.Name),
+                ["fullPath"] = abierto.Name,
+                ["alreadyOpen"] = false,
+                ["isReadOnly"] = abierto.IsReadOnly
+            };
+        }
+
+        /// <summary>
+        /// Dibujo nuevo a partir de una plantilla, y lo deja activo.
+        ///
+        /// Igual que Open: corre SIN el lock del documento.
+        ///
+        /// params: template (opcional, .dwt; por defecto la de AutoCAD)
+        /// </summary>
+        public static JsonObject New(Document doc, JsonObject pars)
+        {
+            string template = pars["template"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(template))
+            {
+                template = Path.GetFullPath(template);
+                if (!File.Exists(template))
+                    throw new FileNotFoundException(
+                        $"No existe la plantilla '{template}'.");
+            }
+            else
+            {
+                // "" = la plantilla por defecto de AutoCAD (la de QNEW).
+                template = "";
+            }
+
+            var dm = Application.DocumentManager;
+            Document nuevo = dm.Add(template);
+            if (nuevo == null)
+                throw new InvalidOperationException(
+                    "AutoCAD no pudo crear el dibujo nuevo.");
+
+            dm.MdiActiveDocument = nuevo;
+            return new JsonObject
+            {
+                ["active"] = Path.GetFileName(nuevo.Name),
+                ["fullPath"] = nuevo.Name,
+                ["template"] = string.IsNullOrEmpty(template) ? "(default)" : template
+            };
+        }
+
+        /// <summary>
         /// Chequeo de salud: confirma que el plugin responde y sobre qué dibujo
         /// está parado. El cliente abre una conexión nueva por llamada, así que
         /// esto es lo que hace las veces de "reconectar".
@@ -115,6 +214,6 @@ namespace AutoCadMcpPlugin.Commands
     /// </summary>
     public static class PluginInfo
     {
-        public const string Version = "0.3.0";
+        public const string Version = "0.4.0";
     }
 }

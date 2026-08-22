@@ -466,3 +466,203 @@ def _letter(index: int) -> str:
         index, rem = divmod(index - 1, 26)
         label = chr(ord("A") + rem) + label
     return label
+
+
+# ------------------------------------------------------------- escaleras
+
+LAYER_STAIRS = "ESCALERAS"
+LW_STAIRS = 30       # contorno visto: escalones, zanca (25-35 de la tabla)
+LW_STAIRS_AUX = 18   # baranda, flecha de sentido, niveles (13-18 de la tabla)
+
+# Regla de Blondel: 2 contrahuellas + 1 huella tiene que caer en este rango
+# para que el paso sea cómodo -ni se acorta (escalera parada, insegura) ni se
+# alarga de más (escalera tendida, cansadora). Referencia universal de diseño
+# de escaleras, no un criterio propio de esta tool.
+BLONDEL_MIN = 0.60
+BLONDEL_MAX = 0.64
+
+RISER_MIN = 0.13   # por debajo, deja de sentirse como escalón
+RISER_MAX = 0.20   # por encima, incómodo/inseguro en uso residencial
+TREAD_MIN = 0.24   # por debajo, no entra el pie apoyado
+
+
+def _bbox(points: list[Point]) -> tuple[float, float, float, float]:
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _arrowhead(tip: Point, dirv: Point, size: float, layer: str,
+              lineweight: int) -> list[str]:
+    """Punta de flecha SÓLIDA (triángulo relleno) con el vértice en 'tip',
+    apuntando en la dirección 'dirv'. Mismo lenguaje visual que ya usa
+    create_flow_arrow para el sentido de escurrimiento en obra vial."""
+    perp = (-dirv[1], dirv[0])
+    back = (tip[0] - dirv[0] * size, tip[1] - dirv[1] * size)
+    p1 = (back[0] + perp[0] * size * 0.4, back[1] + perp[1] * size * 0.4)
+    p2 = (back[0] - perp[0] * size * 0.4, back[1] - perp[1] * size * 0.4)
+    tri = _polyline([tip, p1, p2], layer, lineweight, closed=True)
+    fill = acad.call("create_hatch", {
+        "boundaryHandle": tri, "pattern": "SOLID", "scale": 1.0,
+        "angleDeg": 0.0, "layer": layer, "lineweight": lineweight,
+        "colorIndex": None,
+    })
+    return [tri, fill["handle"]]
+
+
+def create_stairs(
+    start_x: float, start_y: float,
+    total_rise: float,
+    width: float = 1.00,
+    tread: float = 0.28,
+    riser: float = 0.17,
+    direction_deg: float = 90.0,
+    view: str = "planta",
+    handrail: bool = True,
+    handrail_offset: float = 0.05,
+    bottom_level_label: str = "N.P.T. +0.00",
+    top_level_label: Optional[str] = None,
+    layer: str = LAYER_STAIRS,
+    lineweight: int = LW_STAIRS,
+) -> dict[str, Any]:
+    """Escalera de un tramo recto, en planta o en corte, con la cantidad de
+    escalones resuelta por la fórmula de Blondel -no a ojo, no copiada de
+    otro plano.
+
+    view='planta': el contorno del tramo (dos zancas), cada huella, la
+    baranda opcional y la flecha de sentido con el rótulo "SUBE" -para eso
+    hay que rotular el resultado con place_labels, esta tool deja el punto
+    en 'upArrowTip'.
+    view='corte': el perfil en zigzag (contrahuella + huella de cada
+    escalón) más los niveles de piso terminado, abajo y arriba.
+
+    La cantidad de escalones sale de dividir 'total_rise' por 'riser'
+    (redondeado al entero más cercano) y RECALCULAR la contrahuella real
+    para que el reparto sea exacto -17 pasos de 16.47cm, no 16 de 17cm y uno
+    suelto de 8cm-. Se valida contra la regla de Blondel (2×contrahuella +
+    huella entre 0.60 y 0.64m): si no cumple, se avisa con qué huella sí
+    cumple en vez de dibujar una escalera incómoda o insegura. 'tread' y la
+    contrahuella real resultante también se validan contra los mínimos de
+    uso (contrahuella 0.13-0.20m, huella >= 0.24m).
+
+    No arma tramos con descanso (en L o en U): un solo tramo recto de
+    start_x,start_y en la dirección 'direction_deg'. Para una escalera que
+    dobla, son dos llamadas -una por tramo- con el descanso dibujado aparte."""
+    if total_rise <= 0:
+        raise ValueError("total_rise tiene que ser > 0.")
+    if width <= 0:
+        raise ValueError("width tiene que ser > 0.")
+    if tread <= 0 or riser <= 0:
+        raise ValueError("tread y riser tienen que ser > 0.")
+    if tread < TREAD_MIN - 1e-6:
+        raise ValueError(
+            f"tread={tread:g} es menor que el mínimo usable "
+            f"({TREAD_MIN:g}m): no entra el pie apoyado en el escalón.")
+    if view not in ("planta", "corte"):
+        raise ValueError(f"view tiene que ser 'planta' o 'corte', no {view!r}.")
+
+    n_risers = max(round(total_rise / riser), 1)
+    if n_risers < 2:
+        raise ValueError(
+            f"total_rise={total_rise:g} con riser={riser:g} da {n_risers} "
+            "escalón(es): muy poco para una escalera, revisá las unidades.")
+    riser_real = total_rise / n_risers
+    n_treads = n_risers - 1
+    total_run = n_treads * tread
+
+    if not (RISER_MIN - 1e-6 <= riser_real <= RISER_MAX + 1e-6):
+        raise ValueError(
+            f"La contrahuella real da {riser_real * 100:.1f}cm ({n_risers} "
+            f"escalones para salvar {total_rise:g}m) -fuera del rango usable "
+            f"{RISER_MIN * 100:.0f}-{RISER_MAX * 100:.0f}cm. Ajustá 'riser' "
+            "para que total_rise/riser dé una cantidad de escalones distinta.")
+
+    blondel = 2 * riser_real + tread
+    if not (BLONDEL_MIN - 1e-6 <= blondel <= BLONDEL_MAX + 1e-6):
+        tread_sugerido = (BLONDEL_MIN + BLONDEL_MAX) / 2.0 - 2 * riser_real
+        raise ValueError(
+            f"2×contrahuella + huella = {blondel * 100:.1f}cm, fuera de la "
+            f"regla de Blondel ({BLONDEL_MIN * 100:.0f}-{BLONDEL_MAX * 100:.0f}cm "
+            f"cómodo). Con contrahuella={riser_real * 100:.1f}cm probá una "
+            f"huella cerca de {tread_sugerido * 100:.1f}cm.")
+
+    _ensure_layer(layer, 7, lineweight)
+
+    ang = math.radians(direction_deg)
+    dirv = (math.cos(ang), math.sin(ang))
+    perp = (-dirv[1], dirv[0])
+
+    def along(d: float, off: float = 0.0) -> Point:
+        return (start_x + dirv[0] * d + perp[0] * off,
+                start_y + dirv[1] * d + perp[1] * off)
+
+    handles: list[str] = []
+    half = width / 2.0
+    formula = (f"{n_risers} CH x {riser_real * 100:.1f}cm = {total_rise:.2f}m ; "
+              f"{n_treads} H x {tread * 100:.0f}cm = {total_run:.2f}m")
+
+    if view == "planta":
+        handles.append(_line(along(0, half), along(total_run, half), layer, lineweight))
+        handles.append(_line(along(0, -half), along(total_run, -half), layer, lineweight))
+        for i in range(n_treads + 1):
+            d = i * tread
+            handles.append(_line(along(d, half), along(d, -half), layer, lineweight))
+
+        space.track(*_bbox([along(0, half), along(0, -half),
+                            along(total_run, half), along(total_run, -half)]),
+                    "escalera")
+
+        if handrail:
+            r_off = half - handrail_offset
+            handles.append(_line(along(0, r_off), along(total_run, r_off),
+                                 layer, LW_STAIRS_AUX))
+
+        arrow_tail = along(total_run * 0.20)
+        arrow_tip = along(total_run * 0.75)
+        handles.append(_line(arrow_tail, arrow_tip, layer, LW_STAIRS_AUX))
+        handles.extend(_arrowhead(arrow_tip, dirv, width * 0.12, layer, LW_STAIRS_AUX))
+
+        extra = {"upArrowTip": arrow_tip, "upArrowTail": arrow_tail,
+                 "startEdge": [along(0, half), along(0, -half)],
+                 "endEdge": [along(total_run, half), along(total_run, -half)]}
+    else:
+        pts: list[Point] = [(start_x, start_y)]
+        x, y = start_x, start_y
+        for i in range(n_risers):
+            y += riser_real
+            pts.append((x, y))
+            if i < n_treads:
+                x += tread
+                pts.append((x, y))
+        handles.append(_polyline(pts, layer, lineweight, closed=False,
+                                 track="escalera (corte)"))
+
+        margin = tread * 1.5
+        top_y = start_y + total_rise
+        handles.append(_line((start_x - margin, start_y),
+                             (start_x + total_run + margin, start_y),
+                             layer, LW_STAIRS_AUX))
+        handles.append(_line((start_x - margin, top_y),
+                             (start_x + total_run + margin, top_y),
+                             layer, LW_STAIRS_AUX))
+
+        extra = {
+            "bottomLevel": {"x": start_x, "y": start_y, "label": bottom_level_label},
+            "topLevel": {"x": start_x + total_run, "y": top_y,
+                        "label": top_level_label or f"N.P.T. +{total_rise:.2f}"},
+            "profile": pts,
+        }
+
+    return {
+        "handles": handles,
+        "view": view,
+        "steps": n_risers,
+        "treads": n_treads,
+        "riser": round(riser_real, 4),
+        "tread": tread,
+        "totalRun": round(total_run, 4),
+        "totalRise": total_rise,
+        "blondel": round(blondel, 4),
+        "formula": formula,
+        **extra,
+    }

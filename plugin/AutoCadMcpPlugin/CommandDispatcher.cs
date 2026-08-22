@@ -60,6 +60,16 @@ namespace AutoCadMcpPlugin
             return int.TryParse(raw, out var parsed) && parsed > 0 ? parsed : 60;
         }
 
+        /// <summary>
+        /// Comandos que NO pueden correr con el documento bloqueado, porque
+        /// cambian cual es el documento activo. AutoCAD tira eLockViolation
+        /// si se abre o se crea un dibujo teniendo tomado el lock de otro.
+        /// </summary>
+        private static bool RunsUnlocked(string cmd)
+        {
+            return cmd == "open_document" || cmd == "new_document";
+        }
+
         private static JsonObject RunOnDocumentThread(string cmd, JsonObject pars)
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
@@ -77,6 +87,15 @@ namespace AutoCadMcpPlugin
             {
                 try
                 {
+                    if (RunsUnlocked(cmd))
+                    {
+                        // Abrir o crear un dibujo con el lock de OTRO tomado
+                        // tira eLockViolation. Estos comandos no tocan la
+                        // Database del documento actual, asi que no lo
+                        // necesitan.
+                        tcs.SetResult(Handlers.Execute(cmd, doc, pars));
+                        return;
+                    }
                     using (doc.LockDocument())
                     {
                         JsonObject r = Handlers.Execute(cmd, doc, pars);

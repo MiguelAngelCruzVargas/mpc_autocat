@@ -174,6 +174,97 @@ def t_offset_polilinea():
     return f"polilinea -> {off['handle']}"
 
 
+def t_mirror_entity():
+    """copy=True deja el original y agrega el reflejo; verifica que se
+    reflejo de verdad comparando los extremos."""
+    line = track(acad.call("create_line", {
+        "x1": BASE_X + 130, "y1": BASE_Y, "z1": 0,
+        "x2": BASE_X + 135, "y2": BASE_Y + 3, "z2": 0,
+        "layer": "PRUEBA", "lineweight": None, "colorIndex": None}))
+    espejo = track(acad.call("mirror_entity", {
+        "handle": line["handle"], "x1": BASE_X + 130, "y1": BASE_Y - 5,
+        "x2": BASE_X + 130, "y2": BASE_Y + 5, "copy": True}))
+    original_sigue = acad.call("get_entity", {"handle": line["handle"]})
+    reflejo = acad.call("get_entity", {"handle": espejo["handle"]})
+    if abs(original_sigue["startPoint"][0] - (BASE_X + 130)) > 1e-6:
+        raise RuntimeError("el original se movio, deberia haber quedado igual")
+    if reflejo["endPoint"][0] >= BASE_X + 130:
+        raise RuntimeError("el reflejo no cruzo el eje de simetria")
+    return f"original {line['handle']} intacto, reflejo -> {espejo['handle']}"
+
+
+def t_array_entity_rectangular():
+    c = track(acad.call("create_circle", {
+        "x": BASE_X + 145, "y": BASE_Y, "z": 0, "radius": 0.5,
+        "layer": "PRUEBA", "lineweight": None, "colorIndex": None}))
+    r = acad.call("array_entity", {
+        "handle": c["handle"], "mode": "rectangular",
+        "rows": 2, "cols": 3, "rowSpacing": 3.0, "colSpacing": 3.0})
+    for h in r["handles"]:
+        track({"handle": h})
+    esperadas = 2 * 3 - 1  # el original ya cuenta como [0,0]
+    if len(r["handles"]) != esperadas:
+        raise RuntimeError(f"esperaba {esperadas} copias, vinieron {len(r['handles'])}")
+    return f"{len(r['handles'])} copias (2x3, original incluido)"
+
+
+def t_array_entity_polar():
+    ln = track(acad.call("create_line", {
+        "x1": BASE_X + 160, "y1": BASE_Y, "z1": 0,
+        "x2": BASE_X + 162, "y2": BASE_Y, "z2": 0,
+        "layer": "PRUEBA", "lineweight": None, "colorIndex": None}))
+    r = acad.call("array_entity", {
+        "handle": ln["handle"], "mode": "polar",
+        "centerX": BASE_X + 160, "centerY": BASE_Y + 5, "count": 4,
+        "angleTotal": 360.0, "rotateItems": True})
+    for h in r["handles"]:
+        track({"handle": h})
+    if len(r["handles"]) != 3:
+        raise RuntimeError(f"esperaba 3 copias (count=4, original incluido), vinieron {len(r['handles'])}")
+    return f"{len(r['handles'])} copias alrededor del centro"
+
+
+def t_find_replace_text():
+    a = track(acad.call("create_text", {
+        "text": "LAMINA A-99 PROVISORIA", "x": BASE_X + 170, "y": BASE_Y,
+        "z": 0, "height": 1.0, "layer": "PRUEBA", "rotationDeg": 0.0,
+        "lineweight": None, "colorIndex": None, "style": None}))
+    b = track(acad.call("create_text", {
+        "text": "VER LAMINA A-99 PROVISORIA EN PLANTA", "x": BASE_X + 170,
+        "y": BASE_Y + 2, "z": 0, "height": 1.0, "layer": "PRUEBA",
+        "rotationDeg": 0.0, "lineweight": None, "colorIndex": None, "style": None}))
+    r = acad.call("find_replace_text", {
+        "find": "A-99 PROVISORIA", "replace": "A-01", "caseSensitive": False})
+    if r["count"] < 2:
+        raise RuntimeError(f"esperaba tocar 2 textos, toco {r['count']}")
+    releido = acad.call("get_entity", {"handle": a["handle"]})
+    if "A-01" not in releido["text"]:
+        raise RuntimeError(f"no se reemplazo: {releido['text']!r}")
+    return f"{r['count']} textos actualizados"
+
+
+def t_xref_attach_list_detach():
+    """Reusa el DWG que t_export_block ya dejo listo (ACAD_TEST_DWG)."""
+    path = os.environ.get("ACAD_TEST_DWG")
+    if not path:
+        raise RuntimeError("sin DWG de prueba: deberia haberlo dejado t_export_block")
+    nombre = f"XREF_PRUEBA_{os.getpid()}"
+    att = track(acad.call("attach_xref", {
+        "path": path, "name": nombre, "x": BASE_X + 190, "y": BASE_Y,
+        "z": 0, "scale": 1.0, "rotationDeg": 0.0, "layer": "PRUEBA",
+        "lineweight": None, "colorIndex": None}))
+    listados = acad.call("list_xrefs", {})
+    nombres = [x["name"] for x in listados["xrefs"]]
+    if nombre not in nombres:
+        raise RuntimeError(f"attach_xref no aparecio en list_xrefs: {nombres}")
+    acad.call("detach_xref", {"name": nombre})
+    listados2 = acad.call("list_xrefs", {})
+    if any(x["name"] == nombre for x in listados2["xrefs"]):
+        raise RuntimeError("detach_xref no lo saco de list_xrefs")
+    created.remove(att["handle"])  # detach ya se lo llevo puesto
+    return f"adjuntado, listado y desprendido: '{nombre}'"
+
+
 def t_define_e_insert_block():
     """define_block captura entidades y insert_block las repite."""
     a = acad.call("create_line", {
@@ -298,6 +389,19 @@ def t_list_styles():
             f"{len(r['dimStyles'])} de cota")
 
 
+def t_check_drawing_hygiene():
+    """No afirma un resultado puntual (el dibujo de prueba cambia todo el
+    tiempo): solo que corre contra AutoCAD real y devuelve la forma esperada.
+    server.acad ES autocad_client (mismo modulo importado), asi que llama al
+    plugin real sin mockear nada."""
+    import server
+    hig = server.check_drawing_hygiene()
+    for campo in ("ok", "emptyLayers", "shxTextStyles", "duplicates", "problems"):
+        if campo not in hig:
+            raise RuntimeError(f"check_drawing_hygiene no devolvio '{campo}'")
+    return f"ok={hig['ok']}, {len(hig['problems'])} problema(s)"
+
+
 def t_layout():
     """Crea el layout de prueba, con nombre unico para poder repetir el test."""
     nombre = f"MCP-PRUEBA-{os.getpid()}"
@@ -347,6 +451,61 @@ def t_viewport_fuera_de_hoja_da_error():
     raise RuntimeError("acepto un viewport que se sale de la hoja")
 
 
+def t_export_pdf():
+    """Exporta el layout de prueba a PDF por API, confirma que el archivo
+    existe y que no dejo cambiado el layout activo (el bug real: AutoCAD
+    exige que el layout ploteado sea el actual, 'eLayoutNotCurrent' si no)."""
+    import tempfile
+    activo_antes = acad.call("list_layouts", {})["current"]
+    out = os.path.join(tempfile.gettempdir(), f"mcp_prueba_layout_{os.getpid()}.pdf")
+    if os.path.exists(out):
+        os.remove(out)
+    r = acad.call("export_pdf", {"layout": LAYOUT["nombre"], "path": out, "device": None})
+    if not os.path.exists(r["path"]) or os.path.getsize(r["path"]) == 0:
+        raise RuntimeError("export_pdf dijo que si pero no hay archivo (o esta vacio)")
+    size = os.path.getsize(r["path"])
+    os.remove(r["path"])
+    activo_despues = acad.call("list_layouts", {})["current"]
+    if activo_despues != activo_antes:
+        raise RuntimeError(
+            f"export_pdf dejo cambiado el layout activo: era '{activo_antes}', "
+            f"quedo '{activo_despues}'")
+    return f"{r['device']} -> {size} bytes, layout activo sin cambios, borrado"
+
+
+def t_capture_viewport():
+    """Foto PNG del espacio activo (lo que este activo en ese momento)."""
+    import tempfile
+    out = os.path.join(tempfile.gettempdir(), f"mcp_prueba_captura_{os.getpid()}.png")
+    if os.path.exists(out):
+        os.remove(out)
+    r = acad.call("capture_viewport", {"path": out, "layout": None})
+    if not os.path.exists(r["path"]) or os.path.getsize(r["path"]) == 0:
+        raise RuntimeError("capture_viewport dijo que si pero no hay archivo (o esta vacio)")
+    size = os.path.getsize(r["path"])
+    os.remove(r["path"])
+    return f"espacio {r['space']} ({r['layout']}) -> {size} bytes, borrado"
+
+
+def t_undo():
+    """Dibuja un circulo, lo deshace, y confirma que ya no esta."""
+    import time
+    r = acad.call("create_circle", {
+        "x": BASE_X + 300, "y": BASE_Y, "z": 0, "radius": 1.0,
+        "layer": "PRUEBA", "lineweight": None, "colorIndex": None})
+    handle = r["handle"]
+    acad.call("undo", {"steps": 1})
+    # SendStringToExecute encola: darle a AutoCAD un margen para procesarlo
+    # antes de confirmar que el circulo ya no esta.
+    for _ in range(20):
+        try:
+            acad.call("get_entity", {"handle": handle})
+        except acad.AutoCadError:
+            return "el circulo desapareció tras el undo"
+        time.sleep(0.25)
+    raise RuntimeError("el circulo sigue estando despues de esperar el undo")
+
+
 def t_list_documents():
     r = acad.call("list_documents", {})
     activos = [d["name"] for d in r["documents"] if d["isActive"]]
@@ -358,6 +517,71 @@ def t_set_active_document():
     activo = next(d for d in r["documents"] if d["isActive"])
     vuelta = acad.call("set_active_document", {"name": activo["name"]})
     return f"reactivar el mismo: changed={vuelta.get('changed')}"
+
+
+def _volver_a(nombre: str) -> None:
+    """Deja activo el dibujo con el que venía corriendo la suite. Todo lo que
+    sigue dibuja sobre el ACTIVO, así que un test que cambia de documento
+    tiene que devolverlo o rompe a los que vienen atrás."""
+    acad.call("set_active_document", {"name": nombre})
+
+
+def t_new_document():
+    """Verifica de paso el fix del lock: abrir o crear un dibujo teniendo
+    tomado el lock de otro tira eLockViolation, por eso open_document y
+    new_document corren fuera del lock (ver CommandDispatcher.RunsUnlocked).
+    Si eso está mal, este test falla con 'eLockViolation'."""
+    antes = acad.call("list_documents", {})
+    original = next(d for d in antes["documents"] if d["isActive"])["name"]
+    try:
+        r = acad.call("new_document", {})
+        if not r.get("active"):
+            raise RuntimeError("new_document no devolvió el dibujo activo")
+        despues = acad.call("list_documents", {})
+        if despues["count"] != antes["count"] + 1:
+            raise RuntimeError(
+                f"esperaba {antes['count'] + 1} dibujos abiertos, "
+                f"hay {despues['count']}")
+        return f"creó {r['active']} (queda abierto, cerralo a mano)"
+    finally:
+        _volver_a(original)
+
+
+def t_open_document():
+    """Abre el DWG que dejó export_block más arriba en esta misma corrida.
+    No inventa una ruta: si el archivo no está, es que falló export_block."""
+    ruta = os.environ.get("ACAD_TEST_DWG")
+    if not ruta or not os.path.exists(ruta):
+        raise RuntimeError(
+            "sin DWG de prueba: este caso va DESPUÉS de export_block, que es "
+            "el que deja ACAD_TEST_DWG. Si export_block falló, arreglá eso.")
+
+    antes = acad.call("list_documents", {})
+    original = next(d for d in antes["documents"] if d["isActive"])["name"]
+    try:
+        r = acad.call("open_document", {"path": ruta, "readOnly": True})
+        if not r.get("isReadOnly"):
+            raise RuntimeError("se pidió readOnly y abrió para escritura")
+
+        # Segunda vez sobre el mismo archivo: NO tiene que reabrirlo, porque
+        # perdería los cambios sin guardar del que ya está abierto.
+        otra = acad.call("open_document", {"path": ruta, "readOnly": True})
+        if not otra.get("alreadyOpen"):
+            raise RuntimeError(
+                "reabrió un dibujo que ya estaba abierto (alreadyOpen=False)")
+        return f"{r['active']} readOnly, y la 2da vez avisó alreadyOpen"
+    finally:
+        _volver_a(original)
+
+
+def t_open_document_inexistente_da_error_claro():
+    try:
+        acad.call("open_document", {"path": "C:/no/existe/jamas_de_los_jamases.dwg"})
+    except acad.AutoCadError as exc:
+        if "no existe" not in str(exc).lower():
+            raise RuntimeError(f"el error no dice que no existe: {exc}")
+        return "avisa que el archivo no existe"
+    raise RuntimeError("abrió un archivo que no existe")
 
 
 # ------------------------------------------------------------------ main
@@ -768,8 +992,13 @@ PRUEBAS = [
     ("offset_entity circulo (ambiguo)", t_offset_circle_ambiguo),
     ("offset_entity arco", t_offset_arc),
     ("offset_entity polilinea", t_offset_polilinea),
+    ("mirror_entity", t_mirror_entity),
+    ("array_entity rectangular", t_array_entity_rectangular),
+    ("array_entity polar", t_array_entity_polar),
+    ("find_replace_text", t_find_replace_text),
     ("define_block + insert_block", t_define_e_insert_block),
     ("export_block a DWG", t_export_block),
+    ("attach_xref + list_xrefs + detach_xref", t_xref_attach_list_detach),
     ("insert_block desde DWG externo", t_insert_block_desde_dwg),
     ("save_drawing", t_save_drawing),
     ("attach_image", t_attach_image),
@@ -781,12 +1010,19 @@ PRUEBAS = [
     ("create_dimension con estilo", t_cota_con_estilo),
     ("estilo inexistente -> error claro", t_estilo_inexistente_da_error_claro),
     ("list_styles", t_list_styles),
+    ("check_drawing_hygiene", t_check_drawing_hygiene),
     ("create_layout", t_layout),
     ("list_layouts", t_list_layouts),
     ("create_viewport", t_viewport),
     ("viewport fuera de hoja -> error", t_viewport_fuera_de_hoja_da_error),
+    ("export_pdf", t_export_pdf),
+    ("capture_viewport", t_capture_viewport),
+    ("undo", t_undo),
     ("list_documents", t_list_documents),
     ("set_active_document", t_set_active_document),
+    ("new_document", t_new_document),
+    ("open_document", t_open_document),
+    ("open_document inexistente -> error", t_open_document_inexistente_da_error_claro),
 
     # --- geometria con arcos ---
     ("polilinea con bulge (arco real)", t_polilinea_con_bulge),

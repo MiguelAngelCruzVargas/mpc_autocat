@@ -28,6 +28,11 @@ LW_BOX = 25
 LW_GRID = 13
 LW_TEXT = 18
 
+# Un texto que necesita más que esto (30% de más) sobre el ancho disponible
+# de su celda no se dibuja: create_table corta con ValueError en vez de
+# dibujar encimado y avisarlo recién en 'warning'.
+OVERFLOW_HARD_RATIO = 1.3
+
 
 def _layer(name: str, color: int = 7, lineweight: int = LW_BOX) -> None:
     # Solo si no existe: ver layers.py.
@@ -83,48 +88,48 @@ def _hatch(handle: str, pattern: str, scale: float, layer: str,
 def create_table(x: float, y: float, rows: list[list[str]],
                  col_widths: list[float], row_height: float,
                  text_height: float, title: str = "",
-                 header: bool = True, layer: str = LAYER_TABLE) -> dict[str, Any]:
+                 header: bool = True, layer: str = LAYER_TABLE,
+                 avoid: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     """Tabla con grilla y texto. (x, y) es la esquina SUPERIOR izquierda.
 
     rows: filas de celdas ya como texto. Si header=True la primera va con la
     línea de abajo más gruesa y el texto centrado.
     col_widths: ancho de cada columna; define cuántas columnas hay.
-    """
+
+    (x, y) es una posición fija: esta tool NO sabe qué más hay dibujado, así
+    que si al lado hay una ilustración (un detalle de castillo, una planta),
+    puede quedar encima sin que nada lo avise -- ese fue justamente el bug
+    reportado: una tabla de especificaciones tapando el detalle y sus
+    nombres encimados. Pasar 'avoid' con la caja de lo que ya está dibujado
+    ([{"x0":.., "y0":.., "x1":.., "y1":.., "what":".."}]) hace que, si la
+    tabla cae encima, se avise en 'warning' en vez de dibujarse en silencio.
+
+    Un texto que no entra en su celda se mide ANTES de dibujar nada. Si el
+    desborde es grande (más de %d%% del ancho disponible) la tabla no se
+    dibuja: se corta con un ValueError, porque dibujarla encimada y avisarlo
+    recién en 'warning' es el mismo bug -- el aviso queda en un campo que
+    hay que acordarse de leer, en vez de frenar la llamada. Un desborde
+    chico (el texto se pasa un poco) sí se dibuja, con el aviso en
+    'warning', porque cortar por un margen mínimo es más molesto que útil.
+    """ % round((OVERFLOW_HARD_RATIO - 1.0) * 100)
     if not rows:
         raise ValueError("La tabla necesita al menos una fila.")
     if not col_widths:
         raise ValueError("Hay que pasar col_widths.")
 
-    _layer(layer)
     total_w = sum(col_widths)
     n = len(rows)
-
     top = y
-    if title:
-        top = y - row_height
-        _rect(x, top, x + total_w, y, layer, LW_BOX)
-        _text(title.upper(), x + total_w / 2.0 - _w(title.upper(), text_height) / 2.0,
-              y - row_height / 2.0 - text_height / 2.0, text_height, layer, LW_TEXT)
-
-    bottom = top - n * row_height
-    _rect(x, bottom, x + total_w, top, layer, LW_BOX)
-
-    # Líneas horizontales entre filas.
-    for i in range(1, n):
-        yy = top - i * row_height
-        _line((x, yy), (x + total_w, yy), layer,
-              LW_BOX if (header and i == 1) else LW_GRID)
-
-    # Verticales entre columnas.
-    cx = x
-    for w in col_widths[:-1]:
-        cx += w
-        _line((cx, bottom), (cx, top), layer, LW_GRID)
-
+    bottom = top - (n + (1 if title else 0)) * row_height
     pad = text_height * 0.5
-    desbordes = []
+
+    # Pre-pasada: medir cada celda contra su columna ANTES de dibujar nada
+    # (ni la grilla ni el texto). 'celdas' guarda lo ya calculado para no
+    # tener que volver a medir (ni a llamar measure_text por RPC) al dibujar.
+    celdas = []
+    desbordes_leves = []
+    desbordes_graves = []
     for i, row in enumerate(rows):
-        cy = top - i * row_height - row_height / 2.0 - text_height / 2.0
         cx = x
         for j, w in enumerate(col_widths):
             cell = str(row[j]) if j < len(row) else ""
@@ -141,23 +146,75 @@ def create_table(x: float, y: float, rows: list[list[str]],
                     ancho_celda = len(cell) * text_height * 0.87
                     disponible = w - pad
                     tx = cx + pad
+                celdas.append((i, j, cell, tx))
                 if ancho_celda > disponible:
-                    desbordes.append(
-                        f"fila {i + 1} col {j + 1} ({cell!r}): necesita "
-                        f"{ancho_celda:.2f} y la columna tiene {disponible:.2f} "
-                        "-- se va a encimar con la de al lado")
-                _text(cell, tx, cy, text_height, layer, LW_TEXT)
+                    msg = (f"fila {i + 1} col {j + 1} ({cell!r}): necesita "
+                           f"{ancho_celda:.2f} y la columna tiene {disponible:.2f}")
+                    if ancho_celda > disponible * OVERFLOW_HARD_RATIO:
+                        desbordes_graves.append(msg)
+                    else:
+                        desbordes_leves.append(
+                            msg + " -- se va a encimar con la de al lado")
             cx += w
+
+    if desbordes_graves:
+        raise ValueError(
+            "La tabla no se dibuja: el texto no entra ni de cerca en su "
+            "columna (agrandá col_widths, acortá el texto o bajá "
+            "text_height). " + "; ".join(desbordes_graves))
+
+    _layer(layer)
+
+    if title:
+        _rect(x, top - row_height, x + total_w, y, layer, LW_BOX)
+        _text(title.upper(), x + total_w / 2.0 - _w(title.upper(), text_height) / 2.0,
+              y - row_height / 2.0 - text_height / 2.0, text_height, layer, LW_TEXT)
+        top = y - row_height
+
+    _rect(x, bottom, x + total_w, top, layer, LW_BOX)
+
+    # Líneas horizontales entre filas.
+    for i in range(1, n):
+        yy = top - i * row_height
+        _line((x, yy), (x + total_w, yy), layer,
+              LW_BOX if (header and i == 1) else LW_GRID)
+
+    # Verticales entre columnas.
+    cx = x
+    for w in col_widths[:-1]:
+        cx += w
+        _line((cx, bottom), (cx, top), layer, LW_GRID)
+
+    for i, j, cell, tx in celdas:
+        cy = top - i * row_height - row_height / 2.0 - text_height / 2.0
+        _text(cell, tx, cy, text_height, layer, LW_TEXT)
 
     resultado = {"x": x, "y": y, "width": total_w,
                  "height": (y - bottom), "rows": n,
                  "bottom": bottom, "right": x + total_w}
-    if desbordes:
+    avisos = list(desbordes_leves)
+    if avoid:
+        propia = (x, bottom, x + total_w, y)
+        for i, item in enumerate(avoid):
+            try:
+                otra = (min(float(item["x0"]), float(item["x1"])),
+                        min(float(item["y0"]), float(item["y1"])),
+                        max(float(item["x0"]), float(item["x1"])),
+                        max(float(item["y0"]), float(item["y1"])))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"avoid[{i}] necesita x0, y0, x1, y1 numericos. ({exc})")
+            dx = min(propia[2], otra[2]) - max(propia[0], otra[0])
+            dy = min(propia[3], otra[3]) - max(propia[1], otra[1])
+            if dx > 1e-6 and dy > 1e-6:
+                que = item.get("what", f"item {i + 1}")
+                avisos.append(f"la tabla se encima con '{que}' en "
+                              f"{dx:.2f} x {dy:.2f}")
+    if avisos:
         # No se corta ni se achica el texto solo: achicar la letra sin avisar
         # es tan malo como dejarla encimada, así que se avisa y quien pidió
-        # la tabla decide si agranda la columna o baja text_height.
-        resultado["warning"] = ("Texto mas ancho que su columna, va a quedar "
-                                 "encimado: " + "; ".join(desbordes))
+        # la tabla decide si agranda la columna, baja text_height o mueve x/y.
+        resultado["warning"] = "; ".join(avisos)
     return resultado
 
 
@@ -494,9 +551,21 @@ def create_dimension_chain(
     # el lector detecta sumando: la de panos da 9.30 y la de ejes 9.00, y no
     # hay forma de saber cual manda. Cada nivel tiene que cerrar contra el
     # mismo total o decir explicitamente que mide otra cosa.
+    #
+    # Pero eso solo importa si las dos cadenas miden el MISMO tramo del
+    # dibujo: con varias laminas en el mismo espacio modelo (una a x=0, la
+    # siguiente a x=100 -- create_sheet con origin_x corrido, ver CLAUDE.md)
+    # dos cadenas "bottom" sin ninguna relacion caian acá por compartir el
+    # lado, aunque una fuera la cota de un plano y la otra la de un detalle
+    # a 100 unidades de distancia. Por eso ademas de compartir lado tienen
+    # que solaparse a lo largo del eje que corresponda (x para bottom/top,
+    # y para left/right) -- si no se solapan, no estan midiendo lo mismo.
     span = round(cortes[-1] - cortes[0], 3)
+    my_lo, my_hi = min(cortes[0], cortes[-1]), max(cortes[0], cortes[-1])
+    a, b_ = ("x0", "x1") if side in ("bottom", "top") else ("y0", "y1")
     otros = [b for b in space.bands()
-             if b.get("what", "").startswith(f"cotas {side}")]
+             if b.get("what", "").startswith(f"cotas {side}")
+             and min(my_hi, b.get(b_, my_hi)) - max(my_lo, b.get(a, my_lo)) > 1e-6]
     desacuerdo = [b for b in otros
                   if abs(round(b.get("span", span), 3) - span) > 1e-3]
 

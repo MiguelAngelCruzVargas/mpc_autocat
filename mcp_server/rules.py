@@ -435,7 +435,12 @@ def check_annotations(items: Optional[list[dict[str, Any]]] = None,
 
     Cada tool de anotacion reserva la franja que ocupa (ver space.py), asi que
     normalmente esto sale limpio solo. Da problemas cuando algo se ubico a
-    mano con create_dimension o create_text eligiendo el offset de memoria.
+    mano con create_dimension o create_text eligiendo el offset de memoria --
+    y ESO se revisa solo, sin depender de que quien dibuja se acuerde de
+    avisarlo: create_text/create_mtext/create_leader se auto-registran (ver
+    space.PREFIJO_TEXTO), así que un texto puesto a mano que pisa a otro
+    texto (o a una cota) queda atrapado acá igual, sea cual sea el agente
+    que lo dibujó y haya leído o no CLAUDE.md.
 
     items: rectangulos extra a verificar SIN dibujarlos, para preguntar antes
     de ubicar algo a mano: [{"x0":.., "y0":.., "x1":.., "y1":.., "what":".."}].
@@ -452,6 +457,7 @@ def check_annotations(items: Optional[list[dict[str, Any]]] = None,
             raise ValueError(
                 f"El item {i + 1} necesita x0, y0, x1, y1 numericos. ({exc})")
 
+    extra.extend(space.text_footprints())
     choques = space.overlaps(extra, tolerance)
     problemas = [{
         "rule": "anotacion encimada",
@@ -752,4 +758,436 @@ def check_footing(axial_load: float,
                    "columna). Chequeo PRELIMINAR -- no reemplaza el "
                    "estudio de mecánica de suelos ni el diseño a flexión "
                    "del armado de la zapata."),
+    }
+
+
+# ------------------------------------------------------ losa entre apoyos
+
+def check_slab_span(span: float,
+                    live_load: float = 400.0,
+                    width: float = 1.0,
+                    concrete_fc: float = 250.0,
+                    steel_fy: float = 4200.0,
+                    concrete_unit_weight: float = 2400.0,
+                    min_thickness: float = 0.12,
+                    cover: float = 0.03,
+                    max_steel_ratio: float = 0.016) -> dict[str, Any]:
+    """Proporción PRELIMINAR de una losa maciza simplemente apoyada entre
+    dos apoyos -- una losa de entrepiso, o el tablero de un puente peatonal
+    entre sus dos estribos, es la misma cuenta: un claro, una carga viva
+    distribuida y un peralte que tiene que aguantar el momento sin pasarse
+    de cuantía de acero.
+
+    span: claro libre entre apoyos, m. live_load: carga viva distribuida,
+    kg/m2 (400 es un valor de referencia para pasarela peatonal; una losa
+    de entrepiso de vivienda va más baja, ~170-250 kg/m2 -- pasá el valor
+    real del proyecto). width: ancho de análisis, m -- por default se
+    analiza una franja de 1.00 m, que es como se diseña cualquier losa en
+    una dirección.
+    concrete_fc / steel_fy: kg/cm2 (250 y 4200 son valores típicos de obra
+    en México -- Ø f'c 250, varilla grado 42). cover: recubrimiento libre
+    al centroide del armado, m.
+    max_steel_ratio: cuantía máxima aceptada antes de engordar el peralte
+    en vez de seguir metiendo acero (0.016 es una referencia práctica, muy
+    por debajo de la cuantía balanceada, para no terminar con una losa
+    sobrearmada).
+
+    Método: peralte semilla por relación claro/peralte (L/20, la
+    proporción usual para no tener que verificar deflexión aparte en una
+    losa ligera), luego momento simple (w·L²/8) y área de acero por
+    flexión simplificada (As = M/(0.9·fy·d), sin el descuento del bloque
+    de compresión -- conservador). Si la cuantía resultante supera
+    max_steel_ratio, engorda el peralte y recalcula. Chequeo PRELIMINAR de
+    proporción -- no reemplaza el diseño a cortante ni la verificación de
+    deflexión de un cálculo estructural completo.
+
+    Devuelve 'ok', 'thickness' y 'mainSteelArea_cm2_per_m' ya verificados
+    contra la cuantía máxima, junto con el momento y la carga total con
+    los que se calculó."""
+    if span <= 0:
+        raise ValueError("span tiene que ser mayor que 0.")
+
+    espesor = max(min_thickness, round(span / 20.0, 2))
+    momento = carga_total = as_req = cuantia = d = 0.0
+    for _ in range(200):
+        peso_propio = espesor * concrete_unit_weight
+        carga_total = peso_propio + live_load
+        momento = carga_total * width * span ** 2 / 8.0
+        d = max(espesor - cover - 0.006, 0.05)
+        # M en kg·cm, d en cm, fy en kg/cm2 -> As en cm2 por franja 'width'.
+        as_req = (momento * 100.0) / (0.9 * steel_fy * (d * 100.0))
+        as_min = 0.0018 * (width * 100.0) * (espesor * 100.0)
+        as_req = max(as_req, as_min)
+        cuantia = as_req / ((width * 100.0) * (d * 100.0))
+        if cuantia <= max_steel_ratio:
+            break
+        espesor = round(espesor + 0.01, 2)
+
+    ok = cuantia <= max_steel_ratio
+    problemas: list[dict[str, str]] = []
+    if not ok:
+        problemas.append({
+            "rule": "cuantia excesiva",
+            "problem": f"Con peralte {espesor:.2f} m la cuantía de acero da "
+                       f"{cuantia:.4f}, por encima del máximo aceptado "
+                       f"({max_steel_ratio:g}).",
+            "fix": "Subí min_thickness para arrancar de un peralte mayor, "
+                   "bajá la carga viva si el uso real lo permite, o "
+                   "considerá vigas de apoyo intermedias si el claro es "
+                   "muy largo para una losa maciza."})
+
+    return {
+        "ok": ok,
+        "problems": problemas,
+        "thickness": espesor,
+        "effectiveDepth_m": round(d, 3),
+        "selfWeight_kg_m2": round(espesor * concrete_unit_weight, 1),
+        "totalLoad_kg_m2": round(carga_total, 1),
+        "moment_kgm": round(momento, 1),
+        "mainSteelArea_cm2_per_m": round(as_req, 2),
+        "steelRatio": round(cuantia, 5),
+        "method": ("Losa maciza simplemente apoyada, peralte semilla por "
+                   "L/20, momento simple w·L²/8, As=M/(0.9·fy·d) sin "
+                   "descuento del bloque de compresión (conservador). "
+                   "Chequeo PRELIMINAR de proporción -- no reemplaza el "
+                   "diseño a cortante ni la verificación de deflexión de "
+                   "un cálculo estructural completo."),
+    }
+
+
+# --------------------------------------------------- viga bajo carga vehicular
+
+# Carga de carril HS20-44 (AASHTO) -- la alternativa que la propia norma
+# permite a mover el camión eje por eje a mano: un uniformemente distribuido
+# más una concentrada para momento. 640 lb/ft y 18000 lb, convertidos.
+HS20_LANE_LOAD_KG_M = 952.5
+HS20_LANE_POINT_KG = 8165.0
+
+
+def check_bridge_girder(span: float,
+                        girder_spacing: float,
+                        girder_width: float = 0.30,
+                        slab_thickness: float = 0.20,
+                        concrete_fc: float = 250.0,
+                        steel_fy: float = 4200.0,
+                        concrete_unit_weight: float = 2400.0,
+                        min_depth: float = 0.5,
+                        cover: float = 0.05,
+                        max_steel_ratio: float = 0.016) -> dict[str, Any]:
+    """Proporción PRELIMINAR de una trabe principal de puente bajo carga
+    vehicular -- un claro de 14 m con tráfico pesado no es la misma cuenta
+    que una losa de entrepiso con w·L²/8 y una carga viva inventada: hace
+    falta un vehículo de diseño real. Esto usa la CARGA DE CARRIL HS20-44
+    de AASHTO (uniforme + concentrada para momento), que es justo la
+    alternativa que la propia norma habilita para no tener que mover el
+    camión eje por eje a mano -- no es un número inventado, es el método
+    estándar para un cálculo preliminar de este tipo.
+
+    span: claro libre entre apoyos, m. girder_spacing: separación entre
+    ejes de trabe, m -- define cuánta losa tributa a CADA trabe y el
+    factor de distribución de la carga viva.
+    girder_width: ancho de la trabe, m. slab_thickness: espesor YA
+    resuelto de la losa de rodadura (con check_slab_span, con la carga de
+    rueda como equivalente uniforme) -- esta función no lo calcula de
+    nuevo, lo toma como dato real de otro chequeo.
+    concrete_fc/steel_fy: kg/cm2. min_depth: peralte mínimo a probar, m.
+
+    Método: factor de distribución DF = girder_spacing/1.83 (AASHTO
+    Standard Specifications, fórmula S/6.0 en pies convertida a metros,
+    para trabes de concreto con losa colada en sitio) reparte la carga de
+    carril a esta trabe; impacto AASHTO I=50/(125+L_pies), tope 0.3;
+    momento de carga muerta con el peso propio de la trabe + la losa
+    tributaria. Peralte semilla L/12 (una trabe cargada necesita más
+    proporción que una losa: L/20 ahí no alcanza), acero por flexión
+    simplificada igual que check_slab_span, engordando el peralte si la
+    cuantía se pasa de max_steel_ratio.
+
+    Chequeo PRELIMINAR de proporción -- no reemplaza el análisis de carga
+    móvil completo (posición crítica de ejes, líneas de influencia), el
+    diseño a cortante, ni la verificación de deflexión de un cálculo
+    estructural completo. Para un claro largo con tráfico pesado real,
+    esto es el punto de partida para pedir el cálculo estructural
+    definitivo, no el reemplazo."""
+    if span <= 0:
+        raise ValueError("span tiene que ser mayor que 0.")
+    if girder_spacing <= 0:
+        raise ValueError("girder_spacing tiene que ser mayor que 0.")
+
+    # Carga viva de carril + impacto, y el reparto a ESTA trabe.
+    m_ll_carril = (HS20_LANE_LOAD_KG_M * span ** 2 / 8.0
+                  + HS20_LANE_POINT_KG * span / 4.0)
+    factor_distribucion = girder_spacing / 1.83
+    l_pies = span * 3.28084
+    impacto = min(0.3, 50.0 / (125.0 + l_pies))
+    m_viva = m_ll_carril * factor_distribucion * (1.0 + impacto)
+
+    peralte = max(min_depth, round(span / 12.0, 2))
+    momento = as_req = cuantia = d = w_muerta = 0.0
+    for _ in range(200):
+        peso_propio = girder_width * peralte * concrete_unit_weight
+        peso_losa_tributaria = slab_thickness * girder_spacing * concrete_unit_weight
+        w_muerta = peso_propio + peso_losa_tributaria
+        m_muerta = w_muerta * span ** 2 / 8.0
+        momento = m_muerta + m_viva
+        d = max(peralte - cover - 0.013, 0.10)
+        as_req = (momento * 100.0) / (0.9 * steel_fy * (d * 100.0))
+        as_min = 0.0018 * (girder_width * 100.0) * (peralte * 100.0)
+        as_req = max(as_req, as_min)
+        cuantia = as_req / ((girder_width * 100.0) * (d * 100.0))
+        if cuantia <= max_steel_ratio:
+            break
+        peralte = round(peralte + 0.05, 2)
+
+    ok = cuantia <= max_steel_ratio
+    problemas: list[dict[str, str]] = []
+    if not ok:
+        problemas.append({
+            "rule": "cuantia excesiva",
+            "problem": f"Con peralte {peralte:.2f} m la cuantía de acero da "
+                       f"{cuantia:.4f}, por encima del máximo aceptado "
+                       f"({max_steel_ratio:g}).",
+            "fix": "Subí min_depth para arrancar de un peralte mayor, "
+                   "agrandá girder_width, o achicá girder_spacing (menos "
+                   "losa tributaria y menor factor de distribución) "
+                   "agregando más trabes."})
+
+    return {
+        "ok": ok,
+        "problems": problemas,
+        "depth": peralte,
+        "effectiveDepth_m": round(d, 3),
+        "distributionFactor": round(factor_distribucion, 3),
+        "impactFactor": round(impacto, 3),
+        "liveLoadMoment_kgm": round(m_viva, 1),
+        "deadLoad_kg_m": round(w_muerta, 1),
+        "totalMoment_kgm": round(momento, 1),
+        "mainSteelArea_cm2": round(as_req, 2),
+        "steelRatio": round(cuantia, 5),
+        "method": ("Carga de carril HS20-44 (AASHTO): "
+                   f"{HS20_LANE_LOAD_KG_M:g} kg/m + {HS20_LANE_POINT_KG:g} "
+                   "kg concentrada para momento, con factor de "
+                   "distribución S/1.83 e impacto AASHTO 50/(125+L_pies). "
+                   "Peralte semilla L/12, acero por flexión simplificada "
+                   "sin descuento del bloque de compresión (conservador). "
+                   "Chequeo PRELIMINAR -- no reemplaza el análisis de "
+                   "carga móvil completo, cortante, ni deflexión."),
+    }
+
+
+# ------------------------------------------------ armadura de techo (reacción)
+
+def check_roof_truss(span: float,
+                     truss_spacing: float,
+                     rise: float,
+                     roof_dead_load: float = 15.0,
+                     roof_live_load: float = 40.0,
+                     wind_uplift: float = 0.0,
+                     dead_load_factor_uplift: float = 0.6) -> dict[str, Any]:
+    """Reacción PRELIMINAR de una armadura de techo a dos aguas sobre sus dos
+    apoyos -- lo que hace falta para poder dimensionar la columna y la
+    zapata que la reciben con `check_column`/`check_footing`, en vez de
+    inventar la carga axial a ojo. Una nave o cancha techada es
+    especialmente sensible al caso que "carga muerta nomás" no contesta:
+    con cubierta liviana (lámina) y mucha área de techo, la succión de
+    viento puede superar al peso propio y la reacción termina siendo hacia
+    ARRIBA -- el apoyo necesita anclaje a tensión, no un simple apoyo.
+
+    span: distancia entre apoyos (columnas), m. truss_spacing: separación
+    entre armaduras (a cuántas armaduras entre sí, m) -- junto con span
+    define el área tributaria de ESTA armadura.
+    rise: altura de cumbrera sobre el apoyo, m -- solo se usa para
+    estimar la fuerza de cuerda equivalente, no cambia la reacción.
+    roof_dead_load: carga muerta de techo, kg/m2 de proyección horizontal
+    (lámina + largueros + peso propio de armadura estimado; 15 kg/m2 es un
+    valor de referencia para lámina calibre 26 sobre estructura ligera).
+    roof_live_load: carga viva de techo (mantenimiento, no acumulación de
+    agua), kg/m2 -- 40 es un valor de referencia para techo inaccesible.
+    wind_uplift: succión de viento, kg/m2 (positivo = hacia arriba); 0.0 no
+    inventa una carga de viento que el proyecto no dio -- si el sitio la
+    tiene, hay que pasarla.
+    dead_load_factor_uplift: factor que reduce la carga muerta en la
+    combinación de succión (0.6, un valor de referencia tipo ASD -- la
+    carga muerta ayuda contra el viento, pero no toda, porque puede haber
+    incertidumbre en el peso propio real).
+
+    Método: viga simplemente apoyada sobre el área tributaria (span x
+    truss_spacing); reacción de gravedad = (muerta+viva)/2 por apoyo;
+    reacción de viento = (0.6·muerta - succión)/2 por apoyo -- si da
+    negativa, hay levantamiento neto. Fuerza de cuerda equivalente:
+    momento máximo (w·L²/8) dividido entre el peralte de la armadura
+    (rise) en el centro del claro, como viga de brazo de palanca
+    constante -- una forma rápida y usual de estimar el orden de magnitud
+    de la fuerza en cuerdas, no un análisis por nudo.
+
+    Chequeo PRELIMINAR -- no reemplaza el análisis de la armadura por
+    nudos ni el estudio de viento del reglamento aplicable (CFE/ASCE)."""
+    if span <= 0:
+        raise ValueError("span tiene que ser mayor que 0.")
+    if truss_spacing <= 0:
+        raise ValueError("truss_spacing tiene que ser mayor que 0.")
+    if rise < 0:
+        raise ValueError("rise no puede ser negativo.")
+
+    area_tributaria = span * truss_spacing
+    carga_muerta_total = roof_dead_load * area_tributaria
+    carga_viva_total = roof_live_load * area_tributaria
+    carga_viento_total = wind_uplift * area_tributaria
+
+    reaccion_gravedad = (carga_muerta_total + carga_viva_total) / 2.0
+    reaccion_viento = (dead_load_factor_uplift * carga_muerta_total
+                       - carga_viento_total) / 2.0
+
+    momento_max = (roof_dead_load + roof_live_load) * truss_spacing * span ** 2 / 8.0
+    fuerza_cuerda = momento_max / max(rise, 0.05)
+
+    ok = reaccion_viento >= 0
+    problemas: list[dict[str, str]] = []
+    if not ok:
+        problemas.append({
+            "rule": "levantamiento por viento",
+            "problem": f"La reacción con succión de viento da "
+                       f"{reaccion_viento:.0f} kg -- negativa: la armadura "
+                       "tira del apoyo hacia arriba en vez de apoyarse.",
+            "fix": "El apoyo necesita anclaje a tensión (placa + pernos con "
+                   "longitud de anclaje verificada al concreto), no alcanza "
+                   "con apoyo por gravedad -- o revisá wind_uplift si el "
+                   "dato no aplica a esta orientación de techo."})
+
+    return {
+        "ok": ok,
+        "problems": problemas,
+        "tributaryArea_m2": round(area_tributaria, 2),
+        "gravityReaction_kg": round(reaccion_gravedad, 1),
+        "windUpliftReaction_kg": round(reaccion_viento, 1),
+        "chordForce_kg": round(fuerza_cuerda, 1),
+        "method": ("Viga simplemente apoyada sobre el área tributaria "
+                   "(span x truss_spacing). Reacción de gravedad "
+                   "(muerta+viva)/2; reacción de viento "
+                   "(0.6·muerta-succión)/2, negativa = levantamiento neto. "
+                   "Fuerza de cuerda equivalente = momento máximo / peralte "
+                   "de armadura, viga de brazo de palanca constante. "
+                   "Chequeo PRELIMINAR -- no reemplaza el análisis por "
+                   "nudos ni el estudio de viento del reglamento aplicable."),
+    }
+
+
+# --------------------------------------------------------------- columna
+
+def check_column(axial_load: float,
+                 height: float,
+                 width: float = 0.30,
+                 depth: float = 0.30,
+                 concrete_fc: float = 200.0,
+                 steel_fy: float = 4200.0,
+                 k_factor: float = 1.0,
+                 steel_ratio: float = 0.01,
+                 phi: float = 0.65,
+                 max_slenderness: float = 22.0,
+                 max_side: Optional[float] = None) -> dict[str, Any]:
+    """Proporción PRELIMINAR de una columna/castillo de concreto bajo carga
+    axial. La pregunta que "30x30, típico" no contesta es si ESA columna,
+    con ESA altura libre, sigue siendo una columna corta o ya es esbelta:
+    una sección que sobra por capacidad pura puede fallar por pandeo antes
+    de aplastarse -- el caso típico de una nave o cancha techada, con
+    columnas de 4 a 6 m sin ningún apoyo intermedio.
+
+    Dos chequeos independientes, y el que gobierna cambia con la esbeltez:
+      - CAPACIDAD AXIAL: Pn de columna estribada con excentricidad mínima
+        (ACI 10.3.6.2, φ=0.65), con la cuantía de acero longitudinal que le
+        pasás (1% mínimo típico si la columna todavía no está armada).
+      - ESBELTEZ: k·lu/r, con r=0.3·lado menor (aproximación ACI para
+        sección rectangular). Si supera max_slenderness (22, el límite
+        usual para tratarla como columna corta sin magnificar momentos),
+        agranda la sección -- esto NO reemplaza el análisis P-Δ de una
+        columna esbelta real.
+
+    axial_load: carga de servicio, kg (sin factorizar; si viene de
+    check_roof_truss, usá 'gravityReaction_kg').
+    height: altura libre sin arriostrar, m (NPT de piso a donde apoya la
+    trabe o armadura -- no la altura total del muro si hay antepecho).
+    width/depth: sección a probar, m. k_factor: factor de longitud
+    efectiva (1.0 = articulada en los dos extremos; en una nave con
+    armadura apoyada simplemente arriba y base empotrada en la zapata,
+    1.0-1.2 es razonable de partida -- subilo si la base no está realmente
+    empotrada).
+    steel_ratio: cuantía de acero longitudinal a probar (0.01 = 1%, el
+    mínimo ACI para columnas). max_side: tope de lado a probar antes de
+    avisar que no cierra.
+
+    Devuelve 'ok' y, si cumple, 'width'/'depth' ya verificados por los dos
+    chequeos, junto con la capacidad axial, la esbeltez y 'method'.
+    Chequeo PRELIMINAR de proporción -- no reemplaza el diseño biaxial ni
+    el análisis de columna esbelta con magnificación de momentos."""
+    if axial_load <= 0:
+        raise ValueError("axial_load tiene que ser mayor que 0.")
+    if height <= 0:
+        raise ValueError("height tiene que ser mayor que 0.")
+
+    lado_w, lado_h = width, depth
+    ag = pn_phi = esbeltez = r = 0.0
+    ok_capacidad = ok_esbeltez = False
+    for _ in range(200):
+        ag = lado_w * lado_h
+        ast = steel_ratio * ag
+        # Pn en kg: f'c y fy en kg/cm2, areas convertidas de m2 a cm2 (x10000).
+        pn = 0.85 * concrete_fc * (ag - ast) * 10000.0 + steel_fy * ast * 10000.0
+        pn_phi = 0.80 * phi * pn  # 0.80: columna estribada, ACI 10.3.6.2
+        ok_capacidad = axial_load <= pn_phi
+
+        lado_menor = min(lado_w, lado_h)
+        r = 0.3 * lado_menor
+        esbeltez = (k_factor * height) / r
+        ok_esbeltez = esbeltez <= max_slenderness
+
+        if ok_capacidad and ok_esbeltez:
+            break
+        # Agranda el lado menor primero: mejora esbeltez y capacidad a la vez.
+        if lado_w <= lado_h:
+            lado_w = round(lado_w + 0.05, 2)
+        else:
+            lado_h = round(lado_h + 0.05, 2)
+        if max_side is not None and max(lado_w, lado_h) >= max_side:
+            lado_w = min(lado_w, max_side)
+            lado_h = min(lado_h, max_side)
+            break
+
+    ok = ok_capacidad and ok_esbeltez
+    problemas: list[dict[str, str]] = []
+    if not ok_capacidad:
+        problemas.append({
+            "rule": "capacidad axial",
+            "problem": f"Con sección {lado_w:.2f}x{lado_h:.2f} m, φPn da "
+                       f"{pn_phi:.0f} kg, por debajo de la carga de "
+                       f"{axial_load:.0f} kg (se llegó al tope max_side).",
+            "fix": "Subí max_side, subí f'c, o subí steel_ratio (hasta el "
+                   "máximo ACI de 8%) si agrandar la sección no es viable."})
+    if not ok_esbeltez:
+        problemas.append({
+            "rule": "esbeltez",
+            "problem": f"k·lu/r da {esbeltez:.1f}, por encima del límite de "
+                       f"columna corta ({max_slenderness:g}) incluso con "
+                       f"sección {lado_w:.2f}x{lado_h:.2f} m (se llegó al "
+                       f"tope max_side).",
+            "fix": "Subí max_side, arriostrá la columna a media altura "
+                   "(reduce height), o pedí el análisis de columna esbelta "
+                   "con magnificación de momentos -- esta función no lo "
+                   "hace."})
+
+    return {
+        "ok": ok,
+        "problems": problemas,
+        "width": lado_w,
+        "depth": lado_h,
+        "axialCapacity_kg": round(pn_phi, 1),
+        "slenderness": round(esbeltez, 1),
+        "radiusOfGyration_m": round(r, 3),
+        "steelArea_cm2": round(steel_ratio * ag * 10000.0, 2),
+        "method": ("Capacidad axial de columna estribada con excentricidad "
+                   "mínima (ACI 10.3.6.2, φ=0.65, "
+                   "Pn=0.85·f'c·(Ag-Ast)+fy·Ast, factor 0.80). Esbeltez "
+                   "k·lu/r con r=0.3·lado menor (aproximación ACI para "
+                   "sección rectangular), límite de columna corta 22. "
+                   "Chequeo PRELIMINAR de proporción -- no reemplaza el "
+                   "diseño biaxial ni el análisis de columna esbelta con "
+                   "magnificación de momentos."),
     }

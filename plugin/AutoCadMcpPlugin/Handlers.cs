@@ -66,6 +66,22 @@ namespace AutoCadMcpPlugin
                     return DeleteEntityCommand.Run(doc, pars);
                 case "offset_entity":
                     return OffsetEntityCommand.Run(doc, pars);
+                case "mirror_entity":
+                    return MirrorEntityCommand.Run(doc, pars);
+                case "array_entity":
+                    return ArrayEntityCommand.Run(doc, pars);
+                case "find_replace_text":
+                    return FindReplaceTextCommand.Run(doc, pars);
+
+                // Referencias externas (xrefs)
+                case "attach_xref":
+                    return XrefCommands.Attach(doc, pars);
+                case "list_xrefs":
+                    return XrefCommands.List(doc, pars);
+                case "detach_xref":
+                    return XrefCommands.Detach(doc, pars);
+                case "reload_xref":
+                    return XrefCommands.Reload(doc, pars);
 
                 // Consulta
                 case "list_entities":
@@ -138,12 +154,20 @@ namespace AutoCadMcpPlugin
                     return SaveCommands.Save(doc, pars);
                 case "export_block":
                     return SaveCommands.ExportBlock(doc, pars);
+                case "export_pdf":
+                    return PlotCommand.Run(doc, pars);
+                case "capture_viewport":
+                    return CaptureViewportCommand.Run(doc, pars);
 
                 // Documentos abiertos
                 case "list_documents":
                     return DocumentCommands.List(doc, pars);
                 case "set_active_document":
                     return DocumentCommands.SetActive(doc, pars);
+                case "open_document":
+                    return DocumentCommands.Open(doc, pars);
+                case "new_document":
+                    return DocumentCommands.New(doc, pars);
                 case "ping":
                     return DocumentCommands.Ping(doc, pars);
 
@@ -152,6 +176,8 @@ namespace AutoCadMcpPlugin
                     return SetDisplayOptionsCommand.Run(doc, pars);
                 case "zoom_extents":
                     return ZoomExtentsCommand.Run(doc, pars);
+                case "undo":
+                    return UndoCommand.Run(doc, pars);
 
                 default:
                     throw new NotSupportedException($"Comando no soportado: '{cmd}'");

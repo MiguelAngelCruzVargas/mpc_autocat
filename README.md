@@ -75,11 +75,18 @@ cd mcp_server
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python test_contract.py   # no necesita AutoCAD: chequea server.py <-> Handlers.cs
-python test_geom.py       # tampoco: geometria de muros (inglete, tramos)
-python test_arch.py       # tampoco: muros, huecos, abatimientos, ejes
+python run_tests.py       # las 25 suites que NO necesitan AutoCAD (~15s)
 python smoke_test.py      # este si: dibuja sobre el dibujo abierto
 python demo_plan.py       # este tambien: plano completo de punta a punta
+```
+
+`run_tests.py` corre cada suite en su propio proceso (varios módulos guardan
+estado de proceso, y un import compartido haría que el resultado dependiera
+del orden). Devuelve 0/1, así que sirve tal cual para un hook de pre-commit:
+
+```powershell
+python run_tests.py --live      # ademas test_live.py, contra AutoCAD abierto
+python run_tests.py -k rebar    # solo los que matcheen
 ```
 
 > **El `.venv` no se copia entre máquinas.** Adentro guarda la ruta absoluta al
@@ -114,6 +121,7 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | | `create_axis_grid` | Ejes estructurales con globos: verticales 1,2,3 y horizontales A,B,C; el eje se estira para que el globo no caiga sobre las cotas |
 | **Validación** | `check_program` / `check_layout` / `check_geometry` / `check_walls` | Que el programa entre en el terreno, que la zonificación cumpla, que los recintos existan y que la muraria cierre — antes de dibujar |
 | | `check_annotations` | Que las cotas, las burbujas y los rótulos no se encimen — el plano como dibujo, después de dibujar |
+| | `check_drawing_hygiene` | Audita el ARCHIVO: capas creadas y sin usar, texto todavía en fuente `.shx`, entidades duplicadas exactas |
 | Geometría | `create_line` | Línea entre dos puntos 3D |
 | | `create_polyline` | Polilínea 2D a partir de una lista de puntos, abierta o cerrada |
 | | `create_circle` | Círculo por centro y radio |
@@ -137,6 +145,10 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | | `list_layers` | Lista capas con sus propiedades |
 | Edición | `move_entity` / `copy_entity` / `rotate_entity` / `scale_entity` / `delete_entity` | Transformaciones básicas sobre una entidad existente, por handle |
 | | `offset_entity` | Curva paralela a otra a una distancia dada (p.ej. guarnición paralela al eje de una calle) |
+| | `mirror_entity` | Espejo geométrico real de una entidad respecto de un eje (planta simétrica, unidad dupla) |
+| | `array_entity` | Arreglo rectangular o polar de copias reales (no un objeto Array asociativo) |
+| | `find_replace_text` | Busca y reemplaza texto en DBText/MText/atributos de todo el espacio activo, de una pasada |
+| Referencias externas | `attach_xref` / `list_xrefs` / `detach_xref` / `reload_xref` | Coordina disciplinas (arquitectura/estructura/instalaciones) como DWGs separados vinculados, no copiados |
 | Consulta | `list_entities` | Lista entidades del espacio modelo (filtro opcional por tipo) |
 | | `get_entity` | Propiedades completas de una entidad por handle |
 | | `calculate_area` | Área de una Polyline cerrada / Region / Circle |
@@ -149,9 +161,14 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | | `set_dim_style` | Estilo de cota con nombre (texto, flechas, decimales, factor de unidades) |
 | | `list_styles` | Lista estilos de texto y cota, marcando los activos |
 | Documentos | `list_documents` / `set_active_document` | Varios dibujos abiertos: lista y elige sobre cuál operar |
+| | `open_document` / `new_document` | Abre un .dwg del disco (o crea uno desde plantilla) y lo deja activo. Es la entrada para corregir un plano ya entregado sin ir a AutoCAD a abrirlo a mano |
 | | `ping` | Confirma que el plugin responde y con qué versión está cargado |
 | Vista | `zoom_extents` | Zoom a extensión completa (stub simple vía línea de comandos) |
 | | `set_display_options` | Activa/desactiva la visualización de grosores (LWDISPLAY) y fija el grosor por defecto (LWDEFAULT) |
+| | `capture_viewport` | Foto PNG del espacio activo (modelo o layout), vía la API de plotting — para poder mirar el resultado, no solo leer números |
+| | `undo` | Deshace las últimas N operaciones del dibujo activo, sin borrar entidad por entidad |
+| Exportación | `export_pdf` | Plotea un layout ya armado a PDF por API, con la configuración que create_layout dejó guardada |
+| | `export_quantities_csv` | Vuelca el resultado de `calculate_quantities` a un `.csv` real, para armar el presupuesto en Excel/Sheets afuera de AutoCAD |
 
 ## La lámina: cajón y rotulación
 
@@ -368,6 +385,11 @@ Ejercita lo que no se puede verificar sin AutoCAD: achurados, leaders, offsets
 en curvas ambiguas, bloques, imágenes raster, splines, layouts, viewports,
 estilos y documentos. Dibuja lejos del origen (x=500) para no pisar tu trabajo.
 
+Los casos de `new_document` / `open_document` dejan dibujos abiertos en
+AutoCAD (no hay comando para cerrarlos, a propósito: descartar cambios sin
+guardar no es algo que deba hacer una tool sin que se lo pidan). Cerralos a
+mano al terminar.
+
 Dos pruebas necesitan archivos que dependen de la máquina y se saltean si no
 están:
 
@@ -380,7 +402,6 @@ $env:ACAD_TEST_IMAGE = "C:\ruta\a\una\imagen.png"
 
 - Cotas por coordenadas (ordenadas), para replanteo.
 - Tablas (cuadro de acabados, cuantificación) como objeto `Table` nativo.
-- Exportar a PDF desde un layout (`PLOT` por API).
 - Bloques dinámicos y atributos multilínea.
 
 ## Notas de diseño
@@ -403,3 +424,12 @@ $env:ACAD_TEST_IMAGE = "C:\ruta\a\una\imagen.png"
   API de AutoCAD desde ahí es justo lo que estamos evitando).
 - **`System.Text.Json` en vez de `Newtonsoft.Json`** en el lado C# para evitar
   choques de versión con el `Newtonsoft.Json` que AutoCAD ya trae cargado.
+- **La escala de la lámina activa se persiste en disco** (`space._SCALE_FILE`,
+  mismo criterio que `autocad_client.PORT_FILE` para el puerto del plugin).
+  `create_sheet` la deja registrada y `create_dimension_chain(scale=0)` la
+  toma sola — pero como vive en un global de proceso, un servidor MCP
+  reiniciado a mitad de sesión (reconectar para levantar una tool nueva, por
+  ejemplo) la perdía en silencio: la próxima cadena de cotas caía al default
+  (1:100) aunque la lámina activa fuera otra escala, sin ningún error que lo
+  avisara. Por eso ahora se persiste: un proceso nuevo arranca leyendo la
+  última escala que quedó registrada, en vez de con el default de fábrica.

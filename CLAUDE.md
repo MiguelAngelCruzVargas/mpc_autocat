@@ -99,7 +99,27 @@ unidades del modelo. Si el terreno mide 40x25m y el área útil da 80.6x51.8,
 entra; si no entra, subí el denominador de escala o el formato — **nunca**
 achiques el dibujo fuera de escala.
 
-## 3. Dibujar adentro del área útil
+## 2.bis Guardar seguido: AutoCAD se puede caer a mitad de sesión
+
+`Drawing1.dwg` (el que arranca sin nombre) vive solo en memoria. Un plano
+entero — casa, escalera, lo que sea — se perdió una vez de golpe por un
+`FATAL ERROR: Unhandled Access Violation` de AutoCAD a mitad de una sesión
+larga: no fue un error de ninguna tool devolviendo algo controlado, fue el
+proceso completo cayéndose, y con él todo lo dibujado sin guardar.
+
+`save_drawing` después de cada bloque grande (la lámina recién creada, los
+muros ya trazados, antes de arrancar la cuantificación) es la única defensa
+real. No hace falta al final de cada tool call — sí conviene en los puntos
+donde perder el trabajo hecho hasta ahí dolería: justo después de
+`create_sheet`, después de cerrar la muraria, antes de un bloque largo de
+cotas o de la tabla de cuantificación.
+
+Un detalle que costó descubrir: `save_drawing()` sin `path` guarda "sobre
+el archivo actual", pero si un `save_drawing(path=...)` anterior le dio
+nombre al dibujo, el siguiente guardado sin `path` puede terminar en la
+ubicación por default de AutoCAD (`Documents\Drawing1.dwg`) en vez de
+pisar ese mismo archivo — pasó en una sesión real. Conviene repetir el
+mismo `path` explícito cada vez, no confiar en que quedó "recordado".
 
 `create_sheet` devuelve dos rectángulos:
 
@@ -109,6 +129,38 @@ achiques el dibujo fuera de escala.
 
 Para varias láminas, repetir `create_sheet` con `origin_x` corrido (p.ej.
 +100 unidades entre hoja y hoja) en lugar de amontonarlas.
+
+## 3. Abrir, crear y cambiar de dibujo
+
+Para **corregir un plano ya entregado** no hace falta ir a AutoCAD a abrirlo:
+`open_document(path=...)` lo abre y lo deja activo. El ciclo completo de
+corrección es `open_document` → `select_entities` sobre la zona a rehacer →
+`delete_entities` → redibujar solo eso → `save_drawing(path=...)`. Tirar el
+plano entero y empezar de cero es casi siempre el camino equivocado.
+
+`new_document(template=...)` arranca un dibujo desde una plantilla propia (el
+`.dwt` de la oficina, con sus capas y estilos ya armados). Nace sin nombre y
+vive solo en memoria: `save_drawing` con `path` explícito antes de dibujar
+nada serio.
+
+`read_only=True` para mirar el plano de otro consultor sin riesgo de pisarlo.
+Pero si lo que hace falta es su geometría **en este** dibujo, eso es
+`attach_xref`, no abrirlo.
+
+**Cambiar de dibujo tira lo cacheado del anterior, y eso importa.** Este
+servidor recuerda cosas que describen UN dibujo: las huellas de mobiliario y
+las franjas de anotación ya ocupadas (lo que hace que `place_labels` no
+encime nada), y qué capas existen. `open_document`, `new_document` y
+`set_active_document` las olvidan a propósito — si no, `place_labels`
+esquivaría una cama que está en el OTRO plano y `set_layer` daría por
+configurada una capa que solo existe allá. Las dos fallas son silenciosas.
+
+La consecuencia práctica: al entrar a un dibujo ya dibujado, lo que hay en él
+**no lo conoce nadie**. Si un rótulo nuevo tiene que esquivar algo que ya
+estaba, pasáselo en `obstacles`. Y la escala NO se resetea (es un número por
+lámina, no por dibujo): si esta lámina es otra escala, `create_sheet` antes de
+anotar, o el texto sale del tamaño de la lámina anterior. Los `warnings` que
+devuelven esas tres tools lo recuerdan.
 
 ## 4. Muros: siempre `create_walls`
 
@@ -316,6 +368,15 @@ pasale el nombre a la tool: las tools solo aplican su color y grosor cuando
 tienen que crear la capa, nunca pisan una ya configurada. `create_road` recibe
 `axis_layer`, `pavement_layer`, `curb_layer` y `sidewalk_layer` justo para eso.
 
+**Coordinar disciplinas: xref, no copiar y pegar.** Cuando arquitectura,
+estructura e instalaciones son archivos separados, la base se vincula con
+`attach_xref` en vez de copiar su geometría a este DWG — `insert_block` con
+`path` deja un bloque congelado en el momento de insertarlo; un xref se
+actualiza con `reload_xref` cuando el otro consultor cambia su archivo.
+`list_xrefs` antes de dar un plano por terminado, para saber si alguna
+referencia quedó `Unresolved`/`FileNotFound` (rutas relativas que no
+resuelven en la máquina de destino, típicamente).
+
 ## 8. Cotas: `create_dimension_chain`, nunca cota por cota
 
 Una planta se acota en **cadenas**, un nivel por tipo de dato: los huecos, los
@@ -367,13 +428,39 @@ necesariamente el que mide el plano. `calculate_quantities` mide con
 zapatas, paños de muro) y aplica la fórmula de obra sobre esa medición, no
 sobre un número recordado.
 
+No es un catálogo cerrado de materiales — en obra real hay miles, y esta
+tool no puede (ni debe) enumerarlos todos. Lo que sabe hacer son las
+operaciones geométricas que cualquier material comparte: área×profundidad,
+perímetro×longitud, módulo de pieza+merma. `area_finish` en particular
+recibe `material` como texto libre (aplanado, piso, boquilla, lo que sea
+del proyecto) y agrupa el total bajo ese nombre — el listado de conceptos lo
+define la obra, no el código.
+
+Tipos disponibles: `concrete_volume`, `brick_count`, `mortar_volume`,
+`steel_weight` (varilla longitudinal + estribos + malla electrosoldada, ya
+sumables en un mismo item), `earthwork` (excavación/relleno), `formwork`
+(cimbra, por cara dibujada o por perímetro de sección) y `area_finish`
+(aplanados, piso, pintura, impermeabilizante...). Todos aceptan `waste_pct`
+(merma real de obra: desperdicio de colado, retazos de corte, sobrante de
+mezcla) — por default 0.0, nunca se inventa una merma que el proyecto no
+pidió.
+
 Lo único que el dibujo no muestra a escala es el **acero**: una varilla en
 corte es un círculo esquemático de ~1cm, no la sección real. Ahí se toma la
 especificación que ya quedó anotada en el plano (varillas, diámetro,
 separación de estribos) — sigue siendo un dato del proyecto, no un supuesto
 de la tool. Para el perímetro del estribo, pasale `stirrup_handle`: mide el
 `length` real del estribo ya dibujado (Polyline cerrada) en vez de
-recalcularlo a mano.
+recalcularlo a mano. Lo mismo para la cimbra por sección: `section_handle`
+mide el perímetro real de la sección ya dibujada. Y si la varilla
+longitudinal supera el largo comercial (`commercial_length`), el traslape
+se calcula en diámetros reales de barra (`lap_diam_factor`, típico 40-60),
+no se asume una pieza continua que no existe en obra.
+
+El relleno de una excavación (`earthwork` con `mode="backfill"`) se calcula
+por diferencia real: volumen de la excavación menos `structure_volume`, el
+volumen YA calculado en otro item de `concrete_volume` que ocupa el mismo
+hueco — no se recalcula aparte, se pasa el número real.
 
 `create_quantities_table` dibuja el resultado tal cual — no vuelve a
 calcular nada — con una columna que muestra CÓMO se llegó a cada número
@@ -399,9 +486,28 @@ el proyecto, este mira el plano **como dibujo** — que las cotas, las burbujas
 y los rótulos no se encimen. Sale limpio solo mientras se use
 `create_dimension_chain`; da problemas cuando algo se ubicó a mano.
 
+`create_table` es de lo que se ubica a mano: no sabe qué más hay dibujado, así
+que un cuadro de especificaciones al lado de una ilustración (un detalle de
+castillo, una planta) puede terminar tapándola sin ningún aviso — pasó de
+verdad, con los nombres de la tabla encimados sobre el dibujo del detalle.
+Si ya se conoce la caja de esa ilustración, pasarla en `avoid` y `create_table`
+avisa en `warning` si la tabla cae encima, en vez de dibujarse en silencio.
+
 Después de dibujar, `zoom_extents` y `get_drawing_info` para confirmar la
 cantidad de entidades. Si se creó geometría cerrada, `calculate_area` sobre las
 polilíneas para chequear que las medidas dan lo que se pidió.
+
+Los `check_*` validan números y reglas, pero no reemplazan mirar el dibujo:
+`capture_viewport` saca una foto PNG del espacio activo (o de un layout
+puntual) para revisar visualmente que nada quedó encimado o fuera de lugar
+antes de decir que un plano está terminado. Si una serie de llamadas salió
+mal, `undo` deshace las últimas N sin tener que borrar entidad por entidad.
+
+`check_drawing_hygiene` cierra otro ángulo: no valida el proyecto ni el
+dibujo como plano, valida el ARCHIVO — capas creadas y nunca usadas, texto
+que quedó en una fuente `.shx` (no mapea acentos), entidades duplicadas
+exactas superpuestas. Correlo antes de entregar un DWG, no solo antes de
+plotear.
 
 ## Iterar el diseño del rótulo sin AutoCAD
 
@@ -414,10 +520,12 @@ mano en AutoCAD.
 El preview dibuja también las cotas (las descompone en sus líneas y su
 número), así que el encimado se ve ahí y no recién al abrir el DWG.
 
-Antes de dar por buena cualquier cambio en la geometría, correr `test_geom.py`,
-`test_arch.py` y `test_annotation.py` — cubren el inglete de las esquinas, el
-partido de los huecos, que los abatimientos barran 90° y que las cadenas de
-cota y las burbujas no se pisen en ningún orden de dibujo.
+Antes de dar por buena cualquier cambio, correr `python mcp_server/run_tests.py`
+— son las 25 suites que no necesitan AutoCAD, en unos 15 segundos. Cubren el
+inglete de las esquinas, el partido de los huecos, que los abatimientos barran
+90°, que las cadenas de cota y las burbujas no se pisen en ningún orden de
+dibujo, y que cambiar de dibujo no arrastre el estado del anterior. Con AutoCAD
+abierto, `--live` agrega `test_live.py`.
 
 ## Espacio papel vs espacio modelo
 
@@ -428,6 +536,42 @@ el dibujo queda una sola vez en el modelo y cada viewport lo muestra a su
 escala. Dentro del layout las coordenadas son milímetros de papel, y
 `create_viewport` necesita `model_units_per_mm` (1000 dibujando en metros) o la
 escala sale mil veces mal.
+
+Con el layout armado, `export_pdf(layout, path)` lo plotea a PDF por API con
+la configuración que `create_layout` ya dejó guardada (papel, dispositivo) —
+no hace falta ir a AutoCAD y hacer PLOT a mano para entregar la lámina.
+
+**Cuándo usar layouts, en la práctica.** No es solo "varias escalas en la
+misma hoja": un proyecto con **varios planos distintos en el mismo
+archivo** (una casa + una escalera + un puente, por ejemplo) es el mismo
+caso. Dibujar cada uno con su propio `create_sheet` en el modelo, corridos
+a mano en X para que no se pisen, funciona pero no es lo correcto — el
+camino es un `create_layout` por lámina, cada uno con su viewport (o
+varios) apuntando a la parte del modelo que le toca. Se evita el
+malabarismo de `get_extents`/`fit_sheet` a mano cada vez, y el modelo
+queda un solo dibujo coherente en vez de piezas desperdigadas en
+coordenadas arbitrarias.
+
+**Nombrá cada layout con `name=` al crearlo** (p.ej. `"PV-01"`, no dejarlo
+en el `"Layout1"`/`"Layout2"` que trae la plantilla de AutoCAD por
+default) — un dibujo con pestañas sin nombre no dice nada al abrirlo.
+Si esas pestañas por default quedan sin usar, `delete_layout` las saca en
+vez de dejarlas como clutter.
+
+**Dos cosas que pasaron de verdad armando un layout, para no perder tiempo
+la próxima vez:**
+- Crear el **primer** layout de un dibujo puede disparar un diálogo modal
+  de AutoCAD ("Configurar página" o similar) que bloquea el socket del
+  plugin — cualquier comando, hasta `ping`, se cuelga con timeout hasta
+  que alguien lo cierra a mano en pantalla. No es un error del plugin: si
+  un comando se cuelga justo después de un `create_layout`, avisale al
+  usuario que revise si hay un diálogo abierto antes de asumir que algo
+  se rompió.
+- La rotación del plot de un viewport puede salir heredada de ese mismo
+  diálogo (90° sin haberlo pedido). Conviene `capture_viewport(layout=...)`
+  el layout terminado y mirarlo antes de darlo por bueno — no asumir que
+  la escala/orientación quedó como se pidió solo porque `create_viewport`
+  no tiró error.
 
 ## La fuente: nunca dejar `txt.shx`
 
