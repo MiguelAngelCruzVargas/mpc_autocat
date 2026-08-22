@@ -294,7 +294,8 @@ namespace AutoCadMcpPlugin.Commands
             return new JsonObject
             {
                 ["ok"] = true,
-                ["activeDocument"] = Path.GetFileName(doc.Name),
+                // doc puede ser null: AutoCAD abierto y sin ningun dibujo.
+                ["activeDocument"] = doc == null ? null : Path.GetFileName(doc.Name),
                 ["openDocuments"] = CountDocuments(),
                 ["pluginVersion"] = PluginInfo.Version
             };
@@ -316,6 +317,6 @@ namespace AutoCadMcpPlugin.Commands
     /// </summary>
     public static class PluginInfo
     {
-        public const string Version = "0.6.0";
+        public const string Version = "0.7.0";
     }
 }

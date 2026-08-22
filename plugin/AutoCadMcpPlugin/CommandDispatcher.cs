@@ -71,11 +71,28 @@ namespace AutoCadMcpPlugin
                 || cmd == "close_document";
         }
 
+        /// <summary>
+        /// Comandos que tienen sentido SIN ningún dibujo abierto.
+        ///
+        /// AutoCAD puede quedar corriendo con cero documentos (se cierra el
+        /// último y la ventana sigue ahí). Hasta acá TODO comando fallaba en
+        /// ese estado -- incluido new_document, cuyo trabajo es justamente
+        /// crear uno. Se descubrió con AutoCAD abierto y vacío: no había
+        /// forma de salir de ahí desde el MCP.
+        /// </summary>
+        private static bool WorksWithoutDocument(string cmd)
+        {
+            return cmd == "new_document" || cmd == "open_document"
+                || cmd == "list_documents" || cmd == "ping";
+        }
+
         private static JsonObject RunOnDocumentThread(string cmd, JsonObject pars)
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null)
-                throw new InvalidOperationException("No hay ningún dibujo abierto en AutoCAD.");
+            if (doc == null && !WorksWithoutDocument(cmd))
+                throw new InvalidOperationException(
+                    "No hay ningún dibujo abierto en AutoCAD. Abrí uno, o usá " +
+                    "new_document / open_document, que funcionan igual sin ninguno.");
 
             var tcs = new TaskCompletionSource<JsonObject>();
 
@@ -88,7 +105,7 @@ namespace AutoCadMcpPlugin
             {
                 try
                 {
-                    if (RunsUnlocked(cmd))
+                    if (doc == null || RunsUnlocked(cmd))
                     {
                         // Abrir o crear un dibujo con el lock de OTRO tomado
                         // tira eLockViolation. Estos comandos no tocan la
