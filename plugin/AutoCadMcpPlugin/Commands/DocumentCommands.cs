@@ -214,6 +214,6 @@ namespace AutoCadMcpPlugin.Commands
     /// </summary>
     public static class PluginInfo
     {
-        public const string Version = "0.4.0";
+        public const string Version = "0.5.0";
     }
 }

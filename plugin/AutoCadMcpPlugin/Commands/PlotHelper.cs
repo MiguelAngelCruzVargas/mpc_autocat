@@ -22,6 +22,29 @@ namespace AutoCadMcpPlugin.Commands
         /// Extents para encuadrar a lo que hay dibujado (espacio modelo,
         /// sin layout de por medio).
         /// </summary>
+        /// <summary>
+        /// Cuanto esperar a que el driver termine de escribir el archivo.
+        ///
+        /// Era un fijo de 35s, y el techo real lo pone el dispatcher: si
+        /// esperamos mas que ACAD_MCP_EXEC_TIMEOUT, la llamada se corta
+        /// igual y el plot queda huerfano -- envenenando al SIGUIENTE con
+        /// "ya hay un plot en curso". Eso paso de verdad capturando los
+        /// layouts de un plano de 19 mil entidades: cada uno tardaba mas de
+        /// 90s, el primero fallaba por timeout y arrastraba a los tres que
+        /// venian atras, aunque los archivos terminaban escribiendose bien.
+        ///
+        /// Derivarlo del timeout del dispatcher, en vez de un numero fijo,
+        /// hace que subir ACAD_MCP_EXEC_TIMEOUT alcance para planos pesados.
+        /// </summary>
+        private static int PlotWaitMs()
+        {
+            var raw = System.Environment.GetEnvironmentVariable("ACAD_MCP_EXEC_TIMEOUT");
+            int exec = int.TryParse(raw, out var parsed) && parsed > 0 ? parsed : 60;
+            // 20s de margen para la espera previa y el resto del comando.
+            int ms = (exec - 20) * 1000;
+            return ms < 10000 ? 10000 : ms;
+        }
+
         public static void PlotToFile(Document doc, ObjectId layoutId,
                                       Autodesk.AutoCAD.DatabaseServices.PlotType plotType,
                                       string device, string path)
@@ -180,7 +203,7 @@ namespace AutoCadMcpPlugin.Commands
             // 50s como mucho, por debajo de ACAD_MCP_EXEC_TIMEOUT (60s) —
             // si sumaran los dos máximos, el dispatcher cortaría la llamada
             // con timeout aunque el plot fuera a terminar bien.
-            const int maxWaitMs = 35000;
+            int maxWaitMs = PlotWaitMs();
             const int stepMs = 100;
             for (int waited = 0; waited < maxWaitMs && !File.Exists(fullPath); waited += stepMs)
             {
@@ -191,7 +214,9 @@ namespace AutoCadMcpPlugin.Commands
             if (!File.Exists(fullPath))
                 throw new InvalidOperationException(
                     $"El plot no escribió '{fullPath}' después de esperar {maxWaitMs / 1000}s. " +
-                    $"¿El dispositivo '{device}' está instalado en este AutoCAD?");
+                    $"Si el dispositivo '{device}' está instalado, el dibujo es " +
+                    "simplemente pesado: subí ACAD_MCP_EXEC_TIMEOUT (y el " +
+                    "ACAD_MCP_TIMEOUT del cliente, que tiene que ser mayor).");
             }
             finally
             {

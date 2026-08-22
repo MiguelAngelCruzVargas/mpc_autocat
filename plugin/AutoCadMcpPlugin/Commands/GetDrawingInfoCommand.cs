@@ -25,7 +25,13 @@ namespace AutoCadMcpPlugin.Commands
 
                 var result = new JsonObject
                 {
-                    ["fileName"] = db.Filename,
+                    // doc.Name y NO db.Filename: despues de un autoguardado,
+                    // db.Filename pasa a reportar el .sv$ del directorio
+                    // temporal en vez del DWG real. Visto en vivo sobre un
+                    // dibujo abierto de Downloads, que aparecia como
+                    // "...\Temp\NOMBRE_1_17713_75d6e9f0.sv$" -- alarmante y
+                    // falso: el archivo del usuario estaba intacto.
+                    ["fileName"] = doc.Name,
                     ["units"] = db.Insunits.ToString(),
                     ["currentLayer"] = currentLayer,
                     ["entityCount"] = entityCount

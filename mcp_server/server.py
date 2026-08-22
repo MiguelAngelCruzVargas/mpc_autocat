@@ -14,6 +14,7 @@ import annotation as ann_mod
 import arch as arch_mod
 import autocad_client as acad
 import civil as civil_mod
+import compose as compose_mod
 import electrical as elec_mod
 import profile as profile_mod
 import isometric as iso_mod
@@ -1623,6 +1624,63 @@ def iso_project(x: float, y: float, z: float) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- Geometría
+
+@mcp.tool()
+def compose_sheet(views: list[dict[str, Any]],
+                   area: list[float],
+                   gutter_mm: float = 15.0,
+                   title_block_mm: float = 11.0,
+                   align: str = "bottom",
+                   distribute: str = "center",
+                   scale: Optional[float] = None,
+                   draw_titles: bool = True,
+                   dry_run: bool = False) -> dict[str, Any]:
+    """Acomoda las vistas YA DIBUJADAS en la lámina y les pone su título.
+
+    ES LO QUE FALTABA para que una lámina se vea compuesta y no con los
+    dibujos tirados al azar. `space` evita que dos cosas se encimen;
+    componer es alinear, repartir parejo y agrupar lo que se lee junto.
+
+    El flujo: dibujá cada vista donde sea (apartadas entre sí), anotá la caja
+    de cada una, y llamá esto con el `drawArea` de create_sheet.
+
+    views: [{"name", "box": [x0,y0,x1,y1], "title"?, "scale_text"?,
+             "below"?, "handles"?}]
+      - box: dónde está dibujada AHORA. Sin 'handles', se seleccionan las
+        entidades que caigan ENTERAS adentro de esa caja.
+      - below: "corte" pone esta vista DEBAJO de esa otra y les alinea el
+        centro en X. Es la alineación proyectiva — la planta bajo su corte,
+        compartiendo los ejes verticales, que es como se leen una con otra.
+        Las dos se acomodan como una sola unidad.
+
+    align='bottom' deja las vistas de cada fila sobre una línea de base
+    común, que es lo que hace que la lámina se vea alineada.
+    distribute: 'center', 'left' o 'justify'.
+
+    Si no entra lo dice en 'fits' y en 'warnings' — NO achica nada: una
+    vista fuera de escala no es una lámina, es un error. Probá primero con
+    dry_run=True y mirá el plan.
+
+    OJO: al mover las vistas, todo lo que `space` tenía registrado deja de
+    valer. Acotá y rotulá DESPUÉS de componer, no antes."""
+    return compose_mod.compose_sheet(
+        views=views, area=area, gutter_mm=gutter_mm,
+        title_block_mm=title_block_mm, align=align, distribute=distribute,
+        scale=scale, draw_titles=draw_titles, dry_run=dry_run)
+
+
+@mcp.tool()
+def move_entities(handles: list[str], dx: float, dy: float, dz: float = 0.0,
+                   ignore_missing: bool = True) -> dict[str, Any]:
+    """Mueve varias entidades de una pasada, todas por el mismo vector.
+
+    Mucho más rápido que move_entity una por una: es una llamada al socket y
+    una transacción, contra N y N. Acomodar una vista de detalle son fácil un
+    par de cientos de entidades."""
+    return acad.call("move_entities", {
+        "handles": handles, "dx": dx, "dy": dy, "dz": dz,
+        "ignoreMissing": ignore_missing})
+
 
 @mcp.tool()
 def create_level_mark(x: float, y: float, elevation: float,

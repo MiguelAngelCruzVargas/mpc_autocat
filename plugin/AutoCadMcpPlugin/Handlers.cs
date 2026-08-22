@@ -56,6 +56,8 @@ namespace AutoCadMcpPlugin
                 // Edición
                 case "move_entity":
                     return MoveEntityCommand.Run(doc, pars);
+                case "move_entities":
+                    return MoveEntitiesCommand.Run(doc, pars);
                 case "copy_entity":
                     return CopyEntityCommand.Run(doc, pars);
                 case "rotate_entity":
