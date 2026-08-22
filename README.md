@@ -122,6 +122,9 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | **Validación** | `check_program` / `check_layout` / `check_geometry` / `check_walls` | Que el programa entre en el terreno, que la zonificación cumpla, que los recintos existan y que la muraria cierre — antes de dibujar |
 | | `check_annotations` | Que las cotas, las burbujas y los rótulos no se encimen — el plano como dibujo, después de dibujar |
 | | `check_drawing_hygiene` | Audita el ARCHIVO: capas creadas y sin usar, texto todavía en fuente `.shx`, entidades duplicadas exactas |
+| **Composición** | **`compose_layout`** | **Una lámina por layout: un viewport por vista a su escala. El modelo queda intacto — es el flujo de un juego profesional** |
+| | `compose_sheet` | Acomoda vistas ya dibujadas en el modelo: filas, línea de base común y alineación proyectiva con `below` |
+| | `move_entities` | Mueve muchas entidades de una pasada, todas por el mismo vector |
 | **Convención** | **`create_level_mark`** | **Marca de nivel (N.P.T.) apoyada en la cota real del dibujo; el cero sale con ±** |
 | | `create_view_title` | Título de vista: nombre con letras separadas, subrayado grueso y la escala debajo |
 | | `create_section_mark` | Marca de corte con flechas y letra — lo único que liga una planta con su sección |

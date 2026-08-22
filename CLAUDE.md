@@ -130,6 +130,50 @@ mismo `path` explícito cada vez, no confiar en que quedó "recordado".
 Para varias láminas, repetir `create_sheet` con `origin_x` corrido (p.ej.
 +100 unidades entre hoja y hoja) en lugar de amontonarlas.
 
+## 2.ter Componer: dónde va cada vista
+
+`space` evita que dos cosas se encimen. **Componer es otra cosa**: alinear,
+repartir parejo y agrupar lo que se lee junto. La diferencia entre "nada se
+pisa" y "esto está diseñado" es exactamente esa — y es lo que hacía que una
+lámina saliera vacía en dos tercios con las vistas tiradas al azar.
+
+**`compose_layout` es el camino por defecto.** Un proyecto con varias láminas
+—que es casi siempre— va con un layout por lámina: el dibujo vive UNA sola vez
+en el modelo y cada layout lo recorta con sus viewports. Así trabaja un juego
+profesional: el modelo se ve desordenado porque tiene todas las disciplinas
+encimadas, y cada lámina sale limpia porque su viewport muestra solo su pedazo.
+No mueve nada del modelo.
+
+```
+compose_layout("E-01", views=[
+    {"name": "planta", "box": [0, 0, 16.6, 29.1], "scale_denominator": 100,
+     "title": "PLANTA ARQUITECTÓNICA"},
+    {"name": "corte", "box": [40, 0, 56.6, 7.5], "scale_denominator": 100,
+     "title": "CORTE A-A", "below": "planta"}],
+    reserved_right_mm=160)
+```
+
+`reserved_right_mm` es la franja donde va la columna fija —localización,
+simbología, rótulo— que se repite igual en todas las láminas del juego.
+
+**`compose_sheet` es para el caso chico**: una lámina única con el cajón en el
+modelo. Ahí sí mueve las vistas ya dibujadas a su lugar. Al mover, todo lo que
+`space` tenía registrado deja de valer: **acotá y rotulá DESPUÉS de componer**.
+
+Las dos comparten el mismo motor y las mismas dos ideas:
+
+- **Filas.** Las vistas se acomodan de izquierda a derecha hasta que no entra
+  una más, y ahí empieza otra fila. Dentro de la fila apoyan todas sobre una
+  **línea de base común**, que es lo que hace que la lámina se vea alineada.
+- **`below`.** Una vista que lo declara se apila con la de arriba y las dos
+  comparten el centro en X. Esa es la alineación proyectiva —la planta debajo
+  de su corte, compartiendo los ejes verticales— y es la única forma de que se
+  puedan leer una con otra. Las dos se acomodan como UNA unidad.
+
+Si no entra lo dicen en `fits` y en `warnings`, y **no achican nada**: una
+vista fuera de escala no es una lámina, es un error. Probá con `dry_run=True`
+antes.
+
 ## 3. Abrir, crear y cambiar de dibujo
 
 Para **corregir un plano ya entregado** no hace falta ir a AutoCAD a abrirlo:

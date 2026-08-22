@@ -414,3 +414,158 @@ def compose_sheet(views: list[dict[str, Any]],
         "Se reinicio el estado de anotacion (space): las vistas cambiaron de "
         "lugar. Acota y rotula DESPUES de componer."]
     return plan
+
+
+# ============================================ una lamina por layout
+
+# Milimetros reales que mide UNA unidad del modelo. Es lo que create_viewport
+# llama model_units_per_mm, y sin eso la escala del viewport sale mil veces
+# mal dibujando en metros.
+_MM_POR_UNIDAD = {"m": 1000.0, "cm": 10.0, "mm": 1.0}
+
+
+def _papel_de(nombre: str) -> tuple[float, float]:
+    """Tamano real de la hoja del layout, preguntandoselo al dibujo.
+
+    No se le pide al que llama: create_layout elige el papel por nombre
+    ('A1', 'ARCH D') entre los del dispositivo, y el que sale puede no ser el
+    que uno tenia en la cabeza. Componer sobre un tamano supuesto deja las
+    vistas fuera de la hoja sin ningun error.
+    """
+    for lay in acad.call("list_layouts", {}).get("layouts", []):
+        if lay.get("name") == nombre:
+            return float(lay["paperWidth"]), float(lay["paperHeight"])
+    raise ValueError(
+        "No existe un layout llamado %r. Layouts: %s"
+        % (nombre, [l.get("name") for l in
+                    acad.call("list_layouts", {}).get("layouts", [])]))
+
+
+def compose_layout(name: str,
+                   views: list[dict[str, Any]],
+                   model_units: str = "m",
+                   margin_mm: float = 15.0,
+                   gutter_mm: float = 15.0,
+                   title_block_mm: float = 11.0,
+                   reserved_right_mm: float = 0.0,
+                   padding_mm: float = 4.0,
+                   align: str = "bottom",
+                   distribute: str = "center",
+                   plot_config: Optional[str] = None,
+                   paper_size: Optional[str] = None,
+                   create: bool = True,
+                   locked: bool = True,
+                   draw_titles: bool = True,
+                   dry_run: bool = False) -> dict[str, Any]:
+    """Arma una lamina en ESPACIO PAPEL: un viewport por vista, a su escala.
+
+    Es el flujo correcto cuando hay varias laminas del mismo proyecto: el
+    dibujo vive UNA sola vez en el modelo y cada layout lo recorta. Es lo que
+    hace un juego profesional -- el modelo se ve desordenado porque tiene
+    todas las disciplinas encimadas, y cada lamina sale limpia porque su
+    viewport muestra solo su pedazo.
+
+    A diferencia de compose_sheet, esto NO mueve nada: el modelo queda como
+    esta. Solo crea ventanas que lo miran.
+
+    views: [{"name", "box": [x0,y0,x1,y1] del MODELO, "scale_denominator",
+             "title"?, "scale_text"?, "below"?, "padding_mm"?}]
+    reserved_right_mm: franja derecha que NO se usa para vistas. Es donde va
+    la columna fija de localizacion / simbologia / rotulo que se repite igual
+    en todas las laminas del juego.
+
+    OJO: crear el PRIMER layout de un dibujo puede disparar un dialogo modal
+    de AutoCAD que bloquea el socket. Si esto se cuelga, mira la pantalla.
+    """
+    if model_units not in _MM_POR_UNIDAD:
+        raise ValueError(
+            "model_units tiene que ser 'm', 'cm' o 'mm'; vino %r." % model_units)
+    if not views:
+        raise ValueError("No hay vistas que componer.")
+    mm_unidad = _MM_POR_UNIDAD[model_units]
+
+    if create and not dry_run:
+        acad.call("create_layout", {"name": name, "plotConfig": plot_config,
+                                    "paperSize": paper_size})
+    ancho_hoja, alto_hoja = _papel_de(name)
+
+    # Cada vista ocupa en PAPEL lo que mide en el modelo dividido su escala.
+    # Un local de 16.60 m a 1:100 son 166 mm de papel.
+    en_papel: list[dict[str, Any]] = []
+    for v in views:
+        denom = float(v.get("scale_denominator", 0) or 0)
+        if denom <= 0:
+            raise ValueError(
+                "La vista %r no trae 'scale_denominator' (100 para 1:100). "
+                "Sin escala no hay forma de saber cuanto papel ocupa."
+                % v.get("name", "?"))
+        x0, y0, x1, y1 = _caja(v, v.get("name", "?"))
+        aire = float(v.get("padding_mm", padding_mm))
+        w = (x1 - x0) * mm_unidad / denom + 2 * aire
+        h = (y1 - y0) * mm_unidad / denom + 2 * aire
+        en_papel.append({
+            "name": v["name"], "box": [0.0, 0.0, w, h],
+            "title": v.get("title"),
+            "scale_text": v.get("scale_text") or "ESC. 1:%g" % denom,
+            "below": v.get("below"),
+            "_modelo": (x0, y0, x1, y1), "_denom": denom,
+        })
+
+    area = [margin_mm, margin_mm,
+            ancho_hoja - margin_mm - reserved_right_mm, alto_hoja - margin_mm]
+
+    # scale=1.0 porque acá TODO ya está en milímetros de papel: es el espacio
+    # papel, no el modelo. space.paper(mm, 1.0) devuelve los mismos mm.
+    plan = plan_composition(en_papel, area, gutter_mm=gutter_mm,
+                            title_block_mm=title_block_mm, align=align,
+                            distribute=distribute, scale=1.0)
+    plan["layout"] = name
+    plan["paper"] = [ancho_hoja, alto_hoja]
+    if dry_run:
+        plan["applied"] = False
+        return plan
+
+    por_nombre = {v["name"]: v for v in en_papel}
+    viewports: list[dict[str, Any]] = []
+    for p in plan["placements"]:
+        v = por_nombre[p["name"]]
+        mx0, my0, mx1, my1 = v["_modelo"]
+        x0, y0, x1, y1 = p["box"]
+        r = acad.call("create_viewport", {
+            "layout": name,
+            "centerX": (x0 + x1) / 2.0, "centerY": (y0 + y1) / 2.0,
+            "width": x1 - x0, "height": y1 - y0,
+            "viewCenterX": (mx0 + mx1) / 2.0,
+            "viewCenterY": (my0 + my1) / 2.0,
+            "scaleDenominator": v["_denom"],
+            "modelUnitsPerMm": mm_unidad, "locked": locked})
+        viewports.append({"name": p["name"], "handle": r.get("handle"),
+                          "scale": "1:%g" % v["_denom"],
+                          "paperBox": p["box"]})
+
+    titulos = 0
+    if draw_titles:
+        import symbols
+        # Los titulos van DENTRO del layout: todo se dibuja en el espacio
+        # ACTIVO, asi que hay que pararse ahi y volver al terminar.
+        previo = acad.call("list_layouts", {}).get("current")
+        acad.call("set_current_layout", {"name": name})
+        try:
+            for p in plan["placements"]:
+                if not p.get("title") or not p.get("titlePoint"):
+                    continue
+                # En papel, un milimetro es un milimetro: la altura va tal
+                # cual, sin convertir por la escala de ninguna vista.
+                symbols.create_view_title(
+                    x=p["titlePoint"][0], y=p["titlePoint"][1],
+                    title=p["title"], scale_text=p.get("scaleText"),
+                    height=4.0, align="center")
+                titulos += 1
+        finally:
+            if previo:
+                acad.call("set_current_layout", {"name": previo})
+
+    plan["applied"] = True
+    plan["viewports"] = viewports
+    plan["titlesDrawn"] = titulos
+    return plan

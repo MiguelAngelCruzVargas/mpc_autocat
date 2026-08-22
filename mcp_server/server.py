@@ -1670,6 +1670,61 @@ def compose_sheet(views: list[dict[str, Any]],
 
 
 @mcp.tool()
+def compose_layout(name: str,
+                    views: list[dict[str, Any]],
+                    model_units: str = "m",
+                    margin_mm: float = 15.0,
+                    gutter_mm: float = 15.0,
+                    title_block_mm: float = 11.0,
+                    reserved_right_mm: float = 0.0,
+                    padding_mm: float = 4.0,
+                    align: str = "bottom",
+                    distribute: str = "center",
+                    plot_config: Optional[str] = None,
+                    paper_size: Optional[str] = None,
+                    create: bool = True,
+                    locked: bool = True,
+                    draw_titles: bool = True,
+                    dry_run: bool = False) -> dict[str, Any]:
+    """Arma una lámina en ESPACIO PAPEL: un viewport por vista, a su escala.
+
+    ES EL FLUJO CORRECTO cuando el proyecto tiene varias láminas — que es casi
+    siempre. El dibujo vive UNA sola vez en el modelo y cada layout lo recorta.
+    El modelo se ve desordenado porque tiene todas las disciplinas encimadas;
+    cada lámina sale limpia porque su viewport muestra solo su pedazo.
+
+    A diferencia de compose_sheet, esto NO mueve nada del modelo: solo crea
+    ventanas que lo miran.
+
+    views: [{"name", "box": [x0,y0,x1,y1] del MODELO, "scale_denominator",
+             "title"?, "scale_text"?, "below"?, "padding_mm"?}]
+      - box: qué zona del modelo muestra esa vista.
+      - scale_denominator: 100 para 1:100. Con eso se calcula cuánto papel
+        ocupa — 16.60 m a 1:100 son 166 mm.
+      - below: la apila debajo de otra alineándoles el centro en X.
+
+    reserved_right_mm: franja derecha que NO se usa para vistas. Es donde va
+    la columna fija de localización / simbología / rótulo que se repite igual
+    en todas las láminas del juego.
+
+    El tamaño de la hoja se le pregunta al dibujo, no se supone: create_layout
+    elige el papel por nombre entre los del dispositivo y puede no salir el
+    que tenías en la cabeza.
+
+    OJO: crear el PRIMER layout de un dibujo puede disparar un diálogo modal
+    de AutoCAD que bloquea el socket. Si se cuelga, mirá la pantalla.
+
+    Probá con dry_run=True primero y revisá 'fits'."""
+    return compose_mod.compose_layout(
+        name=name, views=views, model_units=model_units,
+        margin_mm=margin_mm, gutter_mm=gutter_mm,
+        title_block_mm=title_block_mm, reserved_right_mm=reserved_right_mm,
+        padding_mm=padding_mm, align=align, distribute=distribute,
+        plot_config=plot_config, paper_size=paper_size, create=create,
+        locked=locked, draw_titles=draw_titles, dry_run=dry_run)
+
+
+@mcp.tool()
 def move_entities(handles: list[str], dx: float, dy: float, dz: float = 0.0,
                    ignore_missing: bool = True) -> dict[str, Any]:
     """Mueve varias entidades de una pasada, todas por el mismo vector.
