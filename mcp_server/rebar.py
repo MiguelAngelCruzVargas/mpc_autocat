@@ -308,3 +308,215 @@ def create_footing_plan(x: float, y: float, width: float, length: float,
         "actualSpacingY_m": round(paso_y, 4),
         "totalBarLength_m": round(total_length, 2),
     }
+
+
+# ------------------------------------------------ armado en ELEVACION
+
+def _posiciones_estribos(inicio: float, fin: float, paso: float,
+                         confinamiento: float = 0.0,
+                         paso_confinamiento: float = 0.0
+                         ) -> tuple[list[float], float, list[str]]:
+    """Donde cae cada estribo entre inicio y fin.
+
+    'paso' es un MAXIMO de obra, igual que en _mat_positions: "est. #3 @ 20"
+    no admite que la separacion real se pase de 20 cm. Se redondea siempre
+    hacia MAS estribos, nunca hacia menos.
+
+    Con confinamiento, los extremos van mas juntos -- que es como se arma una
+    columna de verdad: el cortante y el confinamiento mandan en los extremos,
+    no en el centro. La zona central usa el paso normal.
+
+    Devuelve las posiciones, el paso real de la zona central y los avisos.
+    """
+    largo = fin - inicio
+    avisos: list[str] = []
+    if largo <= 0:
+        raise ValueError(
+            "El recubrimiento no deja largo para estribar: la pieza mide "
+            "menos que dos veces el recubrimiento.")
+    if paso <= 0:
+        raise ValueError(
+            "stirrup_spacing tiene que ser > 0. Es la separacion de estribos "
+            "que ESPECIFICA el proyecto ('est. #3 @ 20 cms' -> 0.20); no se "
+            "inventa: pedila si no la tenes.")
+
+    if confinamiento > 0 and paso_confinamiento > 0:
+        if 2 * confinamiento >= largo:
+            avisos.append(
+                "Las dos zonas de confinamiento (%.2f m cada una) cubren toda "
+                "la pieza (%.2f m): se estriba entera al paso cerrado."
+                % (confinamiento, largo))
+            confinamiento = largo / 2.0
+
+        pos: list[float] = []
+        # Extremo inferior, extremo superior y centro, cada uno cerrando
+        # parejo dentro de su tramo.
+        for a, b, p in ((inicio, inicio + confinamiento, paso_confinamiento),
+                        (inicio + confinamiento, fin - confinamiento, paso),
+                        (fin - confinamiento, fin, paso_confinamiento)):
+            if b - a <= 1e-9:
+                continue
+            n = max(1, math.ceil((b - a) / p - 1e-9))
+            real = (b - a) / n
+            pos.extend(a + i * real for i in range(n + 1))
+        # Los bordes de zona quedan repetidos: un estribo por posicion.
+        unicas: list[float] = []
+        for v in sorted(pos):
+            if not unicas or v - unicas[-1] > 1e-6:
+                unicas.append(v)
+        n_centro = max(1, math.ceil((largo - 2 * confinamiento) / paso - 1e-9))
+        paso_real = (largo - 2 * confinamiento) / n_centro
+        return unicas, paso_real, avisos
+
+    n = max(1, math.ceil(largo / paso - 1e-9))
+    paso_real = largo / n
+    if paso_real < paso - 1e-6:
+        avisos.append(
+            "La separacion real queda en %.3f m y no en los %.3f m pedidos: "
+            "es lo que da cerrar parejo en %.2f m. Siempre hacia MENOS "
+            "separacion, nunca hacia mas." % (paso_real, paso, largo))
+    return [inicio + i * paso_real for i in range(n + 1)], paso_real, avisos
+
+
+def create_rebar_elevation(x: float, y: float, width: float, height: float,
+                           stirrup_spacing: float,
+                           bars_interior: int = 0,
+                           bar_diameter: float = 0.0127,
+                           stirrup_diameter: float = 0.0095,
+                           cover: float = 0.03,
+                           depth: float = 0.0,
+                           orientation: str = "vertical",
+                           extend_start: float = 0.0,
+                           extend_end: float = 0.0,
+                           confinement_length: float = 0.0,
+                           confinement_spacing: float = 0.0,
+                           draw_outline: bool = True,
+                           layer: Optional[str] = None) -> dict[str, Any]:
+    """Armado VISTO EN ELEVACION: las varillas longitudinales y los estribos
+    como escalera, dentro del contorno de concreto.
+
+    Es lo que ocupa el 80% de un detalle de cimentacion real y lo que
+    convierte un corte de cajas vacias en un detalle constructivo.
+    create_column_section dibuja la seccion TRANSVERSAL (el estribo cerrado
+    visto de punta y las varillas como puntos); esto es la otra vista.
+
+    (x, y) es la esquina inferior izquierda del concreto. width/height: las
+    dimensiones de la pieza EN EL PLANO DEL DIBUJO, m.
+    orientation: 'vertical' (columna, dado, castillo) o 'horizontal' (trabe
+    de liga, dala) -- cambia hacia donde corren las varillas.
+
+    stirrup_spacing es OBLIGATORIO y no tiene default: es un dato del
+    proyecto ('est. del no. 3 (3/8") @ 20 cms' -> 0.20), no algo que la tool
+    pueda suponer. Se trata como un MAXIMO de obra: el paso real cierra
+    parejo hacia MENOS separacion, nunca hacia mas.
+
+    confinement_length + confinement_spacing: estribos mas juntos en los dos
+    extremos, que es como se arma una columna de verdad. Van juntos o
+    ninguno.
+    depth: la dimension de la pieza FUERA del plano del dibujo (en una
+    columna 0.40x0.40 vista de frente, el otro 0.40). Una elevacion no la
+    ve, y sin ella no se puede calcular el perimetro del estribo -- se
+    devuelve None y se avisa, en vez de inventar kilos de acero.
+    extend_start / extend_end: cuanto sobresalen las varillas del concreto
+    (anclaje en la zapata, traslape hacia arriba). Cuenta en el largo total
+    que se devuelve.
+
+    Devuelve el numero REAL de estribos y el largo REAL de varilla, para que
+    calculate_quantities mida lo que quedo dibujado en vez de recalcularlo
+    de memoria: es el mismo criterio de siempre, aplicado al armado.
+    """
+    if orientation not in ("vertical", "horizontal"):
+        raise ValueError("orientation tiene que ser 'vertical' o 'horizontal'.")
+    if width <= 0 or height <= 0:
+        raise ValueError("width y height tienen que ser > 0.")
+    if cover < 0:
+        raise ValueError("cover no puede ser negativo.")
+    if (confinement_length > 0) != (confinement_spacing > 0):
+        raise ValueError(
+            "confinement_length y confinement_spacing van los dos o ninguno: "
+            "una zona de confinamiento sin su separacion no dice nada.")
+
+    lyr = layer or LAYER_COLUMN
+    _layer(lyr, LW_OUTLINE)
+
+    handles: list[str] = []
+    if draw_outline:
+        handles.append(_rect(x, y, x + width, y + height, lyr, LW_OUTLINE))
+
+    # Eje 'largo' = por donde corren las varillas; 'ancho' = donde se
+    # reparten. Con orientation horizontal se intercambian.
+    if orientation == "vertical":
+        largo0, largo1 = y + cover, y + height - cover
+        ancho0, ancho1 = x + cover, x + width - cover
+    else:
+        largo0, largo1 = x + cover, x + width - cover
+        ancho0, ancho1 = y + cover, y + height - cover
+
+    if ancho1 <= ancho0:
+        raise ValueError(
+            "El recubrimiento (%.3f m) se come el ancho de la pieza (%.3f m)."
+            % (cover, width if orientation == "vertical" else height))
+
+    pos, paso_real, avisos = _posiciones_estribos(
+        largo0, largo1, stirrup_spacing, confinement_length,
+        confinement_spacing)
+
+    # --- estribos: una linea transversal por posicion ---------------------
+    for t in pos:
+        if orientation == "vertical":
+            handles.append(_line((ancho0, t), (ancho1, t), lyr, LW_STIRRUP))
+        else:
+            handles.append(_line((t, ancho0), (t, ancho1), lyr, LW_STIRRUP))
+
+    # --- varillas longitudinales -----------------------------------------
+    # Las dos de los bordes son las de esquina del estribo; las interiores
+    # se reparten parejo entre ellas, igual que en create_column_section.
+    caras = [ancho0, ancho1]
+    caras.extend(p[0] for p in _spaced_interior_points(
+        (ancho0, 0.0), (ancho1, 0.0), bars_interior))
+    caras.sort()
+
+    a = largo0 - extend_start
+    b = largo1 + extend_end
+    for c in caras:
+        if orientation == "vertical":
+            handles.append(_line((c, a), (c, b), lyr, LW_BAR))
+        else:
+            handles.append(_line((a, c), (b, c), lyr, LW_BAR))
+
+    largo_varilla = b - a
+
+    # El estribo es un rectangulo cerrado en la SECCION, y una elevacion no
+    # ve la dimension de afuera del plano. Sin 'depth' no hay forma de saber
+    # su perimetro -- y un numero inventado ahi se convierte en kilos de
+    # acero inventados en la cuantificacion. Se devuelve None y se dice.
+    perimetro_estribo = None
+    if depth > 0:
+        if depth <= 2 * cover:
+            raise ValueError(
+                "depth (%.3f m) no le gana a dos recubrimientos (%.3f m): "
+                "el estribo no entra." % (depth, 2 * cover))
+        perimetro_estribo = 2 * ((ancho1 - ancho0) + (depth - 2 * cover))
+    else:
+        avisos.append(
+            "Sin 'depth' (la dimension fuera del plano del dibujo) no se "
+            "puede saber el perimetro del estribo: una elevacion no la ve. "
+            "Pasala si vas a cuantificar el acero de estribo.")
+
+    space.track(min(x, x - 0), min(y, y - 0), x + width, y + height,
+                "armado en elevacion")
+
+    return {
+        "handles": handles,
+        "stirrupCount": len(pos),
+        "actualStirrupSpacing_m": round(paso_real, 4),
+        "requestedStirrupSpacing_m": stirrup_spacing,
+        "barCount": len(caras),
+        "barLength_m": round(largo_varilla, 4),
+        "totalBarLength_m": round(largo_varilla * len(caras), 3),
+        "stirrupPerimeter_m": (round(perimetro_estribo, 4)
+                               if perimetro_estribo else None),
+        "totalStirrupLength_m": (round(perimetro_estribo * len(pos), 3)
+                                 if perimetro_estribo else None),
+        "warnings": avisos,
+    }

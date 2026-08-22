@@ -290,6 +290,36 @@ es el detalle de capas de pavimento (`create_layer_section`), ni `SECCIONES`,
 que ya son los cortes viales (`create_cross_sections`). `FACHADAS` para
 `view="fachada"`.
 
+## 4.sexies Armado: la separación es un MÁXIMO, y no se inventa
+
+`create_column_section` dibuja la sección TRANSVERSAL (estribo cerrado de
+punta, varillas como puntos). `create_rebar_elevation` dibuja la otra vista:
+las varillas longitudinales y los estribos como escalera. Esa segunda es la
+que ocupa el grueso de un detalle de cimentación real, y la que separa un
+corte de cajas vacías de un detalle constructivo.
+
+Dos reglas que la tool aplica sola, para no depender de que quien dibuja se
+acuerde:
+
+- **`stirrup_spacing` no tiene default.** "est. del no. 3 (3/8") @ 20 cms"
+  es un dato del proyecto. Sin él, `ValueError` — igual que
+  `calculate_quantities` se niega a cuantificar sin la profundidad real.
+- **La separación pedida es un MÁXIMO de obra.** Al cerrar parejo, el paso
+  real redondea siempre hacia MÁS estribos, nunca hacia menos: uno de menos
+  es un error estructural, uno de más son unos centímetros de acero. Si no
+  cerró justo, lo avisa con el número real.
+
+`confinement_length` + `confinement_spacing` juntan los estribos en los dos
+extremos, que es como se arma una columna de verdad. Van los dos o ninguno.
+
+**`depth` (la dimensión fuera del plano) hace falta para cuantificar.** Una
+elevación no la ve, así que sin ella el perímetro del estribo sale `None` y
+se avisa — un número inventado ahí se convierte en kilos de acero inventados
+en el cuadro de cuantificación.
+
+Devuelve el número REAL de estribos y el largo REAL de varilla, para que
+`calculate_quantities` mida lo dibujado en vez de recordarlo.
+
 ## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta

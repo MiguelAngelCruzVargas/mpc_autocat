@@ -9,9 +9,12 @@ Lo que fijan estos tests, en orden de importancia:
     debajo. Un subrayado que no llega al final se ve peor que ninguno.
   - La flecha de la marca de corte apunta al lado que dice 'direction'.
     Invertida, manda a leer el corte desde el lado contrario.
-  - La familia de cotas reproduce las alturas del juego de planos que se
-    tomo de referencia: COTAS50 -> 0.10 en metros. Ese numero no es una
-    preferencia, es la convencion medida de un plano profesional real.
+  - La familia de cotas reproduce las alturas DEFINIDAS en el juego de
+    planos de referencia: COTAS50 -> 0.10 en metros, o sea 2 mm de papel por
+    escala. Ojo: en ese plano esos estilos estan definidos y SIN USAR -- las
+    1003 cotas van con 'CaB' o 'Standard' y con ocho alturas distintas. La
+    convencion es buena; lo que el plano real demuestra es el problema de no
+    tenerla.
 
 Uso:  python test_symbols.py
 """
@@ -263,8 +266,16 @@ def test_corte_largo_cero_es_error(g: Grabadora) -> None:
 def test_familia_reproduce_las_alturas_del_plano_de_referencia(
         g: Grabadora) -> None:
     """COTAS25=0.05, COTAS50=0.10, COTAS100=0.20, COTAS150=0.30 son las
-    alturas medidas del juego de planos real. Si la formula no las da, la
-    formula esta mal -- no el plano."""
+    alturas DEFINIDAS en el juego de planos de referencia. Ojo con lo que
+    esto prueba y lo que no: leyendo despues las 1003 cotas de ese plano
+    resulto que NINGUNA usa esos estilos -- todas van con 'CaB' o
+    'Standard', y con ocho alturas distintas. La familia esta definida y sin
+    usar, herencia de una plantilla.
+
+    O sea: estos numeros son una convencion coherente (2 mm de papel por
+    escala), no una practica observada. Se conservan porque la convencion es
+    buena; lo que el plano real demuestra es justamente el problema de NO
+    tenerla."""
     r = annotation.set_dim_style_family(model_units="m", paper_mm=2.0)
     esperado = {"COTAS25": 0.05, "COTAS50": 0.10,
                 "COTAS100": 0.20, "COTAS150": 0.30}
@@ -342,7 +353,7 @@ def main() -> int:
             print(" -", f)
         return 1
     print("\nOK: niveles, titulos, marcas de corte y la familia de cotas "
-          "salen con la convencion del plano de referencia.")
+          "coherente por escala.")
     return 0
 
 

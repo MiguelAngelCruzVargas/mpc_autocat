@@ -1530,6 +1530,58 @@ def create_column_section(x: float, y: float, width: float, depth: float,
 
 
 @mcp.tool()
+def create_rebar_elevation(x: float, y: float, width: float, height: float,
+                            stirrup_spacing: float,
+                            bars_interior: int = 0,
+                            bar_diameter: float = 0.0127,
+                            stirrup_diameter: float = 0.0095,
+                            cover: float = 0.03,
+                            depth: float = 0.0,
+                            orientation: str = "vertical",
+                            extend_start: float = 0.0,
+                            extend_end: float = 0.0,
+                            confinement_length: float = 0.0,
+                            confinement_spacing: float = 0.0,
+                            draw_outline: bool = True,
+                            layer: Optional[str] = None) -> dict[str, Any]:
+    """Armado VISTO EN ELEVACIÓN: varillas longitudinales y estribos como
+    escalera, dentro del contorno de concreto.
+
+    Es lo que ocupa el grueso de un detalle de cimentación real y lo que
+    convierte un corte de cajas vacías en un detalle constructivo.
+    `create_column_section` dibuja la sección TRANSVERSAL (estribo cerrado
+    visto de punta, varillas como puntos); esto es la otra vista.
+
+    orientation: 'vertical' (columna, dado, castillo) u 'horizontal' (trabe
+    de liga, dala).
+
+    **stirrup_spacing es obligatorio y no tiene default**: es un dato del
+    proyecto ('est. del no. 3 (3/8") @ 20 cms' → 0.20). Se trata como un
+    MÁXIMO de obra — el paso real cierra parejo hacia MENOS separación,
+    nunca hacia más, y avisa cuándo no cerró justo.
+
+    confinement_length + confinement_spacing: estribos más juntos en los dos
+    extremos, como se arma una columna de verdad. Van juntos o ninguno.
+    extend_start / extend_end: cuánto sobresalen las varillas (anclaje en la
+    zapata, traslape hacia arriba). Cuentan en el largo total.
+    depth: la dimensión FUERA del plano del dibujo. Sin ella no se puede
+    saber el perímetro del estribo — se devuelve None y se avisa, en vez de
+    inventar kilos de acero.
+
+    Devuelve el número REAL de estribos y el largo REAL de varilla, para que
+    calculate_quantities mida lo dibujado en vez de recordarlo."""
+    return rebar_mod.create_rebar_elevation(
+        x=x, y=y, width=width, height=height,
+        stirrup_spacing=stirrup_spacing, bars_interior=bars_interior,
+        bar_diameter=bar_diameter, stirrup_diameter=stirrup_diameter,
+        cover=cover, depth=depth, orientation=orientation,
+        extend_start=extend_start, extend_end=extend_end,
+        confinement_length=confinement_length,
+        confinement_spacing=confinement_spacing,
+        draw_outline=draw_outline, layer=layer)
+
+
+@mcp.tool()
 def create_footing_plan(x: float, y: float, width: float, length: float,
                         bar_spacing_x: float,
                         bar_spacing_y: Optional[float] = None,
