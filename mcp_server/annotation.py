@@ -459,6 +459,95 @@ FIRST_GAP_MM = 6.0   # aire entre el dibujo y la primera cadena
 MIN_TRAMO_MM = 9.0   # abajo de esto el numero no entra entre las flechas
 
 
+# Escalas para las que se genera un estilo de cota si no piden otras. Son las
+# del juego de planos que se tomo de referencia (COTAS25/50/100/150).
+ESCALAS_USUALES = (25, 50, 100, 150)
+
+# Unidades del modelo que mide UN milimetro de papel a escala 1:1, segun en
+# que se dibuje. Dibujando en metros a 1:50, 1 mm de papel son 50*0.001 =
+# 0.05 unidades.
+_UNIDAD_POR_MM = {"m": 0.001, "cm": 0.1, "mm": 1.0}
+
+
+def set_dim_style_family(scales: Optional[list[float]] = None,
+                         model_units: str = "m",
+                         paper_mm: float = 2.0,
+                         arrow_paper_mm: float = 2.0,
+                         prefix: str = "COTAS",
+                         decimals: int = 2,
+                         text_style: Optional[str] = None,
+                         current_scale: Optional[float] = None
+                         ) -> dict[str, Any]:
+    """Crea un estilo de cota POR ESCALA, con nombre, dentro del dibujo.
+
+    create_dimension_chain resuelve la altura del texto al vuelo desde la
+    escala de la lamina, y funciona -- pero no deja nada en el DWG. Quien
+    reciba el archivo y siga dibujando no tiene con que seguir la misma
+    convencion, y la segunda tanda de cotas sale de otro tamano.
+
+    Un juego de planos profesional trae la familia ya armada: COTAS25,
+    COTAS50, COTAS100, COTAS150, todos con la altura de texto igual a los
+    mismos milimetros de papel multiplicados por su escala. Eso es lo que
+    hace esto.
+
+    paper_mm: altura del numero EN PAPEL. 2.0 es lo que usa el juego de
+    referencia; la norma ISO admite 2.5.
+    model_units: 'm', 'cm' o 'mm', en que esta dibujado el modelo.
+    current_scale: cual de los estilos queda activo (p.ej. 50).
+
+    Devuelve cada estilo con la altura que le toco, para poder verificarlo
+    sin abrir el DWG.
+    """
+    if model_units not in _UNIDAD_POR_MM:
+        raise ValueError(
+            "model_units tiene que ser 'm', 'cm' o 'mm'; vino %r." % model_units)
+    if paper_mm <= 0:
+        raise ValueError("paper_mm tiene que ser > 0: es la altura en papel.")
+
+    denominadores = list(scales) if scales else list(ESCALAS_USUALES)
+    if not denominadores:
+        raise ValueError("Hace falta al menos una escala.")
+
+    unidad = _UNIDAD_POR_MM[model_units]
+    creados: list[dict[str, Any]] = []
+
+    for d in denominadores:
+        if d <= 0:
+            raise ValueError("Una escala tiene que ser > 0; vino %r." % d)
+        upm = d * unidad                       # unidades del modelo por mm papel
+        nombre = "%s%g" % (prefix, d)
+        activo = current_scale is not None and abs(d - current_scale) < 1e-9
+        acad.call("set_dim_style", {
+            "name": nombre,
+            "textHeight": paper_mm * upm,
+            "arrowSize": arrow_paper_mm * upm,
+            "scale": 1.0,
+            "decimalPlaces": decimals,
+            "textStyle": text_style,
+            "unitsFactor": None,
+            # Separacion de la linea de extension al punto medido y cuanto
+            # sobresale: 1 mm y 1.5 mm de papel, que es lo de norma.
+            "extensionOffset": 1.0 * upm,
+            "extensionBeyond": 1.5 * upm,
+            "setCurrent": activo,
+        })
+        creados.append({"name": nombre, "scale": d,
+                        "textHeight": paper_mm * upm,
+                        "arrowSize": arrow_paper_mm * upm,
+                        "unitsPerPaperMm": upm,
+                        "isCurrent": activo})
+
+    aviso = None
+    if current_scale is not None and not any(c["isCurrent"] for c in creados):
+        aviso = ("current_scale=%g no esta entre las escalas pedidas (%s): "
+                 "no quedo ninguno activo." %
+                 (current_scale, ", ".join("%g" % d for d in denominadores)))
+
+    return {"styles": creados, "count": len(creados),
+            "modelUnits": model_units, "paperMm": paper_mm,
+            "warning": aviso}
+
+
 def create_dimension_chain(
     positions: Optional[list[float]] = None,
     side: str = "bottom",

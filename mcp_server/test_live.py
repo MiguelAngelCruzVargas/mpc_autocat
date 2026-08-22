@@ -506,6 +506,66 @@ def t_undo():
     raise RuntimeError("el circulo sigue estando despues de esperar el undo")
 
 
+def t_simbolos_de_convencion():
+    """Nivel, titulo de vista y marca de corte contra AutoCAD real.
+
+    Son composicion pura de Python, pero el relleno SOLID del triangulo y la
+    marca de corte solo se puede confirmar contra el motor de hatch de verdad:
+    un patron que el dibujo no acepta devuelve None en silencio.
+    """
+    import symbols
+    x0, y0 = BASE_X + 150, BASE_Y
+    h = 0.125
+
+    niv = symbols.create_level_mark(x=x0, y=y0 + 5.0, elevation=5.0,
+                                    height=h, side="left", suffix="MTS")
+    for hd in niv["handles"]:
+        track({"handle": hd})
+    if "+ 5.00" not in niv["text"]:
+        raise RuntimeError("el nivel no dice '+ 5.00': %r" % niv["text"])
+
+    cero = symbols.create_level_mark(x=x0, y=y0, elevation=0.0, height=h,
+                                     side="left", suffix="MTS")
+    for hd in cero["handles"]:
+        track({"handle": hd})
+    if "±" not in cero["text"]:
+        raise RuntimeError("el cero tiene que llevar mas-menos: %r" % cero["text"])
+
+    tit = symbols.create_view_title(x=x0, y=y0 - 2.0, title="CORTE A-A",
+                                    scale_text="ESC. 1:50", height=0.20)
+    for hd in tit["handles"]:
+        track({"handle": hd})
+    if tit["width"] <= 0:
+        raise RuntimeError("el titulo no midio su propio ancho")
+
+    marca = symbols.create_section_mark(x1=x0 + 5, y1=y0 + 1, x2=x0 + 12,
+                                        y2=y0 + 1, label="A", height=0.15)
+    for hd in marca["handles"]:
+        track({"handle": hd})
+
+    return ("nivel +5.00 y +-0.00, titulo (%.2f de ancho) y marca de corte A"
+            % tit["width"])
+
+
+def t_familia_de_dimstyles():
+    """La familia COTAS25/50/100/150 queda REALMENTE en el dibujo."""
+    import annotation
+    r = annotation.set_dim_style_family(model_units="m", paper_mm=2.0)
+    esperado = {"COTAS25": 0.05, "COTAS50": 0.10,
+                "COTAS100": 0.20, "COTAS150": 0.30}
+
+    estilos = {e["name"]: e["textHeight"]
+               for e in acad.call("list_styles", {})["dimStyles"]}
+    faltan = [n for n in esperado if n not in estilos]
+    if faltan:
+        raise RuntimeError("no quedaron en el dibujo: %s" % faltan)
+    for nombre, alto in esperado.items():
+        if abs(estilos[nombre] - alto) > 1e-6:
+            raise RuntimeError("%s quedo en %s y esperaba %s"
+                               % (nombre, estilos[nombre], alto))
+    return "%d estilos, alturas como el plano de referencia" % r["count"]
+
+
 def t_list_documents():
     r = acad.call("list_documents", {})
     activos = [d["name"] for d in r["documents"] if d["isActive"]]
@@ -1018,6 +1078,8 @@ PRUEBAS = [
     ("export_pdf", t_export_pdf),
     ("capture_viewport", t_capture_viewport),
     ("undo", t_undo),
+    ("simbolos de convencion", t_simbolos_de_convencion),
+    ("familia de dimstyles", t_familia_de_dimstyles),
     ("list_documents", t_list_documents),
     ("set_active_document", t_set_active_document),
     ("new_document", t_new_document),

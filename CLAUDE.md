@@ -295,6 +295,38 @@ no son muros.
 
 Revisá `cramped` en lo que devuelve: ahí van los que no encontraron lugar.
 
+## 6.quinquies Los símbolos de convención: nivel, título de vista, marca de corte
+
+Tres cosas que aparecen en cualquier juego profesional y que **no se arman con
+`create_text` + `create_line` sueltos**, por la misma razón que la simbología
+eléctrica: un símbolo normalizado tiene que salir igual en todas las láminas.
+
+- **`create_level_mark`** — la marca de N.P.T. de cortes y fachadas. Se le pasa
+  la cota REAL del dibujo, no dónde quede lindo el texto: el símbolo apoya su
+  punta ahí y el número sale al costado. Un nivel que flota sobre su cota
+  miente, y eso es peor que no ponerlo. El cero sale con `±` porque es el nivel
+  de referencia, no un `+0.00` cualquiera. Escrito a mano ya se encimó de
+  verdad —"N.P.T. +1.40" contra "DESCANSO"— y `check_annotations` no lo vio
+  porque nunca supo que ese texto existía.
+- **`create_view_title`** — TODA vista lleva el suyo: nombre, subrayado grueso
+  y `ESC. 1:50` debajo más chico. Es lo que convierte tres dibujos sueltos en
+  una lámina. Sin jerarquía de texto, el nombre de la planta pesa lo mismo que
+  una nota al pie. Por default separa las letras (`P L A N T A`), que es como
+  se rotula en la mayoría de las oficinas.
+- **`create_section_mark`** — lo único que liga una planta con su corte. Sin
+  esto son dos dibujos sueltos: nada dice de dónde se sacó el corte ni hacia
+  dónde se mira, que es la mitad de la información. La cola gruesa entra
+  **hacia adentro** del dibujo a propósito; los extremos del corte caen fuera
+  del edificio y una cola hacia afuera deja la marca flotando lejos de lo que
+  corta.
+
+Va en la capa `MARCAS-CORTE`, **no** en `CORTES` (que ya es el detalle de capas
+de pavimento de `create_layer_section`) ni en `SECCIONES` (los cortes viales).
+
+Los tres registran su huella en `space`, así que `place_labels` no les escribe
+encima y `check_annotations` los revisa sin que haya que pasárselos.
+
+
 ## 6. Mobiliario y rótulos
 
 `place_furniture` dibuja todas las piezas en UNA llamada: pasarle la lista
@@ -406,6 +438,15 @@ create_dimension_chain(segments=[[3.65, 5.15], [-3.50, 3.50], [-5.15, -3.65]],
 ```
 
 Tres llamadas sueltas darían tres líneas de cota distintas.
+
+**Al empezar el dibujo, `set_dim_style_family`.** Deja `COTAS25`, `COTAS50`,
+`COTAS100` y `COTAS150` armados DENTRO del DWG, cada uno con la altura de texto
+igual a los mismos milímetros de papel por su escala (dibujando en metros con
+`paper_mm=2.0`: COTAS50 → 0.10, COTAS100 → 0.20). `create_dimension_chain`
+resuelve la altura al vuelo y funciona, pero no deja nada en el archivo: quien
+lo reciba y siga acotando no tiene con qué seguir la misma convención y la
+segunda tanda sale de otro tamaño. Los 2 mm salen de medir un juego de planos
+real; la ISO admite 2.5.
 
 `create_dimension` suelta queda para lo puntual: un detalle, una diagonal, un
 hueco aislado. Si la ubicás a mano, verificá con `check_annotations` antes.

@@ -122,6 +122,10 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | **Validación** | `check_program` / `check_layout` / `check_geometry` / `check_walls` | Que el programa entre en el terreno, que la zonificación cumpla, que los recintos existan y que la muraria cierre — antes de dibujar |
 | | `check_annotations` | Que las cotas, las burbujas y los rótulos no se encimen — el plano como dibujo, después de dibujar |
 | | `check_drawing_hygiene` | Audita el ARCHIVO: capas creadas y sin usar, texto todavía en fuente `.shx`, entidades duplicadas exactas |
+| **Convención** | **`create_level_mark`** | **Marca de nivel (N.P.T.) apoyada en la cota real del dibujo; el cero sale con ±** |
+| | `create_view_title` | Título de vista: nombre con letras separadas, subrayado grueso y la escala debajo |
+| | `create_section_mark` | Marca de corte con flechas y letra — lo único que liga una planta con su sección |
+| | `set_dim_style_family` | Deja COTAS25/50/100/150 en el DWG, cada uno a 2mm de papel por su escala |
 | Geometría | `create_line` | Línea entre dos puntos 3D |
 | | `create_polyline` | Polilínea 2D a partir de una lista de puntos, abierta o cerrada |
 | | `create_circle` | Círculo por centro y radio |

@@ -26,6 +26,7 @@ import layers as layers_mod
 import sections as sect_mod
 import sheet as sheet_mod
 import space as space_mod
+import symbols as sym_mod
 
 mcp = FastMCP("autocad")
 
@@ -1622,6 +1623,128 @@ def iso_project(x: float, y: float, z: float) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- Geometría
+
+@mcp.tool()
+def create_level_mark(x: float, y: float, elevation: float,
+                       height: float = 0.0,
+                       text: Optional[str] = None,
+                       prefix: str = "N.P.T.",
+                       suffix: str = "",
+                       side: str = "right",
+                       line_length: float = 0.0,
+                       style: str = "triangulo",
+                       decimals: int = 2,
+                       layer: str = "NIVELES",
+                       lineweight: int = 18,
+                       color_index: Optional[int] = None) -> dict[str, Any]:
+    """Marca de nivel (N.P.T.) en un corte o una fachada.
+
+    NO armar esto con create_text + create_line sueltos: es la falla que ya
+    pasó de verdad -- dos niveles escritos a mano terminaron encimados y
+    check_annotations no los vio porque nunca supo que existían.
+
+    x, y: el punto del nivel REAL en el dibujo, no donde quede lindo el
+    texto. El símbolo se apoya ahí y el texto sale al costado que diga 'side'.
+    elevation: el número (5.00, -1.20, 0.0). El cero sale con ± porque es el
+    nivel de referencia, no un +0.00 cualquiera.
+    style: 'triangulo' (macizo, el más legible) o 'circulo'.
+
+    Queda registrada en space, así que place_labels no le escribe encima."""
+    return sym_mod.create_level_mark(
+        x=x, y=y, elevation=elevation, height=height, text=text,
+        prefix=prefix, suffix=suffix, side=side, line_length=line_length,
+        style=style, decimals=decimals, layer=layer, lineweight=lineweight,
+        color_index=color_index)
+
+
+@mcp.tool()
+def create_view_title(x: float, y: float, title: str,
+                       scale_text: Optional[str] = None,
+                       height: float = 0.0,
+                       spaced: bool = True,
+                       underline: bool = True,
+                       align: str = "left",
+                       layer: str = "TITULOS",
+                       color_index: Optional[int] = 152,
+                       lineweight: int = 35,
+                       rule_lineweight: int = 50) -> dict[str, Any]:
+    """Título de vista: nombre, subrayado grueso y escala debajo.
+
+    TODA vista lleva el suyo. Es lo que convierte tres dibujos sueltos en una
+    lámina: sin jerarquía de texto el nombre de la planta pesa lo mismo que
+    una nota al pie y la lámina no se sabe leer.
+
+    title: 'PLANTA ESTRUCTURAL DE CUBIERTA'.
+    scale_text: 'ESC. 1:100', va abajo y más chico. None lo omite.
+    spaced: separa las letras ('P L A N T A'), como se rotula en la mayoría
+    de las oficinas. False lo deja tal cual.
+    align: 'left' (x es el borde izquierdo) o 'center' (x es el centro).
+
+    Devuelve la caja total — pasásela a create_table en 'avoid' para que un
+    cuadro no le caiga encima."""
+    return sym_mod.create_view_title(
+        x=x, y=y, title=title, scale_text=scale_text, height=height,
+        spaced=spaced, underline=underline, align=align, layer=layer,
+        color_index=color_index, lineweight=lineweight,
+        rule_lineweight=rule_lineweight)
+
+
+@mcp.tool()
+def create_section_mark(x1: float, y1: float, x2: float, y2: float,
+                         label: str = "A",
+                         height: float = 0.0,
+                         direction: str = "left",
+                         tail: float = 0.0,
+                         show_line: bool = False,
+                         layer: str = "MARCAS-CORTE",
+                         lineweight: int = 50,
+                         color_index: Optional[int] = None) -> dict[str, Any]:
+    """Marca de corte: lo único que liga una planta con su sección.
+
+    Una planta y un corte sin esto son dos dibujos sueltos — nada dice de
+    dónde se sacó el corte ni hacia dónde se mira, que es la mitad de la
+    información. Va en la planta, apuntando a la vista que le corresponde.
+
+    x1,y1 -> x2,y2: por dónde pasa el plano de corte. Se dibujan los DOS
+    extremos (cola gruesa + flecha + globo con la letra) y el tramo del medio
+    se omite, que es como se dibuja sobre una planta con contenido.
+    direction: 'left' o 'right' respecto del sentido 1->2, hacia dónde mira.
+    show_line: True traza además la línea de corte completa.
+
+    La capa es MARCAS-CORTE y no CORTES, que ya la usa create_layer_section."""
+    return sym_mod.create_section_mark(
+        x1=x1, y1=y1, x2=x2, y2=y2, label=label, height=height,
+        direction=direction, tail=tail, show_line=show_line, layer=layer,
+        lineweight=lineweight, color_index=color_index)
+
+
+@mcp.tool()
+def set_dim_style_family(scales: Optional[list[float]] = None,
+                          model_units: str = "m",
+                          paper_mm: float = 2.0,
+                          arrow_paper_mm: float = 2.0,
+                          prefix: str = "COTAS",
+                          decimals: int = 2,
+                          text_style: Optional[str] = None,
+                          current_scale: Optional[float] = None
+                          ) -> dict[str, Any]:
+    """Crea un estilo de cota POR ESCALA, con nombre, dentro del dibujo.
+
+    create_dimension_chain resuelve la altura al vuelo y funciona, pero no
+    deja nada en el DWG: quien reciba el archivo y siga acotando no tiene con
+    qué seguir la misma convención, y la segunda tanda sale de otro tamaño.
+
+    Esto deja COTAS25/COTAS50/COTAS100/COTAS150 armados, cada uno con la
+    altura de texto igual a los mismos mm de papel por su escala. Dibujando
+    en metros con paper_mm=2.0: COTAS50 -> 0.10, COTAS100 -> 0.20.
+
+    Llamalo UNA vez al empezar el dibujo, después pasá style='COTAS50' a
+    create_dimension. paper_mm=2.0 es lo usual en obra; ISO admite 2.5."""
+    return ann_mod.set_dim_style_family(
+        scales=scales, model_units=model_units, paper_mm=paper_mm,
+        arrow_paper_mm=arrow_paper_mm, prefix=prefix, decimals=decimals,
+        text_style=text_style, current_scale=current_scale)
+
 
 @mcp.tool()
 def create_line(
