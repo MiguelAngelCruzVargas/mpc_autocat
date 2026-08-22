@@ -272,6 +272,42 @@ def test_rechaza_parametros_invalidos() -> None:
             check("rechaza %s" % que, True)
 
 
+def test_vertical_center_baja_el_bloque() -> None:
+    """Con pocas vistas chicas en una hoja grande, apilar desde arriba deja
+    la lamina abandonada. 'center' centra el bloque entero."""
+    v = [vista("v", 0, 0, 10, 5)]
+    arriba = por_nombre(plan(v, area=[0, 0, 40, 40]))["v"]
+    centro = por_nombre(plan(v, area=[0, 0, 40, 40], vertical="center"))["v"]
+    check("'top' pega contra el borde de arriba",
+          cerca(arriba["box"][3], 40.0), arriba["box"])
+    check("'center' deja el mismo aire arriba que abajo",
+          cerca(40.0 - centro["box"][3], centro["box"][1]),
+          (centro["box"][1], 40.0 - centro["box"][3]))
+    check("y no cambia el tamano",
+          cerca(centro["box"][3] - centro["box"][1],
+                arriba["box"][3] - arriba["box"][1]), centro["box"])
+
+
+def test_avisa_cuando_la_lamina_queda_vacia() -> None:
+    """La tool ve que sobra media hoja. Que lo diga, en vez de que se note
+    recien al mirar el plano impreso."""
+    r = plan([vista("chica", 0, 0, 5, 3)], area=[0, 0, 40, 40])
+    check("avisa que queda vacia",
+          any("vacia" in w for w in r["warnings"]), r["warnings"])
+    lleno = plan([vista("v%d" % i, 0, 0, 30, 12) for i in range(3)],
+                 area=[0, 0, 40, 40])
+    check("y no avisa cuando la ocupa",
+          not any("vacia" in w for w in lleno["warnings"]), lleno["warnings"])
+
+
+def test_rechaza_vertical_invalido() -> None:
+    try:
+        plan([vista("v", 0, 0, 1, 1)], area=[0, 0, 10, 10], vertical="abajo")
+        check("rechaza vertical invalido", False, "no tiro ValueError")
+    except ValueError:
+        check("rechaza vertical invalido", True)
+
+
 def main() -> int:
     for fn in [test_una_fila_apoya_en_una_linea_de_base_comun,
                test_align_center_centra_en_vez_de_apoyar,
@@ -287,7 +323,10 @@ def main() -> int:
                test_si_no_entra_lo_dice_y_no_achica,
                test_una_vista_mas_ancha_que_la_hoja_se_avisa,
                test_reporta_cuanto_uso,
-               test_rechaza_parametros_invalidos]:
+               test_rechaza_parametros_invalidos,
+               test_vertical_center_baja_el_bloque,
+               test_avisa_cuando_la_lamina_queda_vacia,
+               test_rechaza_vertical_invalido]:
         print(fn.__name__)
         fn()
 

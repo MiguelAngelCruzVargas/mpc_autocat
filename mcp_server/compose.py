@@ -164,6 +164,7 @@ def plan_composition(views: list[dict[str, Any]],
                      title_block_mm: float = TITLE_BLOCK_MM,
                      align: str = "bottom",
                      distribute: str = "center",
+                     vertical: str = "top",
                      scale: Optional[float] = None) -> dict[str, Any]:
     """Calcula donde va cada vista. NO dibuja ni mueve nada.
 
@@ -183,6 +184,8 @@ def plan_composition(views: list[dict[str, Any]],
         raise ValueError("align tiene que ser 'bottom' o 'center'.")
     if distribute not in ("center", "left", "justify"):
         raise ValueError("distribute tiene que ser 'center', 'left' o 'justify'.")
+    if vertical not in ("top", "center"):
+        raise ValueError("vertical tiene que ser 'top' o 'center'.")
     if not views:
         raise ValueError("No hay vistas que componer.")
     if not area or len(area) != 4:
@@ -233,6 +236,18 @@ def plan_composition(views: list[dict[str, Any]],
     # arriba a la izquierda, que es por donde se empieza a leer una lamina.
     colocaciones: list[dict[str, Any]] = []
     y_tope = ay1
+    if vertical == "center" and entra:
+        y_tope = ay1 - (H - alto_total) / 2.0
+
+    # Una lamina que queda vacia en mas de la mitad no es un error, pero casi
+    # siempre quiere decir que sobra formato o falta escala -- y es de lo que
+    # mas se nota al mirar el plano terminado. La tool lo ve; que lo diga.
+    if entra and alto_total < H * 0.55:
+        avisos.append(
+            "Las vistas ocupan %.0f%% del alto util (%.2f de %.2f): la lamina "
+            "queda vacia en mas de la mitad. Conviene un formato mas chico, "
+            "una escala mayor, o vertical='center' para al menos centrar el "
+            "bloque." % (100.0 * alto_total / H, alto_total, H))
     for fila, alto_fila in zip(filas, altos_fila):
         anchos = [u.width for u in fila]
         suma = sum(anchos)
@@ -354,6 +369,7 @@ def compose_sheet(views: list[dict[str, Any]],
                   title_block_mm: float = TITLE_BLOCK_MM,
                   align: str = "bottom",
                   distribute: str = "center",
+                  vertical: str = "top",
                   scale: Optional[float] = None,
                   draw_titles: bool = True,
                   dry_run: bool = False) -> dict[str, Any]:
@@ -373,7 +389,8 @@ def compose_sheet(views: list[dict[str, Any]],
     """
     plan = plan_composition(views, area, gutter_mm=gutter_mm,
                             title_block_mm=title_block_mm, align=align,
-                            distribute=distribute, scale=scale)
+                            distribute=distribute, vertical=vertical,
+                            scale=scale)
     if dry_run:
         plan["applied"] = False
         return plan
@@ -385,6 +402,23 @@ def compose_sheet(views: list[dict[str, Any]],
     # ya se acomodo adentro de ella.
     seleccion = {p["name"]: _handles_de(por_nombre[p["name"]])
                  for p in plan["placements"]}
+
+    # Pasando 'handles' a mano es facil dejarse algo adentro de la caja: la
+    # marca de nivel, una cota, un rotulo dibujado antes. Lo que no se pasa
+    # NO se mueve, y queda huerfano en medio de la lamina, lejos de la vista
+    # a la que pertenecia. Paso de verdad en la primera verificacion en vivo.
+    huerfanas: list[str] = []
+    for p in plan["placements"]:
+        v = por_nombre[p["name"]]
+        if not v.get("handles"):
+            continue                     # sin handles se selecciono por ventana
+        x0, y0, x1, y1 = _caja(v, p["name"])
+        dentro = acad.call("select_entities", {
+            "x1": x0, "y1": y0, "x2": x1, "y2": y1,
+            "layers": None, "types": None, "mode": "inside"})
+        sobran = len(dentro.get("entities", [])) - len(seleccion[p["name"]])
+        if sobran > 0:
+            huerfanas.append("%s (%d)" % (p["name"], sobran))
 
     movidas = 0
     for p in plan["placements"]:
@@ -413,6 +447,13 @@ def compose_sheet(views: list[dict[str, Any]],
     plan["warnings"] = list(plan["warnings"]) + [
         "Se reinicio el estado de anotacion (space): las vistas cambiaron de "
         "lugar. Acota y rotula DESPUES de componer."]
+    if huerfanas:
+        plan["orphaned"] = huerfanas
+        plan["warnings"].append(
+            "Quedaron entidades sin mover dentro de la caja de %s: pasaste "
+            "'handles' a mano y esas no estaban en la lista. Van a quedar "
+            "donde estaban, lejos de su vista. Omiti 'handles' para que las "
+            "seleccione por ventana, o agregalas." % ", ".join(huerfanas))
     return plan
 
 
