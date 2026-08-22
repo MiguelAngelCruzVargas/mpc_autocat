@@ -111,6 +111,69 @@ namespace AutoCadMcpPlugin.Commands
                         }
                         result["attributes"] = attrs;
                         break;
+
+                    // Una sola rama para las seis clases de cota
+                    // (RotatedDimension, AlignedDimension, Radial...): todas
+                    // heredan de Dimension y lo que interesa está ahí.
+                    case Dimension dim:
+                        // Measurement es lo que la cota MIDE de verdad;
+                        // DimensionText es el texto que muestra. Vienen
+                        // distintos cuando alguien piso el numero a mano, y
+                        // ese es justo el caso que hay que poder detectar.
+                        result["measurement"] = dim.Measurement;
+                        result["dimensionText"] = dim.DimensionText;
+                        result["overridden"] = !string.IsNullOrEmpty(dim.DimensionText);
+                        result["styleName"] = dim.DimensionStyleName;
+                        result["textPosition"] = PointToJson(dim.TextPosition);
+                        try { result["textHeight"] = dim.Dimtxt; } catch (System.Exception) { }
+                        try { result["dimScale"] = dim.Dimscale; } catch (System.Exception) { }
+                        break;
+
+                    // El viewport es lo que convierte un modelo desordenado
+                    // en una lamina limpia: recorta una zona, la muestra a
+                    // una escala fija y apaga las capas que no le tocan.
+                    case Viewport vp:
+                        result["centerPoint"] = PointToJson(vp.CenterPoint);
+                        result["width"] = vp.Width;
+                        result["height"] = vp.Height;
+                        result["viewCenter"] = new JsonArray { vp.ViewCenter.X, vp.ViewCenter.Y };
+                        result["viewHeight"] = vp.ViewHeight;
+                        result["customScale"] = vp.CustomScale;
+                        // CustomScale son unidades de papel por unidad de
+                        // modelo: 0.01 es 1:100 dibujando en las mismas
+                        // unidades. Se devuelve el reciproco ya hecho porque
+                        // es como se lee una lamina.
+                        if (vp.CustomScale > 0)
+                            result["scaleDenominator"] = 1.0 / vp.CustomScale;
+                        result["locked"] = vp.Locked;
+                        result["viewportNumber"] = vp.Number;
+                        result["on"] = vp.On;
+                        var congeladas = new JsonArray();
+                        try
+                        {
+                            foreach (ObjectId lid in vp.GetFrozenLayers())
+                                congeladas.Add(((LayerTableRecord)tr.GetObject(
+                                    lid, OpenMode.ForRead)).Name);
+                        }
+                        catch (System.Exception) { }
+                        result["frozenLayers"] = congeladas;
+                        break;
+
+                    case MLeader ml:
+                        result["leaderCount"] = ml.LeaderCount;
+                        result["styleName"] = ml.MLeaderStyle.IsNull ? null
+                            : ((MLeaderStyle)tr.GetObject(ml.MLeaderStyle,
+                                OpenMode.ForRead)).Name;
+                        try
+                        {
+                            // El texto va ADENTRO del MLeader (por eso la
+                            // flecha lo sigue al moverlo); en el Leader viejo
+                            // es una entidad suelta al lado.
+                            if (ml.MText != null)
+                                result["text"] = ml.MText.Contents;
+                        }
+                        catch (System.Exception) { }
+                        break;
                 }
 
                 tr.Commit();

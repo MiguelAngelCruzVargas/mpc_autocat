@@ -170,6 +170,8 @@ namespace AutoCadMcpPlugin
                     return DocumentCommands.Open(doc, pars);
                 case "new_document":
                     return DocumentCommands.New(doc, pars);
+                case "close_document":
+                    return DocumentCommands.Close(doc, pars);
                 case "ping":
                     return DocumentCommands.Ping(doc, pars);
 

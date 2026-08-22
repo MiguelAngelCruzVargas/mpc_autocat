@@ -182,6 +182,108 @@ namespace AutoCadMcpPlugin.Commands
         }
 
         /// <summary>
+        /// Cierra un dibujo abierto.
+        ///
+        /// Quedó afuera a propósito hasta ahora: descartar cambios sin
+        /// guardar no es algo que deba hacer una tool sin que se lo pidan.
+        /// Se agregó porque la falta se hizo sentir — cada demo que abría un
+        /// dibujo para no tocar el del usuario dejaba uno abierto, y había
+        /// que cerrarlos a mano de a uno.
+        ///
+        /// Por eso descartar es EXPLÍCITO: sin save=true ni
+        /// discardUnsaved=true, se niega y lo dice.
+        ///
+        /// OJO: corre SIN el lock del documento (ver CommandDispatcher).
+        ///
+        /// params: [name] (por defecto el activo), [save=false],
+        ///         [discardUnsaved=false]
+        /// </summary>
+        public static JsonObject Close(Document doc, JsonObject pars)
+        {
+            var dm = Application.DocumentManager;
+            int total = 0;
+            foreach (Document unused in dm) total++;
+            if (total <= 1)
+                throw new InvalidOperationException(
+                    "Es el único dibujo abierto y AutoCAD no puede quedarse sin " +
+                    "ninguno. Cerrá AutoCAD desde AutoCAD si es lo que querés.");
+
+            string name = pars["name"]?.GetValue<string>();
+            bool save = pars["save"]?.GetValue<bool>() ?? false;
+            bool discard = pars["discardUnsaved"]?.GetValue<bool>() ?? false;
+
+            Document target = null;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                target = dm.MdiActiveDocument;
+            }
+            else
+            {
+                foreach (Document d in dm)
+                {
+                    if (string.Equals(Path.GetFileName(d.Name), name,
+                                      StringComparison.OrdinalIgnoreCase)
+                        || d.Name.EndsWith(name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        target = d;
+                        break;
+                    }
+                }
+                if (target == null)
+                {
+                    var abiertos = new JsonArray();
+                    foreach (Document d in dm)
+                        abiertos.Add(Path.GetFileName(d.Name));
+                    throw new InvalidOperationException(
+                        $"No hay ningún dibujo abierto que coincida con '{name}'. " +
+                        $"Abiertos: {abiertos.ToJsonString()}");
+                }
+            }
+
+            string cerrado = Path.GetFileName(target.Name);
+            bool tieneRuta = Path.IsPathRooted(target.Name);
+
+            if (save && !tieneRuta)
+                throw new InvalidOperationException(
+                    $"'{cerrado}' nunca se guardó, así que no hay ruta donde " +
+                    "guardarlo. Usá save_drawing con un path explícito primero, " +
+                    "o cerralo con discardUnsaved=true.");
+            if (!save && !discard)
+                throw new InvalidOperationException(
+                    $"Cerrar '{cerrado}' sin guardar descarta lo que tenga sin " +
+                    "guardar. Si es lo que querés, pasá discardUnsaved=true; si " +
+                    "no, save=true.");
+
+            // Cerrar el documento ACTIVO desde su propio hilo es donde AutoCAD
+            // se pone quisquilloso: se activa otro primero y recién ahí se
+            // cierra el que sobra.
+            if (ReferenceEquals(target, dm.MdiActiveDocument))
+            {
+                foreach (Document d in dm)
+                {
+                    if (!ReferenceEquals(d, target))
+                    {
+                        dm.MdiActiveDocument = d;
+                        break;
+                    }
+                }
+            }
+
+            if (save)
+                target.CloseAndSave(target.Name);
+            else
+                target.CloseAndDiscard();
+
+            return new JsonObject
+            {
+                ["closed"] = cerrado,
+                ["saved"] = save,
+                ["active"] = Path.GetFileName(
+                    Application.DocumentManager.MdiActiveDocument.Name)
+            };
+        }
+
+        /// <summary>
         /// Chequeo de salud: confirma que el plugin responde y sobre qué dibujo
         /// está parado. El cliente abre una conexión nueva por llamada, así que
         /// esto es lo que hace las veces de "reconectar".
@@ -214,6 +316,6 @@ namespace AutoCadMcpPlugin.Commands
     /// </summary>
     public static class PluginInfo
     {
-        public const string Version = "0.5.0";
+        public const string Version = "0.6.0";
     }
 }

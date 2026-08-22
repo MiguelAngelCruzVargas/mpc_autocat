@@ -2859,6 +2859,28 @@ def new_document(template: Optional[str] = None) -> dict[str, Any]:
 
 
 @mcp.tool()
+def close_document(name: Optional[str] = None, save: bool = False,
+                    discard_unsaved: bool = False) -> dict[str, Any]:
+    """Cierra un dibujo abierto. Sin 'name', el activo.
+
+    Descartar es EXPLÍCITO: sin `save=True` ni `discard_unsaved=True` se
+    niega y lo dice, porque tirar cambios sin guardar no es algo que deba
+    hacer una tool por su cuenta.
+
+    Se niega también a cerrar el último dibujo abierto — AutoCAD no puede
+    quedarse sin ninguno.
+
+    Después de cerrar, el estado cacheado del dibujo anterior se olvida."""
+    r = acad.call("close_document", {"name": name, "save": save,
+                                     "discardUnsaved": discard_unsaved})
+    avisos = _reset_drawing_state(r.get("active", "?"))
+    if avisos:
+        r = dict(r)
+        r["warnings"] = avisos
+    return r
+
+
+@mcp.tool()
 def select_entities(x1: Optional[float] = None, y1: Optional[float] = None,
                      x2: Optional[float] = None, y2: Optional[float] = None,
                      layers: Optional[list[str]] = None,

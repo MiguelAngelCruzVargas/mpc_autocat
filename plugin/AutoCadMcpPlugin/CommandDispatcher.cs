@@ -67,7 +67,8 @@ namespace AutoCadMcpPlugin
         /// </summary>
         private static bool RunsUnlocked(string cmd)
         {
-            return cmd == "open_document" || cmd == "new_document";
+            return cmd == "open_document" || cmd == "new_document"
+                || cmd == "close_document";
         }
 
         private static JsonObject RunOnDocumentThread(string cmd, JsonObject pars)
