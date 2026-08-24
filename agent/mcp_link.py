@@ -45,10 +45,17 @@ def _aplanar_schema(schema: Any) -> Any:
                      if not (isinstance(v, dict) and v.get("type") == "null")]
         if len(variantes) == 1:
             fusionado = dict(variantes[0])
-            # 'default' y 'title' viven en el padre, no en la variante.
             for clave in ("default", "title", "description"):
                 if clave in schema and clave not in fusionado:
                     fusionado[clave] = schema[clave]
+            # Y se TIRA el `default: null`. Si se deja, el modelo lo ve y
+            # manda literalmente null en un campo que ahora dice "string":
+            # Groq rechaza la llamada entera con "expected string, but got
+            # null" y la tool no se ejecuta. Pasó de verdad con
+            # new_document(template=None). Un opcional no se manda como
+            # null: se OMITE, y para eso ya está su ausencia en 'required'.
+            if fusionado.get("default", "…") is None:
+                del fusionado["default"]
             return _aplanar_schema(fusionado)
 
     return {k: _aplanar_schema(v) for k, v in schema.items()}

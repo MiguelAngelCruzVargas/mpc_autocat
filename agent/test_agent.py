@@ -45,8 +45,13 @@ def test_aplanar_schema() -> None:
     props = limpio["properties"]
     check("el Optional[str] queda como string",
           props["layer"]["type"] == "string", str(props["layer"]))
-    check("y conserva su default",
-          props["layer"].get("default", "AUSENTE") is None,
+    # El `default: null` se TIRA. Si se deja, el modelo lo copia y manda
+    # null en un campo que ahora dice "string": Groq rechaza la llamada
+    # entera con "expected string, but got null" y la tool nunca corre.
+    # Paso de verdad con new_document(template=None).
+    check("pero el 'default: null' NO sobrevive",
+          "default" not in props["layer"], str(props["layer"]))
+    check("y el titulo si", props["layer"].get("title") == "Layer",
           str(props["layer"]))
     check("lo que no era anyOf no se toca",
           props["x"]["type"] == "number", str(props["x"]))
@@ -97,6 +102,19 @@ async def _con_conexion() -> None:
                      if "anyOf" in str(t["function"]["parameters"])]
         check("ningun schema conserva anyOf", not sin_anyof,
               str(sin_anyof[:4]))
+
+        # Ningun parametro tipado puede traer default null: es la
+        # combinacion que hace que el modelo mande null y el proveedor
+        # rechace la llamada.
+        con_default_null = []
+        for t in catalogo:
+            for nombre, prop in (t["function"]["parameters"]
+                                 .get("properties", {}).items()):
+                if (isinstance(prop, dict) and "type" in prop
+                        and "default" in prop and prop["default"] is None):
+                    con_default_null.append(f"{t['function']['name']}.{nombre}")
+        check("ningun parametro queda con 'default: null'",
+              not con_default_null, str(con_default_null[:4]))
 
         # Una tool que no existe: el error tiene que volver como texto.
         salida, error = await mcp.ejecutar("tool_que_no_existe", {})
