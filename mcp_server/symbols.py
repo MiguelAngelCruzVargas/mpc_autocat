@@ -381,3 +381,95 @@ def create_section_mark(x1: float, y1: float, x2: float, y2: float,
 
     return {"handles": handles, "label": label, "height": h,
             "direction": direction}
+
+
+# --------------------------------------------------------------- norte
+
+LAYER_NORTH = "NORTE"
+LW_NORTH = 35
+
+
+def create_north(x: float, y: float, radius: float = 0.0,
+                 rotation_deg: float = 0.0,
+                 label: str = "N",
+                 style: str = "arrow",
+                 layer: str = LAYER_NORTH,
+                 lineweight: int = LW_NORTH,
+                 color_index: Optional[int] = None) -> dict[str, Any]:
+    """Simbolo de norte. TODO plano de terreno o de conjunto lleva uno.
+
+    Sin norte, una planta no se puede orientar en el lote ni saber que
+    fachada recibe el sol -- y en un plano que se entrega a licencia es de
+    las primeras cosas que se revisan. Armarlo a mano con lineas sueltas da
+    un norte distinto en cada lamina, que es la misma razon por la que la
+    marca de nivel y el titulo de vista viven aca.
+
+    x, y: CENTRO del simbolo.
+    radius: radio en unidades del modelo. 0 lo toma de la escala de la
+    lamina (12 mm de papel), que es el tamano usual.
+    rotation_deg: hacia donde apunta el norte, medido desde arriba (+Y) y en
+    sentido ANTIHORARIO -- 0 es norte hacia arriba, que es como se orienta
+    un plano salvo que el terreno obligue a otra cosa.
+    style: 'arrow' es la aguja clasica de dos mitades (una llena, una vacia)
+    dentro de su circulo; 'simple' es solo la flecha, sin circulo, para un
+    detalle chico.
+
+    La huella queda registrada: place_labels no le escribe encima y
+    check_annotations lo revisa."""
+    if style not in ("arrow", "simple"):
+        raise ValueError("style tiene que ser 'arrow' o 'simple'.")
+
+    r = radius if radius > 0 else space.paper(12.0)
+    _layer(layer, layers.COLOR_PRINCIPAL, lineweight)
+
+    # 'rotation_deg' se mide desde +Y (norte arriba) y antihorario; la
+    # geometria se arma con angulos desde +X, de ahi el +90.
+    a = math.radians(rotation_deg + 90.0)
+    ux, uy = math.cos(a), math.sin(a)      # hacia la punta
+    vx, vy = -uy, ux                       # perpendicular
+
+    handles: list[str] = []
+    if style == "arrow":
+        handles.append(acad.call("create_circle", {
+            "x": x, "y": y, "z": 0.0, "radius": r,
+            "layer": layer, "lineweight": lineweight,
+            "colorIndex": color_index})["handle"])
+
+    largo = r * (0.92 if style == "arrow" else 1.0)
+    ancho = largo * 0.30
+    punta = (x + ux * largo, y + uy * largo)
+    cola = (x - ux * largo * 0.75, y - uy * largo * 0.75)
+    izq = (x + vx * ancho, y + vy * ancho)
+    der = (x - vx * ancho, y - vy * ancho)
+
+    # Dos mitades: la izquierda hueca, la derecha rellena. Es la aguja
+    # clasica -- el contraste es lo que la hace legible de lejos, y en
+    # monocromo sigue funcionando porque no depende del color.
+    mitad_hueca = _poly([[punta[0], punta[1]], [izq[0], izq[1]],
+                         [cola[0], cola[1]]], True, layer, lineweight,
+                        color_index)
+    mitad_llena = _poly([[punta[0], punta[1]], [der[0], der[1]],
+                         [cola[0], cola[1]]], True, layer, lineweight,
+                        color_index)
+    handles.extend([mitad_hueca, mitad_llena])
+    relleno = _solid(mitad_llena, layer, color_index)
+    if relleno:
+        handles.append(relleno)
+
+    if label:
+        h = space.paper(3.5) if radius <= 0 else r * 0.29
+        ancho_l = _w(label, h)
+        # La letra va MAS ALLA de la punta, siguiendo la misma direccion:
+        # asi acompana al norte aunque el simbolo este rotado.
+        lx = x + ux * (r * 1.18) - ancho_l / 2.0
+        ly = y + uy * (r * 1.18) - h / 2.0
+        t = _text(label, lx, ly, h, layer, LW_TITLE_TEXT, color_index)
+        if t:
+            handles.append(t)
+
+    space.track(x - r * 1.35, y - r * 1.35, x + r * 1.35, y + r * 1.35,
+                "norte")
+
+    return {"handles": handles, "radius": r, "center": [x, y],
+            "rotation": rotation_deg,
+            "box": [x - r * 1.35, y - r * 1.35, x + r * 1.35, y + r * 1.35]}

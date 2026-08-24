@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 import autocad_client as acad
 import layers
+import space
 from geom import Axis, Point, densify
 
 LAYER_AXIS = "EJE-CALLE"
@@ -673,3 +674,287 @@ def _fillet_arc(p0: Point, p1: Point, radius: float,
     return [(cx + r * math.cos(a0 + barrido * k / samples),
              cy + r * math.sin(a0 + barrido * k / samples))
             for k in range(samples + 1)]
+
+
+# ------------------------------------------- retícula de coordenadas
+
+LAYER_RETICULA = "RETICULA-UTM"
+LW_RETICULA = 9
+
+
+def create_coordinate_grid(
+    min_x: float, min_y: float, max_x: float, max_y: float,
+    spacing: float = 10.0,
+    cross_mm: float = 2.5,
+    text_mm: float = 1.8,
+    label_x: bool = True,
+    label_y: bool = True,
+    decimals: int = 0,
+    scale: Optional[float] = None,
+    layer: str = LAYER_RETICULA,
+    lineweight: int = LW_RETICULA,
+) -> dict[str, Any]:
+    """Retícula de coordenadas: las cruces de una vista topográfica.
+
+    Es lo que permite ubicar CUALQUIER punto del plano en el terreno real:
+    sin la retícula, un plano en coordenadas UTM tiene los números del
+    cuadro de construcción pero nada con qué leerlos sobre el dibujo. Va en
+    la vista "con coordenadas originales" (la topográfica); la vista de
+    proyecto se dibuja sin ella, que es la convención que usa cualquier
+    juego serio.
+
+    min_x..max_y: la zona a reticular, en coordenadas del modelo.
+    spacing: cada cuánto va una cruz, en unidades del modelo (10 m en un
+    terreno urbano, 100 m en un conjunto). Las cruces caen en los MÚLTIPLOS
+    exactos del espaciamiento — no en el borde de la zona: una retícula
+    cuyos números no son redondos no se puede leer.
+    cross_mm / text_mm: tamaño de la cruz y del rótulo en mm de PAPEL, así
+    la retícula se ve igual a cualquier escala.
+    label_x / label_y: rotular abajo las X y a la izquierda las Y.
+    decimals: decimales del rótulo (0 en UTM, donde el metro ya es la
+    precisión útil).
+
+    Las cruces NO se registran como huella: son una malla de fondo y
+    bloquear el plano entero dejaría a place_labels sin dónde escribir.
+    Los rótulos del borde sí, que es lo que puede encimarse."""
+    if spacing <= 0:
+        raise ValueError("spacing tiene que ser > 0.")
+    x0, x1 = min(min_x, max_x), max(min_x, max_x)
+    y0, y1 = min(min_y, max_y), max(min_y, max_y)
+
+    esc = scale if scale else space.units_per_paper_mm()
+    brazo = cross_mm * esc / 2.0
+    h = text_mm * esc
+
+    xs = []
+    k = math.ceil(x0 / spacing - 1e-9)
+    while k * spacing <= x1 + 1e-9:
+        xs.append(k * spacing)
+        k += 1
+    ys = []
+    k = math.ceil(y0 / spacing - 1e-9)
+    while k * spacing <= y1 + 1e-9:
+        ys.append(k * spacing)
+        k += 1
+
+    if not xs or not ys:
+        raise ValueError(
+            "Con spacing=%g no cae ninguna cruz dentro de la zona "
+            "(%g x %g). Bajá el espaciamiento." % (spacing, x1 - x0, y1 - y0))
+
+    _ensure(layer, layers.COLOR_SECUNDARIO, lineweight)
+
+    cruces = 0
+    for gx in xs:
+        for gy in ys:
+            acad.call("create_line", {
+                "x1": gx - brazo, "y1": gy, "z1": 0.0,
+                "x2": gx + brazo, "y2": gy, "z2": 0.0,
+                "layer": layer, "lineweight": lineweight, "colorIndex": None})
+            acad.call("create_line", {
+                "x1": gx, "y1": gy - brazo, "z1": 0.0,
+                "x2": gx, "y2": gy + brazo, "z2": 0.0,
+                "layer": layer, "lineweight": lineweight, "colorIndex": None})
+            cruces += 1
+
+    fmt = "%%.%df" % max(0, int(decimals))
+    etiquetas = 0
+
+    if label_x:
+        for gx in xs:
+            texto = fmt % gx
+            ancho = len(texto) * h * 0.87
+            tx, ty = gx - ancho / 2.0, y0 - h * 2.0
+            acad.call("create_text", {
+                "text": texto, "x": tx, "y": ty, "z": 0.0, "height": h,
+                "layer": layer, "rotationDeg": 0.0, "style": None,
+                "lineweight": lineweight, "colorIndex": None})
+            space.track(tx, ty, tx + ancho, ty + h * 1.2,
+                        "%s %s" % (space.PREFIJO_TEXTO, texto))
+            etiquetas += 1
+
+    if label_y:
+        for gy in ys:
+            texto = fmt % gy
+            ancho = len(texto) * h * 0.87
+            # Rotada 90°: una coordenada UTM son 7 dígitos y en horizontal
+            # se mete adentro del dibujo.
+            tx, ty = x0 - h * 2.0, gy - ancho / 2.0
+            acad.call("create_text", {
+                "text": texto, "x": tx, "y": ty, "z": 0.0, "height": h,
+                "layer": layer, "rotationDeg": 90.0, "style": None,
+                "lineweight": lineweight, "colorIndex": None})
+            space.track(tx - h * 1.2, ty, tx, ty + ancho,
+                        "%s %s" % (space.PREFIJO_TEXTO, texto))
+            etiquetas += 1
+
+    return {
+        "crosses": cruces,
+        "labels": etiquetas,
+        "spacing": spacing,
+        "xValues": xs,
+        "yValues": ys,
+        "box": [x0, y0, x1, y1],
+    }
+
+
+# ------------------------------------------- cuadro de construcción
+
+LAYER_CUADRO = "CUADRO-CONSTRUCCION"
+LW_CUADRO = 13
+
+# Anchos de columna en mm de papel: LADO | RUMBO | DISTANCIA | V | X | Y.
+# El rumbo es la columna ancha (N 89°59'59" W son 13 caracteres) y las
+# coordenadas UTM llevan 6-7 enteros más 3 decimales.
+_CUADRO_COLS_MM = (16.0, 30.0, 16.0, 8.0, 24.0, 24.0)
+
+
+def _dms(grados: float) -> str:
+    """45.5083° -> 45°30'30" (grados, minutos y segundos enteros)."""
+    g = int(grados)
+    resto = (grados - g) * 60.0
+    m = int(resto)
+    s = int(round((resto - m) * 60.0))
+    if s == 60:
+        s, m = 0, m + 1
+    if m == 60:
+        m, g = 0, g + 1
+    return "%02d°%02d'%02d\"" % (g, m, s)
+
+
+def rumbo(p0: Point, p1: Point) -> str:
+    """Rumbo cuadrantal del lado p0->p1: N/S ángulo E/W desde el norte.
+
+    Es la forma en que un cuadro de construcción mexicano expresa la
+    dirección de cada lado del terreno — no un azimut de 0 a 360.
+    """
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    if math.hypot(dx, dy) < 1e-9:
+        raise ValueError("Dos vértices consecutivos son el mismo punto.")
+    ns = "N" if dy >= 0 else "S"
+    ew = "E" if dx >= 0 else "W"
+    angulo = math.degrees(math.atan2(abs(dx), abs(dy)))
+    return "%s %s %s" % (ns, _dms(angulo), ew)
+
+
+def create_construction_table(
+    points: list[list[float]],
+    x: float,
+    y: float,
+    title: str = "CUADRO DE CONSTRUCCIÓN",
+    vertex_prefix: str = "V",
+    row_mm: float = 6.0,
+    text_mm: float = 2.0,
+    scale: Optional[float] = None,
+    layer: str = LAYER_CUADRO,
+    mark_vertices: bool = True,
+    avoid: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """Cuadro de construcción del terreno: rumbos, distancias y coordenadas.
+
+    Es LA tabla que acompaña a todo plano de terreno en México (la que
+    CivilCAD llama cuadro de construcción): una fila por lado del polígono
+    con su rumbo cuadrantal (N 45°30'20" W), su distancia y las coordenadas
+    del vértice de llegada, más la superficie y el perímetro al pie. Sin
+    ella el plano no se puede replantear en campo.
+
+    points: vértices del polígono EN SUS COORDENADAS REALES (UTM o locales),
+    en orden y sin repetir el primero al final — el cierre se agrega solo.
+    Los rumbos, distancias y superficie se CALCULAN de esos vértices, no se
+    escriben de memoria: el número que sale es el que mide el dibujo.
+
+    x, y: esquina superior izquierda del cuadro.
+    scale: unidades del modelo por mm de papel; sin él, rige la escala
+    registrada de la lámina (create_sheet).
+    mark_vertices: dibuja en cada vértice su círculo y su etiqueta V1, V2...
+    corridas hacia AFUERA del polígono, para leer el cuadro contra el
+    dibujo. Quedan registradas: check_annotations las ve.
+
+    Devuelve las filas calculadas ('sides'), 'area', 'perimeter' y la caja
+    del cuadro."""
+    import annotation as ann
+
+    if len(points) < 3:
+        raise ValueError("Un polígono de terreno necesita al menos 3 vértices.")
+    pts = [(float(p[0]), float(p[1])) for p in points]
+    if math.dist(pts[0], pts[-1]) < 1e-9:
+        pts = pts[:-1]      # vino cerrado: el cierre lo agregamos nosotros
+        if len(pts) < 3:
+            raise ValueError(
+                "Un polígono de terreno necesita al menos 3 vértices.")
+
+    esc = scale if scale else space.units_per_paper_mm()
+
+    lados = []
+    perimetro = 0.0
+    area2 = 0.0
+    n = len(pts)
+    for i in range(n):
+        p0, p1 = pts[i], pts[(i + 1) % n]
+        dist = math.dist(p0, p1)
+        perimetro += dist
+        area2 += p0[0] * p1[1] - p1[0] * p0[1]
+        lados.append({
+            "side": "%s%d-%s%d" % (vertex_prefix, i + 1,
+                                   vertex_prefix, (i + 1) % n + 1),
+            "bearing": rumbo(p0, p1),
+            "distance": round(dist, 3),
+            "vertex": "%s%d" % (vertex_prefix, (i + 1) % n + 1),
+            "x": round(p1[0], 3),
+            "y": round(p1[1], 3),
+        })
+    area = abs(area2) / 2.0
+
+    filas = [["LADO", "RUMBO", "DISTANCIA", "V", "X", "Y"]]
+    for lado in lados:
+        filas.append([lado["side"], lado["bearing"],
+                      "%.2f" % lado["distance"], lado["vertex"],
+                      "%.3f" % lado["x"], "%.3f" % lado["y"]])
+    # El pie va en las columnas anchas (RUMBO y X): "60.00 m" no entra en
+    # la columna V de 8 mm y la tabla entera se negaba a dibujarse.
+    filas.append(["SUP.", "%.2f m2" % area, "PERIM.", "",
+                  "%.2f m" % perimetro, ""])
+
+    tabla = ann.create_table(
+        x=x, y=y, rows=filas,
+        col_widths=[w * esc for w in _CUADRO_COLS_MM],
+        row_height=row_mm * esc, text_height=text_mm * esc,
+        title=title, header=True, layer=layer, avoid=avoid)
+
+    marcas = []
+    if mark_vertices:
+        _ensure(layer, layers.COLOR_COTAS, LW_CUADRO)
+        cx = sum(p[0] for p in pts) / n
+        cy = sum(p[1] for p in pts) / n
+        r = 1.0 * esc
+        for i, p in enumerate(pts):
+            dx, dy = p[0] - cx, p[1] - cy
+            d = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / d, dy / d
+            acad.call("create_circle", {
+                "x": p[0], "y": p[1], "z": 0.0, "radius": r,
+                "layer": layer, "lineweight": LW_CUADRO,
+                "colorIndex": None})
+            tx = p[0] + ux * 3.0 * esc
+            ty = p[1] + uy * 3.0 * esc
+            etiqueta = "%s%d" % (vertex_prefix, i + 1)
+            acad.call("create_text", {
+                "text": etiqueta, "x": tx, "y": ty, "z": 0.0,
+                "height": text_mm * esc, "layer": layer,
+                "rotationDeg": 0.0, "style": None,
+                "lineweight": LW_CUADRO, "colorIndex": None})
+            ancho = len(etiqueta) * text_mm * esc * 0.87
+            space.track(tx, ty, tx + ancho, ty + text_mm * esc * 1.2,
+                        "%s %s" % (space.PREFIJO_TEXTO, etiqueta))
+            marcas.append({"vertex": etiqueta, "x": p[0], "y": p[1]})
+
+    resultado = {
+        "sides": lados,
+        "area": round(area, 3),
+        "perimeter": round(perimetro, 3),
+        "vertexMarks": marcas,
+        "table": tabla,
+    }
+    if tabla.get("warning"):
+        resultado["warning"] = tabla["warning"]
+    return resultado

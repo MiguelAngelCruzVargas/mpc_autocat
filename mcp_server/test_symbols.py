@@ -327,6 +327,70 @@ def test_familia_rechaza_unidades_y_escalas_invalidas(g: Grabadora) -> None:
             check("rechaza %s" % que, True)
 
 
+# --------------------------------------------------------------- norte
+
+@con_mock
+def test_norte_apunta_arriba(g) -> None:
+    """rotation 0 = la punta hacia +Y. Es el caso por default y el que se
+    usa en el 95% de los planos."""
+    r = symbols.create_north(100.0, 50.0, radius=2.0)
+    poligonos = g.de("create_polyline")
+    check("dibuja las dos mitades de la aguja", len(poligonos) == 2,
+          str(len(poligonos)))
+    check("dibuja su circulo", len(g.de("create_circle")) == 1,
+          str(len(g.de("create_circle"))))
+    check("rellena una sola mitad",
+          len([p for p in g.de("create_hatch")
+               if p.get("pattern") == "SOLID"]) == 1,
+          str(g.de("create_hatch")))
+    # La punta es el vertice mas alto de cualquiera de las dos mitades.
+    ys = [p[1] for poly in poligonos for p in poly["points"]]
+    xs = [p[0] for poly in poligonos for p in poly["points"]]
+    check("la punta va hacia arriba", cerca(max(ys), 50.0 + 2.0 * 0.92, 1e-6),
+          str(max(ys)))
+    check("y esta centrada en x", cerca(max(xs) - 100.0, 100.0 - min(xs), 1e-6),
+          f"{min(xs)}..{max(xs)}")
+    check("devuelve el radio usado", cerca(r["radius"], 2.0), str(r["radius"]))
+    letras = [p for p in g.de("create_text") if p["text"] == "N"]
+    check("rotula la N", len(letras) == 1, str(g.de("create_text")))
+    check("la N va sobre la punta", letras and letras[0]["y"] > 50.0,
+          str(letras))
+
+
+@con_mock
+def test_norte_rotado(g) -> None:
+    """rotation_deg se mide desde arriba y ANTIHORARIO: 90 manda la punta
+    hacia -X (el oeste), no hacia +X."""
+    symbols.create_north(0.0, 0.0, radius=2.0, rotation_deg=90.0)
+    pts = [p for poly in g.de("create_polyline") for p in poly["points"]]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    check("la punta se fue a -X", cerca(min(xs), -2.0 * 0.92, 1e-6), str(min(xs)))
+    check("y ya no apunta hacia arriba", max(ys) < 2.0 * 0.92, str(max(ys)))
+
+
+@con_mock
+def test_norte_registra_huella(g) -> None:
+    """Sin huella, place_labels le escribiria encima."""
+    symbols.create_north(10.0, 10.0, radius=1.0)
+    huellas = [h for h in space.FOOTPRINTS if h.get("what") == "norte"]
+    check("registra su huella", len(huellas) == 1, str(space.FOOTPRINTS))
+    if huellas:
+        h = huellas[0]
+        check("la huella cubre el simbolo entero",
+              h["x0"] < 9.0 and h["x1"] > 11.0, str(h))
+
+
+@con_mock
+def test_norte_style_invalido(g) -> None:
+    try:
+        symbols.create_north(0.0, 0.0, radius=1.0, style="rosa")
+    except ValueError as exc:
+        check("un style desconocido se niega", "arrow" in str(exc), str(exc))
+    else:
+        check("un style desconocido se niega", False, "no dio error")
+
+
 def main() -> int:
     for fn in [test_fmt_elevacion,
                test_nivel_apoya_la_punta_en_la_cota_real,
@@ -343,7 +407,9 @@ def main() -> int:
                test_familia_reproduce_las_alturas_del_plano_de_referencia,
                test_familia_en_centimetros_y_milimetros,
                test_familia_deja_activo_el_de_la_lamina,
-               test_familia_rechaza_unidades_y_escalas_invalidas]:
+               test_familia_rechaza_unidades_y_escalas_invalidas,
+               test_norte_apunta_arriba, test_norte_rotado,
+               test_norte_registra_huella, test_norte_style_invalido]:
         print(fn.__name__)
         fn()
 

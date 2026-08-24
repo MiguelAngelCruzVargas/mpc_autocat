@@ -61,6 +61,76 @@ EJE = [[0.0, 0.0], [40.0, 0.0], [64.748737, 10.251263]]
 BUL = [0.0, 0.198912367379658, 0.0]
 
 
+def con_linetypes(disponibles: list[str]):
+    """Mock que RECHAZA los linetypes que no estan en la lista, como hace
+    AutoCAD cuando el patron no esta en su acad.lin."""
+    hechos: list[dict] = []
+    real = preview.fake_call
+    ok = {n.upper() for n in disponibles}
+
+    def call(cmd, params=None):
+        params = params or {}
+        if cmd == "list_layers":
+            return {"layers": []}
+        if cmd == "set_layer":
+            lt = params.get("linetype")
+            if lt and lt.upper() not in ok:
+                raise autocad_client.AutoCadError(
+                    f"No se pudo cargar el linetype '{lt}' desde acad.lin")
+            hechos.append(params)
+        return real(cmd, params)
+
+    autocad_client.call = call
+    for modulo in (civil, ann, layers):
+        modulo.acad.call = call
+    layers.reset()
+    preview.DRAWN.clear()
+    return hechos
+
+
+def test_linetype_cae_al_equivalente_en_castellano() -> None:
+    """Un AutoCAD en espanol trae CENTRO2 y no CENTER2. Antes la capa
+    entera fallaba; ahora se prueba el equivalente."""
+    hechos = con_linetypes(["CENTRO2"])
+    creada = layers.ensure("EJES-PRUEBA", 32, 13, "CENTER2")
+    check("crea la capa igual", creada, "no la creo")
+    usados = [h.get("linetype") for h in hechos if h.get("name") == "EJES-PRUEBA"]
+    check("usa el equivalente en castellano", usados == ["CENTRO2"],
+          str(usados))
+
+
+def test_linetype_al_reves_tambien() -> None:
+    """Y si le piden el castellano en un AutoCAD en ingles."""
+    hechos = con_linetypes(["HIDDEN2"])
+    layers.ensure("OCULTOS-PRUEBA", 8, 13, "OCULTA2")
+    usados = [h.get("linetype") for h in hechos
+              if h.get("name") == "OCULTOS-PRUEBA"]
+    check("cae al equivalente en ingles", usados == ["HIDDEN2"], str(usados))
+
+
+def test_sin_ningun_equivalente_la_capa_igual_se_crea() -> None:
+    """Quedarse sin la capa rompe todo lo que iba a dibujarse en ella: si
+    ningun patron carga, la capa se crea CONTINUA."""
+    hechos = con_linetypes([])          # ningun linetype disponible
+    creada = layers.ensure("RARA-PRUEBA", 7, 25, "UN_PATRON_INVENTADO")
+    check("la capa se crea igual", creada, "no la creo")
+    usados = [h.get("linetype") for h in hechos if h.get("name") == "RARA-PRUEBA"]
+    check("y queda continua", usados == [None], str(usados))
+
+
+def test_equivalencias_van_en_los_dos_sentidos() -> None:
+    check("CENTER2 -> CENTRO2", layers.equivalente("CENTER2") == "CENTRO2",
+          str(layers.equivalente("CENTER2")))
+    check("CENTRO2 -> CENTER2", layers.equivalente("CENTRO2") == "CENTER2",
+          str(layers.equivalente("CENTRO2")))
+    check("PHANTOM2 -> FANTASMA2",
+          layers.equivalente("PHANTOM2") == "FANTASMA2",
+          str(layers.equivalente("PHANTOM2")))
+    check("un patron desconocido no tiene equivalente",
+          layers.equivalente("LO_QUE_SEA") is None,
+          str(layers.equivalente("LO_QUE_SEA")))
+
+
 def test_no_pisa_una_capa_existente() -> None:
     hechos = con_capas(["VIAL_EJE", "VIAL_RODADURA",
                         "VIAL_GUARNICION_BANQUETA"])
@@ -143,7 +213,11 @@ def main() -> int:
     for fn in [test_no_pisa_una_capa_existente, test_crea_la_capa_que_falta,
                test_el_eje_de_la_calle_va_bylayer,
                test_el_cadenamiento_va_bylayer,
-               test_los_defaults_no_usan_colores_puros]:
+               test_los_defaults_no_usan_colores_puros,
+               test_equivalencias_van_en_los_dos_sentidos,
+               test_linetype_cae_al_equivalente_en_castellano,
+               test_linetype_al_reves_tambien,
+               test_sin_ningun_equivalente_la_capa_igual_se_crea]:
         print(fn.__name__)
         fn()
 

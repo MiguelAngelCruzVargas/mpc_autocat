@@ -71,6 +71,52 @@ EVITAR = {1: "rojo puro: chillon en pantalla, usa 12",
           9: "gris muy claro: casi no imprime, usa 8 o 253"}
 
 
+# ------------------------------------------------------ tipos de linea
+#
+# Un plano profesional distingue por TRAZO, no solo por color: el eje va
+# trazo-punto, lo que esta arriba o detras del plano de corte va punteado,
+# el limite de predio va con su trazo propio. Dibujando todo continuo, esa
+# informacion se pierde -y en monocromo se pierde del todo, porque ahi el
+# color ni siquiera esta.
+#
+# Los nombres son los de acad.lin (el que trae AutoCAD en cualquier idioma).
+# Un AutoCAD en espanol suele traer ADEMAS acadiso.lin con los mismos
+# patrones en castellano (CENTRO, OCULTA, TRAZOS): el plano de referencia
+# usaba CENTRO1, PHANTOM2, DASHED2 y OCULTA2 mezclados, que son justamente
+# esas dos familias conviviendo. ensure_linetype() prueba el nombre pedido
+# y, si el dibujo no lo tiene, cae al equivalente en la otra familia en vez
+# de fallar.
+#
+# El sufijo 2 es el MISMO patron a la mitad de escala; dibujando en metros
+# casi siempre se quiere el 2 (o directamente ajustar LTSCALE con
+# set_display_options, ver CLAUDE.md 4.bis).
+
+LT_EJE = "CENTER2"          # eje de trazo y punto
+LT_OCULTO = "HIDDEN2"       # lo que queda detras o debajo del corte
+LT_PROYECCION = "DASHED2"   # proyeccion de lo que esta ARRIBA (volados, losas)
+LT_LIMITE = "PHANTOM2"      # limite de predio, colindancia, area de proyecto
+LT_CONTINUO = "Continuous"
+
+# Equivalencias entre la familia inglesa (acad.lin) y la castellana
+# (acadiso.lin). Se prueban en los dos sentidos.
+EQUIVALENTES = {
+    "CENTER": "CENTRO", "CENTER2": "CENTRO2", "CENTERX2": "CENTROX2",
+    "HIDDEN": "OCULTA", "HIDDEN2": "OCULTA2", "HIDDENX2": "OCULTAX2",
+    "DASHED": "TRAZOS", "DASHED2": "TRAZOS2", "DASHEDX2": "TRAZOSX2",
+    "PHANTOM": "FANTASMA", "PHANTOM2": "FANTASMA2",
+    "DASHDOT": "TRAZOYPUNTO", "DIVIDE": "DIVIDIR", "BORDER": "BORDE",
+}
+_EQUIV_INVERSO = {v: k for k, v in EQUIVALENTES.items()}
+
+
+def equivalente(linetype: str) -> Optional[str]:
+    """El mismo patron en la otra familia (ingles <-> castellano)."""
+    if not linetype:
+        return None
+    n = linetype.upper()
+    return EQUIVALENTES.get(n) or _EQUIV_INVERSO.get(n)
+
+
 def reset() -> None:
     """Olvida lo cacheado. Al cambiar de dibujo, o si se crearon capas afuera."""
     global _EXISTING
@@ -129,8 +175,29 @@ def ensure(name: str, color: int, lineweight: int,
         return False
     if not force and name.upper() in _existing():
         return False
-    acad.call("set_layer", {"name": name, "colorIndex": color,
-                            "linetype": linetype,
-                            "lineweightHundredthsMm": lineweight})
+
+    def _set(lt: Optional[str]) -> None:
+        acad.call("set_layer", {"name": name, "colorIndex": color,
+                                "linetype": lt,
+                                "lineweightHundredthsMm": lineweight})
+
+    try:
+        _set(linetype)
+    except acad.AutoCadError:
+        # El dibujo no tiene ese patron cargado ni pudo traerlo de acad.lin.
+        # Casi siempre es un AutoCAD en el otro idioma (CENTER2 vs CENTRO2):
+        # se prueba el equivalente antes de rendirse, y si tampoco, la capa
+        # se crea CONTINUA -- una capa sin su trazo se ve peor que perfecta,
+        # pero quedarse sin la capa rompe todo lo que iba a dibujarse en ella.
+        alterno = equivalente(linetype) if linetype else None
+        hecho = False
+        if alterno:
+            try:
+                _set(alterno)
+                hecho = True
+            except acad.AutoCadError:
+                hecho = False
+        if not hecho:
+            _set(None)
     _existing().add(name.upper())
     return True

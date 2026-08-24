@@ -145,11 +145,142 @@ def test_flecha_fuera_del_eje_da_error() -> None:
         check("avisa si la flecha se sale del eje", False, "no dio error")
 
 
+def test_rumbos_cuadrantales() -> None:
+    import math
+    check("noreste", civil.rumbo((0, 0), (10, 10)) == 'N 45°00\'00" E',
+          civil.rumbo((0, 0), (10, 10)))
+    check("sureste", civil.rumbo((0, 0), (10, -10)) == 'S 45°00\'00" E',
+          civil.rumbo((0, 0), (10, -10)))
+    check("suroeste", civil.rumbo((0, 0), (-10, -10)) == 'S 45°00\'00" W',
+          civil.rumbo((0, 0), (-10, -10)))
+    check("noroeste", civil.rumbo((0, 0), (-10, 10)) == 'N 45°00\'00" W',
+          civil.rumbo((0, 0), (-10, 10)))
+    check("norte franco", civil.rumbo((0, 0), (0, 10)) == 'N 00°00\'00" E',
+          civil.rumbo((0, 0), (0, 10)))
+    check("este franco", civil.rumbo((0, 0), (10, 0)) == 'N 90°00\'00" E',
+          civil.rumbo((0, 0), (10, 0)))
+    dx = math.tan(math.radians(30.0 + 30.0 / 60.0 + 30.0 / 3600.0)) * 100.0
+    check("grados, minutos y segundos",
+          civil.rumbo((0, 0), (dx, 100.0)) == 'N 30°30\'30" E',
+          civil.rumbo((0, 0), (dx, 100.0)))
+
+
+def test_cuadro_de_construccion() -> None:
+    import space
+    limpiar()
+    space.clear()
+    # Terreno de 10 x 20 en coordenadas UTM realistas.
+    pts = [[196400.0, 2005200.0], [196410.0, 2005200.0],
+           [196410.0, 2005220.0], [196400.0, 2005220.0]]
+    r = civil.create_construction_table(pts, x=196420.0, y=2005220.0,
+                                        scale=0.1)
+    check("cuatro lados", len(r["sides"]) == 4, str(len(r["sides"])))
+    check("superficie por shoelace", r["area"] == 200.0, str(r["area"]))
+    check("perimetro", r["perimeter"] == 60.0, str(r["perimeter"]))
+    check("el lado V2-V3 va al norte",
+          r["sides"][1]["bearing"] == 'N 00°00\'00" E',
+          r["sides"][1]["bearing"])
+    check("el vertice de llegada del primer lado es V2",
+          r["sides"][0]["vertex"] == "V2", r["sides"][0]["vertex"])
+    circulos = [e for e in preview.DRAWN if e["cmd"] == "create_circle"]
+    check("un circulo por vertice", len(circulos) == 4, str(len(circulos)))
+    # Solo las etiquetas SOBRE el poligono (la tabla, a la derecha de
+    # x=196420, tambien tiene celdas "V1", "V2"...).
+    textos = [e for e in preview.DRAWN if e["cmd"] == "create_text"
+              and str(e.get("text", "")).startswith("V")
+              and e["x"] < 196415.0]
+    check("una etiqueta por vertice", len(textos) == 4, str(len(textos)))
+
+
+def test_cuadro_acepta_poligono_cerrado() -> None:
+    import space
+    limpiar()
+    space.clear()
+    pts = [[0.0, 0.0], [10.0, 0.0], [10.0, 20.0], [0.0, 20.0], [0.0, 0.0]]
+    r = civil.create_construction_table(pts, x=15.0, y=20.0, scale=0.1,
+                                        mark_vertices=False)
+    check("el cierre repetido no duplica lados", len(r["sides"]) == 4,
+          str(len(r["sides"])))
+    check("y la superficie da igual", r["area"] == 200.0, str(r["area"]))
+
+
+def test_cuadro_errores() -> None:
+    try:
+        civil.create_construction_table([[0, 0], [1, 1]], x=0, y=0)
+    except ValueError as exc:
+        check("menos de 3 vertices se niega", "3 v" in str(exc), str(exc))
+    else:
+        check("menos de 3 vertices se niega", False, "no dio error")
+
+
+def test_reticula_cae_en_multiplos() -> None:
+    """Las cruces van en los multiplos exactos del espaciamiento, no en el
+    borde de la zona: una reticula con numeros no redondos no se lee."""
+    import space
+    limpiar()
+    space.clear()
+    # Zona que arranca y termina en numeros feos, a proposito.
+    r = civil.create_coordinate_grid(196403.7, 2005207.2, 196438.1,
+                                     2005231.9, spacing=10.0, scale=0.1)
+    check("las X son multiplos de 10", r["xValues"] == [196410.0, 196420.0,
+                                                        196430.0],
+          str(r["xValues"]))
+    check("las Y tambien", r["yValues"] == [2005210.0, 2005220.0, 2005230.0],
+          str(r["yValues"]))
+    check("3x3 = 9 cruces", r["crosses"] == 9, str(r["crosses"]))
+    lineas = [e for e in preview.DRAWN if e["cmd"] == "create_line"]
+    check("dos lineas por cruz", len(lineas) == 18, str(len(lineas)))
+    check("rotula los dos bordes", r["labels"] == 6, str(r["labels"]))
+
+
+def test_reticula_no_bloquea_el_dibujo() -> None:
+    """Las cruces son malla de fondo: si registraran huella, place_labels se
+    quedaria sin lugar en todo el plano."""
+    import space
+    limpiar()
+    space.clear()
+    civil.create_coordinate_grid(0.0, 0.0, 30.0, 30.0, spacing=10.0,
+                                 scale=0.1, label_x=False, label_y=False)
+    check("las cruces no dejan huella", len(space.FOOTPRINTS) == 0,
+          str(space.FOOTPRINTS))
+    limpiar()
+    space.clear()
+    civil.create_coordinate_grid(0.0, 0.0, 30.0, 30.0, spacing=10.0,
+                                 scale=0.1)
+    # 0, 10, 20 y 30 son cuatro multiplos por eje -> 8 rotulos.
+    check("pero los rotulos si", len(space.FOOTPRINTS) == 8,
+          str(len(space.FOOTPRINTS)))
+
+
+def test_reticula_errores() -> None:
+    import space
+    limpiar()
+    space.clear()
+    try:
+        civil.create_coordinate_grid(0.0, 0.0, 10.0, 10.0, spacing=0.0)
+    except ValueError as exc:
+        check("spacing 0 se niega", "spacing" in str(exc), str(exc))
+    else:
+        check("spacing 0 se niega", False, "no dio error")
+    try:
+        # Zona de 3 m con espaciamiento de 100: no cae ninguna cruz.
+        civil.create_coordinate_grid(1.0, 1.0, 4.0, 4.0, spacing=100.0)
+    except ValueError as exc:
+        check("avisa si no cae ninguna cruz", "ninguna cruz" in str(exc),
+              str(exc))
+    else:
+        check("avisa si no cae ninguna cruz", False, "no dio error")
+
+
 def main() -> int:
     for fn in [test_extremos_cerrados_por_defecto, test_extremos_abiertos,
                test_achurado_y_extremos_abiertos_no_conviven,
                test_label_offset_separa_el_cadenamiento,
-               test_flecha_de_flujo, test_flecha_fuera_del_eje_da_error]:
+               test_flecha_de_flujo, test_flecha_fuera_del_eje_da_error,
+               test_rumbos_cuadrantales, test_cuadro_de_construccion,
+               test_cuadro_acepta_poligono_cerrado, test_cuadro_errores,
+               test_reticula_cae_en_multiplos,
+               test_reticula_no_bloquea_el_dibujo, test_reticula_errores]:
         print(fn.__name__)
         fn()
 
