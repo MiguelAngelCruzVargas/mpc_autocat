@@ -69,7 +69,9 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
                     mensajes: list[dict[str, Any]],
                     tools: list[dict[str, Any]],
                     al_evento: Optional[Callable[[str, dict], None]] = None,
-                    vueltas_max: int = VUELTAS_MAX) -> list[dict[str, Any]]:
+                    vueltas_max: int = VUELTAS_MAX,
+                    cancelado: Optional[Callable[[], bool]] = None
+                    ) -> list[dict[str, Any]]:
     """Corre el ciclo hasta que el modelo deja de pedir tools.
 
     Devuelve la conversación completa (para poder seguirla después). El
@@ -83,12 +85,22 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
         if al_evento:
             al_evento(tipo, datos)
 
+    def se_corto() -> bool:
+        return bool(cancelado and cancelado())
+
     for vuelta in range(vueltas_max):
+        if se_corto():
+            avisar("aviso", {"texto": "Cancelado. Lo que ya se dibujó queda "
+                                      "en el DWG: revisalo antes de seguir."})
+            break
         try:
             respuesta = proveedor.completar(mensajes, tools)
         except ErrorProveedor as exc:
             avisar("aviso", {"texto": str(exc)})
             break
+
+        if hasattr(proveedor, "resumen"):
+            avisar("uso", proveedor.resumen())
 
         texto = _texto_de(respuesta)
         if texto:
@@ -102,6 +114,13 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
 
         resultados = []
         for llamada in llamadas:
+            # Se corta ENTRE tools, nunca a mitad de una: abandonar un
+            # create_walls a medio camino dejaría el dibujo inconsistente.
+            if se_corto():
+                avisar("aviso", {"texto":
+                                 "Cancelado. La tool en curso terminó; las "
+                                 "que faltaban no se ejecutaron."})
+                return mensajes
             avisar("tool", {"nombre": llamada["nombre"],
                             "args": llamada["args"]})
             salida, hubo_error = await conexion.ejecutar(llamada["nombre"],

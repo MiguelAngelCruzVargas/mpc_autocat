@@ -34,7 +34,11 @@ PRESETS: dict[str, dict[str, str]] = {
     "groq": {
         "url": "https://api.groq.com/openai/v1",
         "env": "GROQ_API_KEY",
-        "modelo": "llama-3.3-70b-versatile",
+        # Era llama-3.3-70b-versatile y Groq lo retiró de su catálogo: el
+        # default fallaba con 404 apenas alguien abría la interfaz. Un
+        # default tiene que ser un modelo que exista HOY, y si este también
+        # se retira, el botón "Probar cuáles sirven" lo dice al instante.
+        "modelo": "openai/gpt-oss-120b",
     },
     "deepseek": {
         "url": "https://api.deepseek.com/v1",
@@ -64,7 +68,38 @@ class ErrorProveedor(RuntimeError):
     """Falla al hablar con la API del modelo."""
 
 
-class ProveedorOpenAI:
+class ContadorUso:
+    """Tokens consumidos, tal como los informa el proveedor.
+
+    No se estiman: cada respuesta trae su 'usage' exacto. Con ~20k tokens
+    de definiciones de tools en CADA vuelta, saber el consumo real mientras
+    se trabaja es lo que evita la sorpresa a fin de mes.
+    """
+
+    def __init__(self) -> None:
+        self.entrada = 0
+        self.salida = 0
+        self.vueltas = 0
+
+    def anotar_uso(self, uso: dict[str, Any]) -> None:
+        if not uso:
+            return
+        self.entrada += int(uso.get("prompt_tokens")
+                            or uso.get("input_tokens") or 0)
+        self.salida += int(uso.get("completion_tokens")
+                           or uso.get("output_tokens") or 0)
+        self.vueltas += 1
+
+    @property
+    def total(self) -> int:
+        return self.entrada + self.salida
+
+    def resumen(self) -> dict[str, int]:
+        return {"entrada": self.entrada, "salida": self.salida,
+                "total": self.total, "vueltas": self.vueltas}
+
+
+class ProveedorOpenAI(ContadorUso):
     """Cliente de /chat/completions con tools (el formato mayoritario)."""
 
     formato = "openai"
@@ -72,6 +107,7 @@ class ProveedorOpenAI:
     def __init__(self, url: str, api_key: Optional[str], modelo: str,
                  timeout: float = 180.0,
                  temperatura: Optional[float] = None) -> None:
+        super().__init__()
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.modelo = modelo
@@ -110,10 +146,14 @@ class ProveedorOpenAI:
         if not datos.get("choices"):
             raise ErrorProveedor(
                 f"Respuesta sin 'choices': {json.dumps(datos)[:400]}")
+        # El consumo se acumula acá y no lo estima nadie: los proveedores
+        # lo informan exacto, y con 20k tokens de definiciones por vuelta
+        # conviene tenerlo a la vista antes de que llegue la factura.
+        self.anotar_uso(datos.get("usage") or {})
         return datos["choices"][0]["message"]
 
 
-class ProveedorAnthropic:
+class ProveedorAnthropic(ContadorUso):
     """Cliente de /messages. Anthropic no usa el formato de OpenAI."""
 
     formato = "anthropic"
@@ -121,6 +161,7 @@ class ProveedorAnthropic:
     def __init__(self, url: str, api_key: Optional[str], modelo: str,
                  timeout: float = 180.0, max_tokens: int = 8192,
                  temperatura: Optional[float] = None) -> None:
+        super().__init__()
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.modelo = modelo
@@ -162,7 +203,9 @@ class ProveedorAnthropic:
         if r.status_code >= 400:
             raise ErrorProveedor(
                 f"El modelo respondió {r.status_code}: {r.text[:600]}")
-        return r.json()
+        datos = r.json()
+        self.anotar_uso(datos.get("usage") or {})
+        return datos
 
 
 def modelos_disponibles(proveedor: str, api_key: Optional[str] = None,

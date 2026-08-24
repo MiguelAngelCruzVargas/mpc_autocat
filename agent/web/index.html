@@ -1,497 +1,365 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AutoCAD IA</title>
-<style>
-  :root {
-    --fondo: #0c0d12;
-    --panel: #14161f;
-    --panel-alto: #1b1e2a;
-    --borde: #262a38;
-    --texto: #e6e8ef;
-    --tenue: #8b90a3;
-    --acento: #5b8cff;
-    --acento-suave: rgba(91, 140, 255, .12);
-    --ok: #3ecf8e;
-    --error: #ff6b6b;
-    --aviso: #ffb454;
-    --radio: 12px;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0; background: var(--fondo); color: var(--texto);
-    font: 15px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
-    display: grid; grid-template-columns: 340px 1fr;
-  }
-  @media (max-width: 900px) { body { grid-template-columns: 1fr; } }
-
-  /* ---------------------------------------------------------- panel */
-  aside {
-    background: var(--panel); border-right: 1px solid var(--borde);
-    padding: 22px; overflow-y: auto; display: flex; flex-direction: column;
-    gap: 22px;
-  }
-  .marca { display: flex; align-items: center; gap: 11px; }
-  .logo {
-    width: 34px; height: 34px; border-radius: 9px; display: grid;
-    place-items: center; font-size: 17px;
-    background: linear-gradient(135deg, var(--acento), #9d6bff);
-  }
-  .marca h1 { font-size: 17px; margin: 0; letter-spacing: -.3px; }
-  .marca p { margin: 0; font-size: 12px; color: var(--tenue); }
-
-  .grupo { display: flex; flex-direction: column; gap: 9px; }
-  .grupo > label {
-    font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
-    color: var(--tenue); font-weight: 600;
-  }
-  select, input, textarea, button {
-    font: inherit; color: var(--texto); background: var(--panel-alto);
-    border: 1px solid var(--borde); border-radius: 9px; padding: 9px 11px;
-    width: 100%; transition: border-color .15s, background .15s;
-  }
-  select:focus, input:focus, textarea:focus {
-    outline: none; border-color: var(--acento);
-  }
-  button {
-    cursor: pointer; font-weight: 600; width: auto;
-  }
-  button:hover:not(:disabled) { background: #232736; border-color: #37405a; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  button.primario {
-    background: var(--acento); border-color: var(--acento); color: #0a0d18;
-  }
-  button.primario:hover:not(:disabled) { background: #6e9aff; }
-  .fila { display: flex; gap: 8px; }
-  .fila > * { flex: 1; }
-
-  .pista { font-size: 12px; color: var(--tenue); margin: 0; }
-  .pista code { background: var(--panel-alto); padding: 1px 5px;
-                border-radius: 5px; font-size: 11px; }
-  .estado-clave {
-    font-size: 12px; padding: 7px 10px; border-radius: 8px;
-    background: var(--acento-suave); border: 1px solid var(--borde);
-  }
-  .estado-clave.vacia { background: transparent; color: var(--tenue); }
-
-  #listaModelos { display: flex; flex-direction: column; gap: 5px;
-                  max-height: 190px; overflow-y: auto; }
-  .modelo {
-    display: flex; justify-content: space-between; gap: 8px; font-size: 12px;
-    padding: 6px 9px; border-radius: 7px; background: var(--panel-alto);
-    cursor: pointer; border: 1px solid transparent;
-  }
-  .modelo:hover { border-color: var(--acento); }
-  .modelo .est { color: var(--tenue); white-space: nowrap; }
-  .modelo.ok .est { color: var(--ok); }
-  .modelo.no .est { color: var(--error); }
-
-  /* ----------------------------------------------------------- chat */
-  main { display: flex; flex-direction: column; height: 100vh; }
-  header {
-    padding: 15px 26px; border-bottom: 1px solid var(--borde);
-    display: flex; align-items: center; justify-content: space-between;
-    background: var(--panel);
-  }
-  header .titulo { font-weight: 600; }
-  header .sub { font-size: 12px; color: var(--tenue); }
-  #hilo { flex: 1; overflow-y: auto; padding: 26px; }
-  .vacio {
-    height: 100%; display: grid; place-content: center; text-align: center;
-    color: var(--tenue); gap: 14px;
-  }
-  .vacio h2 { color: var(--texto); margin: 0; font-size: 21px; }
-  .ejemplos { display: flex; flex-direction: column; gap: 8px;
-              margin-top: 6px; }
-  .ejemplo {
-    background: var(--panel); border: 1px solid var(--borde);
-    border-radius: 10px; padding: 11px 15px; cursor: pointer;
-    font-size: 13.5px; text-align: left; color: var(--texto);
-  }
-  .ejemplo:hover { border-color: var(--acento); }
-
-  .msj { margin-bottom: 18px; animation: entrar .22s ease; }
-  @keyframes entrar { from { opacity: 0; transform: translateY(6px); }
-                      to { opacity: 1; transform: none; } }
-  .msj .quien {
-    font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
-    color: var(--tenue); margin-bottom: 5px; font-weight: 600;
-  }
-  .msj .cuerpo {
-    background: var(--panel); border: 1px solid var(--borde);
-    border-radius: var(--radio); padding: 13px 16px; white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .msj.yo .cuerpo {
-    background: var(--acento-suave); border-color: #2f3a58;
-  }
-  .herramienta {
-    display: flex; align-items: flex-start; gap: 9px; font-size: 13px;
-    background: var(--panel); border: 1px solid var(--borde);
-    border-left: 3px solid var(--acento); border-radius: 9px;
-    padding: 9px 13px; margin-bottom: 7px; font-family: ui-monospace,
-    "Cascadia Code", Consolas, monospace;
-  }
-  .herramienta.err { border-left-color: var(--error); }
-  .herramienta.bien { border-left-color: var(--ok); }
-  .herramienta .nom { font-weight: 600; color: var(--acento); }
-  .herramienta.err .nom { color: var(--error); }
-  .herramienta .det { color: var(--tenue); font-size: 12px;
-                      overflow: hidden; text-overflow: ellipsis; }
-  .nota {
-    font-size: 13px; padding: 10px 14px; border-radius: 9px;
-    background: rgba(255,180,84,.1); border: 1px solid rgba(255,180,84,.3);
-    color: var(--aviso); margin-bottom: 14px;
-  }
-
-  footer { padding: 16px 26px 22px; border-top: 1px solid var(--borde);
-           background: var(--panel); }
-  .caja { display: flex; gap: 10px; align-items: flex-end; }
-  textarea {
-    resize: none; min-height: 46px; max-height: 190px; line-height: 1.45;
-  }
-  .puntos { display: inline-flex; gap: 4px; }
-  .puntos i {
-    width: 6px; height: 6px; border-radius: 50%; background: var(--acento);
-    animation: latir 1.2s infinite;
-  }
-  .puntos i:nth-child(2) { animation-delay: .18s; }
-  .puntos i:nth-child(3) { animation-delay: .36s; }
-  @keyframes latir { 0%,60%,100% { opacity: .25; }
-                     30% { opacity: 1; } }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>AutoCAD IA — Asistente Técnico CAD</title>
+  <meta name="description" content="Copiloto de diseño y automatización para AutoCAD mediante Model Context Protocol.">
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
 </head>
 <body>
 
-<aside>
-  <div class="marca">
-    <div class="logo">📐</div>
-    <div>
-      <h1>AutoCAD IA</h1>
-      <p>Dibujá con el modelo que quieras</p>
-    </div>
-  </div>
+  <!-- Overlay para panel en pantallas pequeñas -->
+  <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
-  <div class="grupo">
-    <label for="proveedor">Proveedor</label>
-    <select id="proveedor"></select>
-    <p class="pista" id="pistaVariable"></p>
-  </div>
+  <!-- ======================================================================
+       MODAL DE CONFIGURACIÓN INICIAL
+       ====================================================================== -->
+  <div id="welcome-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="brand-badge">
+          <div class="brand-icon">CAD</div>
+          <div>
+            <h3>Configuración Inicial</h3>
+            <p>Conexión del modelo con AutoCAD</p>
+          </div>
+        </div>
+        <button class="btn-icon btn-ghost" id="btn-close-wizard" title="Cerrar">✕</button>
+      </div>
 
-  <div class="grupo">
-    <label for="clave">API key</label>
-    <div class="estado-clave vacia" id="estadoClave">Sin clave guardada</div>
-    <div class="fila">
-      <input id="clave" type="password" placeholder="Pegá tu clave acá"
-             autocomplete="off">
-    </div>
-    <div class="fila">
-      <button id="btnGuardar">Guardar</button>
-      <button id="btnBorrar">Borrar</button>
-    </div>
-    <p class="pista">Se guarda cifrada con DPAPI de Windows: solo esta
-      cuenta puede leerla. Nunca sale de tu equipo.</p>
-  </div>
+      <div class="wizard-progress-bar">
+        <div class="wizard-progress-step active" title="1. Proveedor"></div>
+        <div class="wizard-progress-step" title="2. Credenciales"></div>
+        <div class="wizard-progress-step" title="3. Verificación"></div>
+      </div>
 
-  <div class="grupo">
-    <label>Modelo</label>
-    <input id="modelo" placeholder="nombre del modelo" autocomplete="off">
-    <div class="fila">
-      <button id="btnListar">Ver modelos</button>
-      <button id="btnProbar">Probar cuáles sirven</button>
-    </div>
-    <div id="listaModelos"></div>
-  </div>
+      <!-- Paso 0: Proveedor -->
+      <div class="wizard-step-pane active" data-wizard-step="0">
+        <h2>Seleccionar Proveedor</h2>
+        <p>Elegí el servicio que procesará los comandos de dibujo. Podés usar proveedores en la nube o un servidor local.</p>
+        
+        <div class="form-group">
+          <label for="wizard-provider">Proveedor</label>
+          <select id="wizard-provider" class="custom-select"></select>
+          <p id="wizard-provider-hint" class="field-help"></p>
+        </div>
+        
+        <div class="wizard-actions-row">
+          <button class="btn btn-ghost" id="btn-wizard-skip">Omitir</button>
+          <button class="btn btn-primary" data-wizard-goto="1">Siguiente: API Key →</button>
+        </div>
+      </div>
 
-  <div class="grupo">
-    <label for="perfil">Herramientas</label>
-    <select id="perfil"></select>
-    <p class="pista">Menos herramientas = menos tokens por vuelta. Con
-      <code>todo</code> son ~46k tokens en cada llamada.</p>
-  </div>
+      <!-- Paso 1: API Key -->
+      <div class="wizard-step-pane" data-wizard-step="1">
+        <h2>Clave de API</h2>
+        <p>La clave se almacena de forma local cifrada con DPAPI en este equipo y solo se envía directamente al proveedor.</p>
+        
+        <div class="form-group">
+          <label for="wizard-api-key">API Key</label>
+          <div class="input-with-action">
+            <input id="wizard-api-key" type="password" placeholder="sk-..." autocomplete="off">
+            <button class="input-action-btn" id="btn-toggle-wizard-key" type="button" title="Mostrar/Ocultar">👁️</button>
+          </div>
+        </div>
+        <div id="wizard-key-status-chip" class="chip-status">Sin clave guardada</div>
+        
+        <div class="wizard-actions-row">
+          <button class="btn" data-wizard-goto="0">← Atrás</button>
+          <button class="btn btn-primary" id="btn-wizard-save-key">Guardar y continuar →</button>
+        </div>
+      </div>
 
-  <div class="grupo">
-    <label>Opciones</label>
-    <label class="pista" style="text-transform:none;letter-spacing:0">
-      <input type="checkbox" id="conReglas" checked style="width:auto">
-      Mandar las reglas de dibujo (+11k tokens, dibuja mejor)
-    </label>
-    <button id="btnReset">Empezar conversación nueva</button>
-  </div>
-</aside>
+      <!-- Paso 2: Diagnóstico -->
+      <div class="wizard-step-pane" data-wizard-step="2">
+        <h2>Verificación del Entorno</h2>
+        <p>Comprobando conectividad con el proveedor, modelo y el plugin de AutoCAD:</p>
+        
+        <div class="diagnostic-list">
+          <div class="diagnostic-item">
+            <span class="status-light" id="diag-light-key"></span>
+            <div class="diagnostic-content">
+              <b>1. Autenticación API</b>
+              <small id="diag-text-key">Verificando…</small>
+            </div>
+          </div>
 
-<main>
-  <header>
-    <div>
-      <div class="titulo">Sesión</div>
-      <div class="sub" id="subEstado">Configurá el proveedor para empezar</div>
-    </div>
-    <div id="indicador"></div>
-  </header>
+          <div class="diagnostic-item">
+            <span class="status-light" id="diag-light-model"></span>
+            <div class="diagnostic-content">
+              <b>2. Compatibilidad con Herramientas CAD</b>
+              <small id="diag-text-model">Probando llamadas de función…</small>
+            </div>
+          </div>
 
-  <div id="hilo">
-    <div class="vacio" id="vacio">
-      <h2>¿Qué dibujamos?</h2>
-      <p>Abrí AutoCAD con el plugin cargado y pedime algo.</p>
-      <div class="ejemplos">
-        <button class="ejemplo">Dibujá una casa de 3 recámaras y 2 baños en un lote de 8×16 m, amueblada y acotada</button>
-        <button class="ejemplo">Hacé ping al plugin y decime qué versión está cargada</button>
-        <button class="ejemplo">Proponé una distribución para un lote de 10×20 con 4 recámaras y validala</button>
+          <div class="diagnostic-item">
+            <span class="status-light" id="diag-light-cad"></span>
+            <div class="diagnostic-content">
+              <b>3. Plugin de AutoCAD (MCP)</b>
+              <small id="diag-text-cad">Consultando socket local…</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="wizard-actions-row">
+          <button class="btn" id="btn-wizard-recheck">Reintentar</button>
+          <button class="btn btn-primary" id="btn-wizard-finish">Iniciar AutoCAD IA</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <footer>
-    <div class="caja">
-      <textarea id="entrada" rows="1"
-                placeholder="Pedile algo…  (Enter para enviar)"></textarea>
-      <button class="primario" id="btnEnviar">Enviar</button>
-    </div>
-  </footer>
-</main>
+  <!-- ======================================================================
+       ESTRUCTURA PRINCIPAL DE LA APLICACIÓN
+       ====================================================================== -->
+  <div id="app-layout" class="app-layout">
+    
+    <!-- BARRA LATERAL (SIDEBAR DE CONFIGURACIÓN) -->
+    <aside id="app-sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-badge">
+          <div class="brand-icon">CAD</div>
+          <div class="brand-info">
+            <h1>AutoCAD IA</h1>
+            <p>Copiloto de Dibujo Técnico</p>
+          </div>
+        </div>
+        <button class="btn-icon btn-ghost mobile-only" id="btn-close-sidebar" title="Cerrar panel">✕</button>
+      </div>
 
-<script>
-const $ = s => document.querySelector(s);
-const hilo = $("#hilo"), entrada = $("#entrada");
-let estado = null, trabajando = false;
+      <div class="sidebar-scroll">
+        
+        <!-- SECCIÓN: PROVEEDOR & CREDENCIALES -->
+        <div class="accordion-item open">
+          <div class="accordion-header" data-toggle="accordion">
+            <span class="section-label">Proveedor de IA</span>
+            <span class="accordion-arrow">▾</span>
+          </div>
+          <div class="accordion-body">
+            <div class="form-group">
+              <label for="select-provider">Servicio</label>
+              <select id="select-provider" class="custom-select"></select>
+            </div>
+            
+            <div id="key-status-chip" class="chip-status">Cargando estado…</div>
+            
+            <div class="form-group">
+              <label for="input-api-key">API Key</label>
+              <div class="input-with-action">
+                <input id="input-api-key" type="password" placeholder="Nueva clave" autocomplete="off">
+                <button class="input-action-btn" id="btn-toggle-key-visibility" type="button" title="Mostrar/Ocultar">👁️</button>
+              </div>
+            </div>
 
-// ---------------------------------------------------------------- init
-async function init() {
-  estado = await (await fetch("/api/estado")).json();
-  const sp = $("#proveedor");
-  sp.innerHTML = estado.proveedores
-    .map(p => `<option value="${p.id}">${p.id}</option>`).join("");
-  $("#perfil").innerHTML = estado.perfiles
-    .map(p => `<option value="${p.id}"${p.id === "arquitectura" ? " selected" : ""}>`
-            + `${p.id} — ${p.tools} tools</option>`).join("");
-  const guardado = localStorage.getItem("proveedor");
-  if (guardado) sp.value = guardado;
-  pintarProveedor();
-}
+            <div class="button-group-row">
+              <button class="btn btn-sm btn-primary" id="btn-save-key">Guardar</button>
+              <button class="btn btn-sm btn-danger" id="btn-delete-key">Borrar</button>
+            </div>
+          </div>
+        </div>
 
-function proveedorActual() {
-  return estado.proveedores.find(p => p.id === $("#proveedor").value);
-}
+        <!-- SECCIÓN: MODELO LLM -->
+        <div class="accordion-item open">
+          <div class="accordion-header" data-toggle="accordion">
+            <span class="section-label">Modelo & Parámetros</span>
+            <span class="accordion-arrow">▾</span>
+          </div>
+          <div class="accordion-body">
+            <div class="form-group">
+              <label for="input-model">Modelo</label>
+              <input id="input-model" placeholder="ej. anthropic/claude-3.5-sonnet" autocomplete="off">
+            </div>
 
-function pintarProveedor() {
-  const p = proveedorActual();
-  if (!p) return;
-  localStorage.setItem("proveedor", p.id);
-  $("#pistaVariable").innerHTML =
-    `También sirve la variable <code>${p.variable}</code>`;
-  const ec = $("#estadoClave");
-  if (p.clave) {
-    ec.className = "estado-clave";
-    ec.textContent = `${p.clave} · ${p.proteccion === "dpapi"
-      ? "cifrada" : "texto plano"}`;
-  } else {
-    ec.className = "estado-clave vacia";
-    ec.textContent = "Sin clave guardada";
-  }
-  const m = localStorage.getItem("modelo:" + p.id);
-  $("#modelo").value = m || p.modeloSugerido;
-  $("#listaModelos").innerHTML = "";
-  actualizarSub();
-}
+            <div class="button-group-row">
+              <button class="btn btn-sm" id="btn-list-models">Listar</button>
+              <button class="btn btn-sm" id="btn-test-models">Probar Tools</button>
+            </div>
 
-function actualizarSub() {
-  const p = proveedorActual();
-  $("#subEstado").textContent = p
-    ? `${$("#modelo").value || "(sin modelo)"} · ${p.id}` : "";
-}
+            <div id="model-list-container" class="model-list-container"></div>
+            
+            <div class="form-group" style="margin-top: 6px;">
+              <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-muted); margin-bottom:4px;">
+                <span>Temperatura</span>
+                <span id="temp-val">0.2</span>
+              </div>
+              <input type="range" id="input-temp" min="0" max="1" step="0.1" value="0.2" class="custom-slider">
+            </div>
+          </div>
+        </div>
 
-// ------------------------------------------------------------- claves
-$("#btnGuardar").onclick = async () => {
-  const clave = $("#clave").value.trim();
-  if (!clave) return;
-  const p = proveedorActual();
-  const r = await (await fetch("/api/clave", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({proveedor: p.id, clave})
-  })).json();
-  if (r.error) return nota(r.error);
-  p.clave = r.clave; p.proteccion = r.proteccion;
-  $("#clave").value = "";
-  pintarProveedor();
-  nota(`Clave guardada (${r.proteccion === "dpapi"
-    ? "cifrada con DPAPI" : "texto plano con permisos restringidos"}).`);
-};
+        <!-- SECCIÓN: HERRAMIENTAS CAD -->
+        <div class="accordion-item open">
+          <div class="accordion-header" data-toggle="accordion">
+            <span class="section-label">Especialidad & Reglas</span>
+            <span class="accordion-arrow">▾</span>
+          </div>
+          <div class="accordion-body">
+            <div class="form-group">
+              <label for="select-profile">Perfil</label>
+              <select id="select-profile" class="custom-select"></select>
+            </div>
 
-$("#btnBorrar").onclick = async () => {
-  const p = proveedorActual();
-  await fetch("/api/clave", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({proveedor: p.id, borrar: true})
-  });
-  p.clave = null; pintarProveedor();
-};
+            <label class="custom-checkbox">
+              <input type="checkbox" id="check-rules" checked>
+              <span>
+                <strong>Reglas constructivas</strong>
+                <small>Envía criterios de muros, vanos y cotas (+11k tokens)</small>
+              </span>
+            </label>
+          </div>
+        </div>
 
-// ------------------------------------------------------------ modelos
-async function modelos(probar) {
-  const cont = $("#listaModelos");
-  cont.innerHTML = `<div class="pista">${probar
-    ? "Probando cada modelo…" : "Consultando…"}</div>`;
-  const r = await (await fetch("/api/modelos", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({proveedor: $("#proveedor").value, probar})
-  })).json();
-  if (r.error) { cont.innerHTML = ""; return nota(r.error); }
-  cont.innerHTML = r.modelos.map(m => {
-    const ok = m.estado.startsWith("OK");
-    const malo = m.estado.includes("bloquead") || m.estado.includes("error");
-    return `<div class="modelo ${ok ? "ok" : malo ? "no" : ""}"
-                 data-m="${m.modelo}">
-              <span>${m.modelo}</span>
-              <span class="est">${m.estado === "?" ? "" : m.estado}</span>
-            </div>`;
-  }).join("");
-  cont.querySelectorAll(".modelo").forEach(el => el.onclick = () => {
-    $("#modelo").value = el.dataset.m;
-    localStorage.setItem("modelo:" + $("#proveedor").value, el.dataset.m);
-    actualizarSub();
-  });
-}
-$("#btnListar").onclick = () => modelos(false);
-$("#btnProbar").onclick = () => modelos(true);
+        <!-- SECCIÓN: PLANTILLAS -->
+        <div class="accordion-item">
+          <div class="accordion-header" data-toggle="accordion">
+            <span class="section-label">Plantillas de Comandos</span>
+            <span class="accordion-arrow">▾</span>
+          </div>
+          <div class="accordion-body">
+            <div class="quick-prompts-list">
+              <button class="quick-prompt-btn" data-prompt="Dibuja una casa de 2 plantas de 7x15m con 3 recámaras, 2.5 baños, sala, cocina y cochera.">Casa 2 Plantas (7x15m)</button>
+              <button class="quick-prompt-btn" data-prompt="Dibuja una zapata aislada Z-1 de 1.20x1.20m con dado de 30x30cm y armado de varilla #4 @ 15cm.">Zapata Aislada Z-1</button>
+              <button class="quick-prompt-btn" data-prompt="Verifica las capas del dibujo actual, lista los bloques insertados y acota todos los muros principales.">Acotado & Capas</button>
+              <button class="quick-prompt-btn" data-prompt="Inserta distribución eléctrica básica con luminarias LED empotradas y contactos dobles a 0.30m.">Instalación Eléctrica</button>
+            </div>
+          </div>
+        </div>
 
-$("#proveedor").onchange = pintarProveedor;
-$("#modelo").oninput = () => {
-  localStorage.setItem("modelo:" + $("#proveedor").value, $("#modelo").value);
-  actualizarSub();
-};
+      </div>
 
-$("#btnReset").onclick = async () => {
-  await fetch("/api/reset", {method: "POST"});
-  hilo.innerHTML = "";
-  nota("Conversación nueva: el agente olvidó lo anterior.");
-};
+      <div class="sidebar-footer">
+        <button class="btn btn-sm btn-ghost" id="btn-new-session" title="Reiniciar memoria del agente">
+          Nueva Sesión
+        </button>
+        <button class="btn btn-sm btn-ghost" id="btn-open-settings" title="Asistente de configuración">
+          Configuración
+        </button>
+      </div>
+    </aside>
 
-// --------------------------------------------------------------- chat
-function limpiarVacio() { const v = $("#vacio"); if (v) v.remove(); }
+    <!-- ÁREA PRINCIPAL DE CHAT -->
+    <main class="chat-main">
+      <header class="chat-header">
+        <div class="header-left">
+          <button class="btn-icon btn-ghost mobile-only" id="btn-open-sidebar" title="Abrir menú">
+            ☰
+          </button>
+          <div class="chat-header-info">
+            <div class="chat-header-title">
+              <span id="session-title">AutoCAD IA</span>
+              <span class="status-badge live" id="connection-status">● Listo</span>
+            </div>
+            <div class="chat-header-subtitle" id="session-subtitle">Iniciando…</div>
+          </div>
+        </div>
 
-function burbuja(quien, texto, mio) {
-  limpiarVacio();
-  const d = document.createElement("div");
-  d.className = "msj" + (mio ? " yo" : "");
-  d.innerHTML = `<div class="quien"></div><div class="cuerpo"></div>`;
-  d.querySelector(".quien").textContent = quien;
-  d.querySelector(".cuerpo").textContent = texto;
-  hilo.appendChild(d); abajo(); return d;
-}
+        <div class="chat-header-actions">
+          <div id="token-counter" class="token-counter-pill" style="display: none;">
+            <b id="total-tokens">0</b> tokens · <span id="total-turns">0</span> v.
+          </div>
+          
+          <button class="btn btn-sm btn-accent" id="btn-toggle-plan" title="Abrir visor de dibujo">
+            <span class="btn-text">Ver Plano</span>
+          </button>
+          
+          <button class="btn btn-sm btn-danger" id="btn-cancel" style="display: none;" title="Detener generación">
+            <span class="btn-text">Cancelar</span>
+          </button>
 
-function herramienta(nombre, detalle, clase) {
-  limpiarVacio();
-  const d = document.createElement("div");
-  d.className = "herramienta " + (clase || "");
-  d.innerHTML = `<span class="nom"></span><span class="det"></span>`;
-  d.querySelector(".nom").textContent = nombre;
-  d.querySelector(".det").textContent = detalle;
-  hilo.appendChild(d); abajo(); return d;
-}
+          <div id="typing-indicator" class="typing-dots" style="display: none;" title="Agente procesando…">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+      </header>
 
-function nota(texto) {
-  limpiarVacio();
-  const d = document.createElement("div");
-  d.className = "nota"; d.textContent = texto;
-  hilo.appendChild(d); abajo();
-}
+      <div id="chat-messages" class="chat-messages">
+        <div class="empty-state" id="empty-state-view">
+          <div class="empty-icon-wrapper">
+            <div class="empty-icon">CAD</div>
+          </div>
+          <h2>¿Qué vamos a proyectar?</h2>
+          <p>Escribí tu instrucción técnica en lenguaje natural. El agente calculará geometrías, creará capas, insertará bloques y acotará el plano en AutoCAD en tiempo real.</p>
+          
+          <div class="preset-cards-grid">
+            <button class="preset-card">
+              <div class="preset-info">
+                <strong>Distribución Arquitectónica</strong>
+                <span class="preset-text">Dibujá una casa de 3 recámaras y 2 baños en un lote de 8×16 m, amueblada y acotada</span>
+              </div>
+            </button>
 
-function abajo() { hilo.scrollTop = hilo.scrollHeight; }
+            <button class="preset-card">
+              <div class="preset-info">
+                <strong>Diagnóstico y Capas</strong>
+                <span class="preset-text">Hacé ping al plugin de AutoCAD y decime qué versión y capas están cargadas</span>
+              </div>
+            </button>
 
-async function enviar() {
-  const texto = entrada.value.trim();
-  if (!texto || trabajando) return;
-  const p = proveedorActual();
-  if (!p.clave && p.id !== "local") {
-    return nota("Falta guardar la API key de " + p.id + ".");
-  }
-  entrada.value = ""; entrada.style.height = "auto";
-  burbuja("Vos", texto, true);
-  trabajando = true;
-  $("#btnEnviar").disabled = true;
-  $("#indicador").innerHTML =
-    `<span class="puntos"><i></i><i></i><i></i></span>`;
+            <button class="preset-card">
+              <div class="preset-info">
+                <strong>Detalle Estructural</strong>
+                <span class="preset-text">Dibujá el detalle de cimentación con zapatas aisladas de 1.50x1.50m con trabes de liga</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
 
-  const cuerpo = {
-    mensaje: texto, proveedor: p.id, modelo: $("#modelo").value,
-    perfil: $("#perfil").value, conReglas: $("#conReglas").checked,
-  };
+      <footer class="chat-footer">
+        <div class="input-container">
+          <div class="input-box-wrapper">
+            <textarea id="chat-input" rows="1" placeholder="Instrucción de dibujo para AutoCAD…"></textarea>
+            <button class="btn btn-primary btn-send" id="btn-send" title="Enviar (Enter)">
+              <span>Enviar</span>
+            </button>
+          </div>
+          <div class="input-meta-bar">
+            <span class="input-shortcuts"><b>Enter</b> enviar · <b>Shift+Enter</b> nueva línea</span>
+            <span class="input-brand">AutoCAD MCP Assistant</span>
+          </div>
+        </div>
+      </footer>
+    </main>
 
-  try {
-    const r = await fetch("/api/chat", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(cuerpo)
-    });
-    if (!r.ok) {
-      const e = await r.json().catch(() => ({}));
-      nota(e.error || `El servidor respondió ${r.status}`);
-    } else {
-      await leerEventos(r);
-    }
-  } catch (e) { nota("Se cortó la conexión: " + e.message); }
+    <!-- VISOR DE PLANO (DWG VIEWPORT) -->
+    <section id="plan-viewer-pane" class="plan-viewer-pane">
+      <div class="viewer-header">
+        <div class="viewer-title">
+          <span>Vista de Plano DWG</span>
+        </div>
+        <div class="viewer-toolbar">
+          <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-in" title="Acercar (+)">＋</button>
+          <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-out" title="Alejar (-)">－</button>
+          <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-reset" title="Ajustar escala al 100%">1:1</button>
+          <button class="btn btn-sm btn-ghost" id="btn-refresh-plan" title="Actualizar captura">Actualizar</button>
+          <button class="btn-icon btn-ghost btn-sm" id="btn-download-plan" title="Descargar imagen PNG">💾</button>
+          <button class="btn-icon btn-ghost btn-sm" id="btn-close-plan" title="Ocultar visor">✕</button>
+        </div>
+      </div>
+      
+      <div class="viewer-canvas-wrapper empty-canvas" id="plan-canvas-wrapper">
+        <div class="viewer-empty-msg">
+          <span>No hay ninguna captura activa aún.</span>
+          <button class="btn btn-sm btn-primary" id="btn-initial-capture" style="margin-top: 10px;">Capturar Vista Actual</button>
+        </div>
+      </div>
 
-  trabajando = false;
-  $("#btnEnviar").disabled = false;
-  $("#indicador").innerHTML = "";
-}
+      <div class="viewer-footer">
+        <span id="plan-footer-info">Listo para capturar</span>
+        <span id="plan-zoom-info">100%</span>
+      </div>
+    </section>
 
-async function leerEventos(respuesta) {
-  const lector = respuesta.body.getReader();
-  const dec = new TextDecoder();
-  let resto = "";
-  while (true) {
-    const {done, value} = await lector.read();
-    if (done) break;
-    resto += dec.decode(value, {stream: true});
-    const partes = resto.split("\n\n");
-    resto = partes.pop();
-    for (const parte of partes) {
-      const linea = parte.split("\n").find(l => l.startsWith("data: "));
-      if (!linea) continue;
-      let ev; try { ev = JSON.parse(linea.slice(6)); } catch { continue; }
-      manejar(ev);
-    }
-  }
-}
+  </div>
 
-function manejar(ev) {
-  if (ev.tipo === "inicio") {
-    $("#subEstado").textContent = `${ev.modelo} · ${ev.tools} herramientas`;
-  } else if (ev.tipo === "texto") {
-    burbuja("Agente", ev.texto, false);
-  } else if (ev.tipo === "tool") {
-    let args = JSON.stringify(ev.args);
-    if (args.length > 130) args = args.slice(0, 127) + "…";
-    herramienta(ev.nombre, args, "");
-  } else if (ev.tipo === "resultado") {
-    let t = (ev.texto || "").replace(/\s+/g, " ");
-    if (t.length > 160) t = t.slice(0, 157) + "…";
-    herramienta(ev.error ? "✗ " + ev.nombre : "✓ " + ev.nombre, t,
-                ev.error ? "err" : "bien");
-  } else if (ev.tipo === "aviso") {
-    nota(ev.texto);
-  }
-}
+  <div id="toast-container" class="toast-container"></div>
 
-$("#btnEnviar").onclick = enviar;
-entrada.addEventListener("keydown", e => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); }
-});
-entrada.addEventListener("input", () => {
-  entrada.style.height = "auto";
-  entrada.style.height = Math.min(entrada.scrollHeight, 190) + "px";
-});
-document.addEventListener("click", e => {
-  if (e.target.classList.contains("ejemplo")) {
-    entrada.value = e.target.textContent.trim();
-    entrada.focus();
-  }
-});
-
-init();
-</script>
 </body>
 </html>

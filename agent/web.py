@@ -24,7 +24,8 @@ from .loop import conversar
 from .mcp_link import ConexionMcp, SERVIDOR_DEFECTO
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
-_HTML = os.path.join(_AQUI, "web", "index.html")
+_WEB_DIR = os.path.join(_AQUI, "web")
+_HTML = os.path.join(_WEB_DIR, "index.html")
 
 
 class Sesion:
@@ -33,12 +34,43 @@ class Sesion:
     def __init__(self) -> None:
         self.mensajes: list[dict[str, Any]] = []
         self.lock = threading.Lock()
+        self.cancelar = threading.Event()
 
     def reiniciar(self, system: str) -> None:
         self.mensajes = [{"role": "system", "content": system}]
 
 
 SESION = Sesion()
+
+# Dónde se dejan las capturas del plano que se muestran en la interfaz.
+# En temp y no en el repo: son de una corrida, igual que las de test_live.
+CAPTURAS = os.path.join(os.environ.get("TEMP", "."), "autocad_mcp_ui")
+
+# Cuántas tools ofrece cada perfil DE VERDAD. Los perfiles se definen por
+# prefijos ("create_", "check_"), así que contar la lista da el número de
+# patrones y no de herramientas: la interfaz decía "Arquitectura (29
+# tools)" cuando en realidad ofrecía 48. Se resuelve una vez contra el
+# catálogo real y se cachea — abrir el servidor MCP en cada request para
+# esto sería absurdo.
+_CONTEO: dict[str, int] = {}
+
+
+def _contar_perfiles() -> dict[str, int]:
+    if _CONTEO:
+        return _CONTEO
+
+    async def trabajo() -> dict[str, int]:
+        async with ConexionMcp(servidor=SERVIDOR_DEFECTO) as mcp:
+            return {p: len(mcp.catalogo(incluir=pats or None))
+                    for p, pats in PERFILES.items()}
+
+    try:
+        _CONTEO.update(_correr_async(trabajo()))
+    except Exception:                                   # noqa: BLE001
+        # Sin servidor MCP la interfaz tiene que abrir igual: se cae al
+        # número de patrones, que es aproximado pero no rompe nada.
+        _CONTEO.update({p: len(v) for p, v in PERFILES.items() if v})
+    return _CONTEO
 
 
 def _correr_async(corutina):
@@ -79,15 +111,18 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------ GET
 
     def do_GET(self) -> None:                          # noqa: N802
-        if self.path in ("/", "/index.html"):
+        # Rutas de la API y capturas
+        if self.path.startswith("/vista.png"):
+            ruta = os.path.join(CAPTURAS, "vista.png")
             try:
-                with open(_HTML, "rb") as fh:
+                with open(ruta, "rb") as fh:
                     cuerpo = fh.read()
             except OSError:
-                self.send_error(500, "Falta agent/web/index.html")
+                self.send_error(404)
                 return
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(cuerpo)))
             self.end_headers()
             self.wfile.write(cuerpo)
@@ -95,6 +130,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/api/estado":
             guardadas = {f["proveedor"]: f for f in credenciales.listar()}
+            conteo = _contar_perfiles()
             self._json({
                 "proveedores": [
                     {"id": nombre,
@@ -104,10 +140,44 @@ class Handler(BaseHTTPRequestHandler):
                      "proteccion": guardadas.get(nombre, {}).get("proteccion")}
                     for nombre, preset in sorted(providers.PRESETS.items())],
                 "perfiles": [
-                    {"id": p, "tools": len(v) if v else "todas"}
+                    {"id": p, "tools": conteo.get(p, len(v) if v else 0)}
                     for p, v in PERFILES.items()],
                 "archivoClaves": credenciales.ARCHIVO,
             })
+            return
+
+        # Archivos estáticos en agent/web/
+        ruta_rel = self.path.split("?")[0].lstrip("/")
+        if ruta_rel in ("", "index.html"):
+            ruta_rel = "index.html"
+
+        ruta_archivo = os.path.normpath(os.path.join(_WEB_DIR, ruta_rel))
+        # Prevenir path traversal fuera de _WEB_DIR
+        if os.path.commonpath([_WEB_DIR, ruta_archivo]) == _WEB_DIR and os.path.isfile(ruta_archivo):
+            mimes = {
+                ".html": "text/html; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+                ".js": "application/javascript; charset=utf-8",
+                ".json": "application/json; charset=utf-8",
+                ".svg": "image/svg+xml",
+                ".png": "image/png",
+                ".ico": "image/x-icon",
+            }
+            _, ext = os.path.splitext(ruta_archivo)
+            mime = mimes.get(ext.lower(), "application/octet-stream")
+
+            try:
+                with open(ruta_archivo, "rb") as fh:
+                    cuerpo = fh.read()
+            except OSError:
+                self.send_error(500, f"Error leyendo {ruta_rel}")
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.end_headers()
+            self.wfile.write(cuerpo)
             return
 
         self.send_error(404)
@@ -154,11 +224,64 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True})
             return
 
+        if self.path == "/api/cancelar":
+            SESION.cancelar.set()
+            self._json({"ok": True})
+            return
+
+        if self.path == "/api/captura":
+            self._captura(datos)
+            return
+
         if self.path == "/api/chat":
             self._chat(datos)
             return
 
         self.send_error(404)
+
+    # --------------------------------------------------------- captura
+
+    def _captura(self, datos: dict[str, Any]) -> None:
+        """Foto del dibujo, para verlo sin cambiar de ventana.
+
+        Es la diferencia entre confiar en que el agente dibujó bien y
+        mirarlo. Con zona (min/max) se puede acercar a un detalle, que es
+        donde aparecen los defectos que a la extensión completa no se ven.
+        """
+        os.makedirs(CAPTURAS, exist_ok=True)
+        destino = os.path.join(CAPTURAS, "vista.png")
+        zona = datos.get("zona") or {}
+        params: dict[str, Any] = {"path": destino, "layout": None}
+        if all(k in zona for k in ("minX", "minY", "maxX", "maxY")):
+            params.update({k: float(zona[k]) for k in
+                           ("minX", "minY", "maxX", "maxY")})
+
+        async def trabajo() -> dict[str, Any]:
+            async with ConexionMcp(servidor=SERVIDOR_DEFECTO) as mcp:
+                if not zona:
+                    await mcp.ejecutar("zoom_extents", {})
+                salida, error = await mcp.ejecutar("capture_viewport", params)
+                extension, _ = await mcp.ejecutar("get_extents", {})
+                return {"error": error, "salida": salida,
+                        "extension": extension}
+
+        try:
+            r = _correr_async(trabajo())
+        except Exception as exc:                        # noqa: BLE001
+            self._json({"error": f"No se pudo capturar: {exc}"}, 500)
+            return
+        if r["error"] or not os.path.exists(destino):
+            self._json({"error": r["salida"]}, 400)
+            return
+
+        try:
+            extension = json.loads(r["extension"])
+        except (ValueError, TypeError):
+            extension = None
+        # La marca de tiempo fuerza al navegador a recargar la imagen en
+        # vez de mostrar la anterior de su caché.
+        self._json({"ok": True, "url": f"/vista.png?t={os.path.getmtime(destino)}",
+                    "extension": extension})
 
     # ------------------------------------------------------------ chat
 
@@ -223,8 +346,10 @@ class Handler(BaseHTTPRequestHandler):
                     mensajes = SESION.mensajes
                 await conversar(mcp, proveedor, mensajes, tools,
                                 lambda t, d: emitir(t, d),
-                                vueltas_max=int(datos.get("vueltas") or 40))
+                                vueltas_max=int(datos.get("vueltas") or 40),
+                                cancelado=SESION.cancelar.is_set)
 
+        SESION.cancelar.clear()
         try:
             _correr_async(trabajo())
         except Exception as exc:                        # noqa: BLE001
