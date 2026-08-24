@@ -27,6 +27,7 @@ import furniture as fur_mod
 import geom as geom_mod
 import layers as layers_mod
 import sections as sect_mod
+import session as session_mod
 import sheet as sheet_mod
 import space as space_mod
 import symbols as sym_mod
@@ -68,6 +69,48 @@ def _track_text(text: str, x: float, y: float, height: float,
     space_mod.track(*caja, f"{space_mod.PREFIJO_TEXTO} {text[:40]}")
 
 
+# Altura del número de cota: DIMTXT del estilo base son 2.5 mm de papel.
+_DIM_TXT_MM = 2.5
+
+
+def _track_dimension(x1: float, y1: float, x2: float, y2: float,
+                     dim_line_x: float, dim_line_y: float,
+                     scale: Optional[float],
+                     angle_deg: Optional[float] = None,
+                     text: Optional[str] = None) -> None:
+    """Registra la franja aproximada de una cota puesta a mano.
+
+    create_dimension_chain reserva sola la franja que ocupa, pero una cota
+    suelta era invisible: check_annotations daba "limpio" con dos cotas
+    manuales una encima de la otra, porque nunca supo que existían. Misma
+    idea que _track_text: aproximación generosa, avisar de más es mejor que
+    no avisar."""
+    if angle_deg is not None:
+        a = math.radians(angle_deg)
+        u = (math.cos(a), math.sin(a))
+    else:
+        dx, dy = x2 - x1, y2 - y1
+        largo = math.hypot(dx, dy)
+        if largo < 1e-12:
+            return
+        u = (dx / largo, dy / largo)
+    n = (-u[1], u[0])
+
+    def pie(px: float, py: float) -> tuple[float, float]:
+        t = (dim_line_x - px) * n[0] + (dim_line_y - py) * n[1]
+        return (px + n[0] * t, py + n[1] * t)
+
+    f1, f2 = pie(x1, y1), pie(x2, y2)
+    # Altura del texto en unidades del modelo; 'scale' es el mismo múltiplo
+    # que usa el preview, y sin él rige la escala registrada de la lámina.
+    h = _DIM_TXT_MM * (scale if scale else space_mod.units_per_paper_mm())
+    holgura = h * 1.6
+    caja = (min(f1[0], f2[0]) - holgura, min(f1[1], f2[1]) - holgura,
+            max(f1[0], f2[0]) + holgura, max(f1[1], f2[1]) + holgura)
+    etiqueta = text or "%.2f" % math.hypot(f2[0] - f1[0], f2[1] - f1[1])
+    space_mod.reserve(*caja, f"cota manual {etiqueta}")
+
+
 def _reset_drawing_state(dibujo: str) -> list[str]:
     """Olvida lo que este proceso cacheaba del dibujo ANTERIOR.
 
@@ -90,6 +133,8 @@ def _reset_drawing_state(dibujo: str) -> list[str]:
     space_mod.clear()
     fur_mod.reset_footprints()
     layers_mod.reset()
+    session_mod.reset()
+    ann_mod.reset_dim_style()
 
     if olvidadas:
         avisos.append(
@@ -155,6 +200,39 @@ def check_geometry(rooms: list[dict[str, Any]],
     Llamala JUNTO CON check_layout antes de dibujar: una valida la lógica de
     uso, la otra que el espacio exista de verdad."""
     return rules_mod.check_geometry(rooms=rooms, doors=doors)
+
+
+@mcp.tool()
+def suggest_layout(lot_width: float, lot_depth: float,
+                   bedrooms: int = 2, bathrooms: int = 1) -> dict[str, Any]:
+    """Propone una distribución COMPLETA para un lote entre medianeras, ya
+    validada por check_layout y check_geometry antes de devolverla.
+
+    Es la inversa de los check_*: en vez de validar una zonificación que
+    alguien inventó, el servidor la produce con un esquema determinístico —
+    banda social al frente (SALA + COMEDOR), banda de servicios (COCINA,
+    BAÑO, LAVADO), pasillo central hasta el fondo, recámaras a los lados y
+    PATIO DE SERVICIO al fondo — y la pasa por sus propias reglas. Con
+    bathrooms=2 el baño principal sale en-suite de la recámara principal.
+
+    ES EL PUNTO DE PARTIDA para dibujar una vivienda: llamala ANTES de
+    check_program/create_sheet, dibujá los muros sobre las fronteras de los
+    'rooms' que devuelve, y las puertas donde dice 'doors' (ya caen sobre
+    los muros compartidos). El resultado es un partido válido, no un diseño
+    terminado: ajustalo con el cliente y re-validá con check_all.
+
+    Si el programa NO entra (frente menor a 6.40 m, o fondo insuficiente
+    para tantas recámaras) lo dice con números en 'problems' en vez de
+    achicar recintos por debajo del mínimo habitable.
+
+    bedrooms: 1 a 6. bathrooms: 1 o 2. Unidades en metros; el frente sobre
+    X (medianeras en x=0 y x=lot_width), la calle en y=0.
+
+    Devuelve rooms/doors/windows en el vocabulario de check_layout, 'areas'
+    por recinto, 'builtDepth', 'patioDepth' y 'validation' con el resultado
+    completo de los checks."""
+    return rules_mod.suggest_layout(lot_width=lot_width, lot_depth=lot_depth,
+                                    bedrooms=bedrooms, bathrooms=bathrooms)
 
 
 @mcp.tool()
@@ -579,7 +657,9 @@ def check_all(rooms: Optional[list[dict[str, Any]]] = None,
     también en un dibujo que todavía no tiene muros.
 
     check_annotations y check_drawing_hygiene SIEMPRE corren: leen el dibujo
-    activo, no necesitan que se les describa el proyecto.
+    activo, no necesitan que se les describa el proyecto. También se revisan
+    los xrefs: uno Unresolved/FileNotFound deja la lámina sin la base de otra
+    disciplina en la máquina de destino.
 
     Devuelve 'ok' (True solo si TODOS los checks corridos salieron limpios),
     'problems' con todos los problemas de todos los checks juntos en una
@@ -607,6 +687,29 @@ def check_all(rooms: Optional[list[dict[str, Any]]] = None,
         sample_limit=hygiene_sample_limit,
         max_duplicate_check=hygiene_max_duplicate_check)
 
+    # Xrefs rotos: una referencia Unresolved/FileNotFound en la máquina de
+    # destino deja la lámina sin la base de otra disciplina, y hasta ahora
+    # había que acordarse de llamar list_xrefs aparte.
+    try:
+        xrefs = acad.call("list_xrefs", {}).get("xrefs", [])
+    except acad.AutoCadError:
+        xrefs = []
+        skipped.append("xrefs (no se pudo listar)")
+    rotos = [x for x in xrefs
+             if str(x.get("status", "")).lower() not in ("resolved", "")]
+    checks["xrefs"] = {
+        "ok": not rotos,
+        "problems": [
+            {"rule": "xref-resuelto",
+             "problem": "El xref '%s' está %s (ruta: %s)."
+                        % (x.get("name", "?"), x.get("status", "?"),
+                           x.get("path", "?")),
+             "fix": "reload_xref, o corregí la ruta (las relativas no "
+                    "resuelven en otra máquina) y volvé a adjuntarlo."}
+            for x in rotos],
+        "count": len(xrefs),
+    }
+
     problems: list[dict[str, Any]] = []
     for nombre, resultado in checks.items():
         for p in resultado.get("problems", []):
@@ -615,6 +718,9 @@ def check_all(rooms: Optional[list[dict[str, Any]]] = None,
             entry = {"problem": p} if isinstance(p, str) else dict(p)
             entry["check"] = nombre
             problems.append(entry)
+
+    # Lo dibujado hasta acá quedó revisado: export_pdf deja de reclamarlo.
+    session_mod.note_checked()
 
     return {"ok": not problems, "problems": problems, "count": len(problems),
            "checks": checks, "skipped": skipped}
@@ -747,6 +853,14 @@ def create_walls(
       - distance: a qué distancia del ARRANQUE del eje está el CENTRO del hueco,
         medida a lo largo del muro (si el muro dobla, la distancia sigue la
         vuelta). Poné "centered": false para que sea el borde en vez del centro.
+      - En vez de calcular 'distance' sumando tramos, mejor la forma
+        DECLARATIVA (la suma la hace el servidor, que no se equivoca):
+          {"segment": 1, "offset": 0.8, "width": 0.9}   a 0.8 del arranque del
+                                                        tramo points[1]→points[2]
+          {"segment": 1, "offset": 0.8, "from": "end"}  a 0.8 del FINAL del tramo
+          {"segment": 1, "at": "center"}                centrado en el tramo
+        Los tramos se numeran desde 0. La distancia resuelta de cada hueco
+        vuelve en 'openingDistances', para acotar o para check_geometry.
       - width: ancho del hueco (puerta de 0.90, ventana de 1.50...).
       - type: "door" dibuja hoja + arco de abatimiento; "window" dibuja el
         vidrio; "pass" deja el vano limpio sin símbolo.
@@ -772,6 +886,142 @@ def create_walls(
         openings=openings, layer=layer, lineweight=lineweight,
         min_segment=min_segment,
     )
+
+
+@mcp.tool()
+def draw_layout(rooms: list[dict[str, Any]],
+                doors: Optional[list[dict[str, Any]]] = None,
+                windows: Optional[list[dict[str, Any]]] = None,
+                exterior_thickness: float = 0.15,
+                interior_thickness: float = 0.10,
+                window_width: float = 1.20,
+                merge: bool = True,
+                label: bool = True,
+                label_height: Optional[float] = None) -> dict[str, Any]:
+    """Dibuja ENTERA la muraria de una distribución: el cierre del ciclo
+    suggest_layout → plano. Le pasás los rooms/doors/windows tal cual los
+    devolvió suggest_layout (o armados a mano con el mismo vocabulario) y
+    dibuja los muros, las puertas con su abatimiento, las ventanas y los
+    rótulos de ambiente, sin que nadie calcule una sola coordenada de muro.
+
+    Qué resuelve solo:
+      - cada frontera entre recintos se dibuja UNA vez (nada de muros
+        dobles), con espesor interior; el perímetro del lote y el frente al
+        patio salen con espesor exterior
+      - cada puerta cae en el muro que le toca (por su x,y) y abre hacia su
+        recinto destino; las que no traen posición se avisan en 'warnings'
+      - las ventanas de fachada y de patio se ubican en el paño libre más
+        grande de su ambiente, esquivando las puertas; si no entra ni una
+        de 0.90 lo dice en vez de encimarla
+      - FUSIONA los contornos al terminar (merge=True): sin eso, cada
+        tramo es una polilínea cerrada y su línea de cierre queda dibujada
+        atravesando el muro al que llega — el encuentro se ve como un
+        cajón en vez de la T limpia, y el plano parece hecho a mano sin
+        cuidado. Devuelve además el área y el perímetro reales de la
+        mampostería. Ojo: el resultado es una Region, ya no admite editar
+        vértices, así que va al final
+      - al final corre check_walls sobre los ejes dibujados y devuelve el
+        resultado en 'checkWalls'
+
+    Solo entiende recintos ortogonales (lo que produce suggest_layout).
+    El orden recomendado: suggest_layout → create_sheet → draw_layout →
+    place_furniture → cotas → check_all.
+
+    label: rotula los ambientes con label_rooms al terminar (los muebles
+    todavía no están: si vas a amueblar, poné label=False y rotulá DESPUÉS
+    de place_furniture, como manda la regla).
+    label_height: altura del texto de rótulo en unidades del modelo; por
+    default 2.5 mm de papel a la escala registrada de la lámina."""
+    r = arch_mod.draw_layout(
+        rooms=rooms, doors=doors, windows=windows,
+        exterior_thickness=exterior_thickness,
+        interior_thickness=interior_thickness,
+        window_width=window_width, merge=merge)
+
+    r["checkWalls"] = rules_mod.check_walls(walls=r["axes"])
+
+    if label:
+        rotulables = [rm for rm in rooms
+                      if str(rm.get("name", "")).upper() != "PASILLO"]
+        altura = label_height or space_mod.paper(2.5)
+        r["labels"] = fur_mod.label_rooms(rooms=rotulables, height=altura)
+    return r
+
+
+@mcp.tool()
+def suggest_furniture(rooms: list[dict[str, Any]],
+                      doors: Optional[list[dict[str, Any]]] = None,
+                      draw: bool = True,
+                      exterior_thickness: float = 0.15,
+                      interior_thickness: float = 0.10) -> dict[str, Any]:
+    """Amuebla la planta entera: decide QUÉ va en cada ambiente y DÓNDE.
+
+    Es a place_furniture lo que suggest_layout es a create_walls. Un plano
+    con los recintos vacíos se lee como un esquema; lo que lo convierte en
+    plano de oficina es la cama contra el muro correcto, la estufa separada
+    del fregadero y el WC que no bloquea la puerta.
+
+    Reglas de amueblado real que aplica solo:
+      - ningún mueble contra el muro donde abre una puerta: la hoja barre
+        ese tramo
+      - la pieza principal va contra el muro libre MÁS LARGO
+      - cama matrimonial si el cuarto la admite con 0.60 m de paso; si no,
+        individual; si tampoco entra, se reporta en vez de forzarla
+      - burós solo si sobra lugar a los lados; clóset contra otro muro
+      - en la cocina el fregadero y la estufa van SEPARADOS sobre la
+        mesada — pegarlos deja sin superficie de trabajo
+      - la mesa del comedor va centrada, no contra un muro
+      - lo que no entra NO se dibuja: sale en 'skipped' con el motivo
+      - los muebles se apoyan en la CARA INTERIOR del muro, no en su eje:
+        'rooms' viene en ejes (dos cuartos vecinos comparten la frontera),
+        así que apoyar ahí metía el mueble media pared adentro — se veía
+        la mesada cruzando el muro y saliendo del otro lado. Por eso
+        exterior_thickness/interior_thickness: pasá los MISMOS que le
+        diste a draw_layout
+
+    Va DESPUÉS de draw_layout y ANTES de rotular: label_rooms usa las
+    huellas del mobiliario para no escribir encima de una cama.
+
+    draw=False devuelve las piezas SIN dibujar, para revisarlas o
+    ajustarlas antes de pasarlas a place_furniture.
+
+    Devuelve 'items' (listo para place_furniture), 'byRoom' y 'skipped'."""
+    return fur_mod.suggest_furniture(
+        rooms=rooms, doors=doors, draw=draw,
+        exterior_thickness=exterior_thickness,
+        interior_thickness=interior_thickness)
+
+
+@mcp.tool()
+def dimension_layout(rooms: list[dict[str, Any]],
+                     sides: Optional[list[str]] = None,
+                     detail: bool = True, total: bool = True,
+                     min_gap: float = 0.15, scale: float = 0.0,
+                     style: Optional[str] = None,
+                     layer: str = "COTAS") -> dict[str, Any]:
+    """Acota la planta ENTERA desde los recintos, sin listar posiciones.
+
+    Es la contraparte de draw_layout: los cortes de la cadena de cotas son
+    exactamente las fronteras entre recintos, que ya están en 'rooms'. Que
+    el agente arme esa lista a mano es la clase de aritmética que sale mal
+    — y un plano acotado con números que no son los del dibujo es peor que
+    un plano sin cotas.
+
+    Por cada lado dibuja la cadena de DETALLE (todas las fronteras de ese
+    eje) y la TOTAL de punta a punta, un nivel más afuera. El offset lo
+    resuelve create_dimension_chain solo, apilándose afuera de lo que ya
+    haya, así que check_annotations sigue saliendo limpio.
+
+    sides: por default 'bottom' e 'left', que es como se acota una planta.
+    min_gap: fronteras más juntas que esto se funden en un corte — dos
+    cotas de 3 cm pegadas no se leen ni entra el número entre las flechas.
+    scale: 0 toma la escala registrada de la lámina.
+
+    Va DESPUÉS de dibujar y de componer: si las vistas se mueven, lo
+    reservado deja de valer."""
+    return arch_mod.dimension_layout(
+        rooms=rooms, sides=sides, detail=detail, total=total,
+        min_gap=min_gap, scale=scale, style=style, layer=layer)
 
 
 @mcp.tool()
@@ -978,6 +1228,75 @@ def create_road(points: list[list[float]], width: float = 7.00,
         curb_width=curb_width, curb_segments=curb_segments,
         sidewalk_width=sidewalk_width, closed=closed, draw_axis=draw_axis,
         pavement_pattern=pavement_pattern, pavement_scale=pavement_scale)
+
+
+@mcp.tool()
+def create_coordinate_grid(min_x: float, min_y: float, max_x: float,
+                           max_y: float, spacing: float = 10.0,
+                           cross_mm: float = 2.5, text_mm: float = 1.8,
+                           label_x: bool = True, label_y: bool = True,
+                           decimals: int = 0,
+                           scale: Optional[float] = None,
+                           layer: str = "RETICULA-UTM",
+                           lineweight: int = 9) -> dict[str, Any]:
+    """Retícula de coordenadas: las cruces de una vista topográfica.
+
+    Es lo que permite ubicar cualquier punto del plano en el terreno real.
+    Va en la vista CON coordenadas originales (la topográfica); la vista de
+    proyecto se dibuja sin ella — esa doble representación es la convención
+    de cualquier juego serio, y está en el plano de referencia.
+
+    spacing: cada cuánto va una cruz, en unidades del modelo (10 m urbano,
+    100 m un conjunto). Las cruces caen en los MÚLTIPLOS exactos del
+    espaciamiento, no en el borde de la zona: una retícula con números no
+    redondos no se puede leer.
+    cross_mm / text_mm: tamaño de cruz y rótulo en mm de PAPEL.
+    decimals: 0 en UTM, donde el metro ya es la precisión útil.
+
+    Las cruces no se registran como huella (son malla de fondo); los
+    rótulos del borde sí."""
+    return civil_mod.create_coordinate_grid(
+        min_x=min_x, min_y=min_y, max_x=max_x, max_y=max_y, spacing=spacing,
+        cross_mm=cross_mm, text_mm=text_mm, label_x=label_x, label_y=label_y,
+        decimals=decimals, scale=scale, layer=layer, lineweight=lineweight)
+
+
+@mcp.tool()
+def create_construction_table(points: list[list[float]], x: float, y: float,
+                              title: str = "CUADRO DE CONSTRUCCIÓN",
+                              vertex_prefix: str = "V",
+                              row_mm: float = 6.0, text_mm: float = 2.0,
+                              scale: Optional[float] = None,
+                              layer: str = "CUADRO-CONSTRUCCION",
+                              mark_vertices: bool = True,
+                              avoid: Optional[list[dict[str, Any]]] = None,
+                              ) -> dict[str, Any]:
+    """Cuadro de construcción del terreno: rumbos, distancias y coordenadas.
+
+    Es LA tabla que acompaña a todo plano de terreno en México: una fila por
+    lado del polígono con su rumbo cuadrantal (N 45°30'20" W), su distancia
+    y las coordenadas del vértice de llegada, más la superficie y el
+    perímetro al pie. Sin ella el plano no se puede replantear en campo.
+
+    points: vértices del polígono en SUS COORDENADAS REALES (UTM o
+    locales), en orden, sin repetir el primero al final. Todo se CALCULA de
+    esos vértices — rumbos, distancias, superficie por el método de la
+    cruz — nada se escribe de memoria. Si el terreno ya está dibujado,
+    sacá los vértices con get_entity de su polilínea.
+
+    x, y: esquina superior izquierda del cuadro. Ubicalo APARTE del dibujo
+    (una franja lateral), y pasá en 'avoid' las cajas de lo que ya esté
+    dibujado para que avise si cae encima.
+    mark_vertices: dibuja en cada vértice del terreno su círculo y su
+    etiqueta V1, V2... hacia afuera del polígono.
+    scale: unidades del modelo por mm de papel; sin él, el de la lámina.
+
+    Devuelve 'sides' (rumbo/distancia/coordenadas por lado), 'area',
+    'perimeter' y la caja del cuadro."""
+    return civil_mod.create_construction_table(
+        points=points, x=x, y=y, title=title, vertex_prefix=vertex_prefix,
+        row_mm=row_mm, text_mm=text_mm, scale=scale, layer=layer,
+        mark_vertices=mark_vertices, avoid=avoid)
 
 
 @mcp.tool()
@@ -1886,6 +2205,34 @@ def create_section_mark(x1: float, y1: float, x2: float, y2: float,
 
 
 @mcp.tool()
+def create_north(x: float, y: float, radius: float = 0.0,
+                 rotation_deg: float = 0.0, label: str = "N",
+                 style: str = "arrow", layer: str = "NORTE",
+                 lineweight: int = 35,
+                 color_index: Optional[int] = None) -> dict[str, Any]:
+    """Símbolo de norte. TODO plano de terreno o de conjunto lleva uno.
+
+    Sin norte, una planta no se puede orientar en el lote ni saber qué
+    fachada recibe el sol — y en un plano que se entrega a licencia es de
+    lo primero que se revisa. Armado a mano con líneas sueltas sale
+    distinto en cada lámina, por eso vive acá.
+
+    x, y: CENTRO del símbolo. radius: 0 lo toma de la escala de la lámina
+    (12 mm de papel), que es el tamaño usual.
+    rotation_deg: hacia dónde apunta el norte, desde arriba (+Y) y
+    ANTIHORARIO — 0 es norte hacia arriba, como se orienta un plano salvo
+    que el terreno obligue a otra cosa.
+    style: 'arrow' es la aguja clásica de dos mitades dentro de su círculo;
+    'simple' solo la flecha, para un detalle chico.
+
+    Registra su huella: place_labels no le escribe encima."""
+    return sym_mod.create_north(
+        x=x, y=y, radius=radius, rotation_deg=rotation_deg, label=label,
+        style=style, layer=layer, lineweight=lineweight,
+        color_index=color_index)
+
+
+@mcp.tool()
 def set_dim_style_family(scales: Optional[list[float]] = None,
                           model_units: str = "m",
                           paper_mm: float = 2.0,
@@ -2013,8 +2360,18 @@ def create_mtext(
     z: float = 0.0, layer: Optional[str] = None,
     lineweight: Optional[int] = None, color_index: Optional[int] = None,
     style: Optional[str] = None,
+    fits_in: Optional[list[float]] = None,
 ) -> dict[str, Any]:
     """Crea texto multilínea (MText) que ajusta dentro de un ancho dado.
+
+    (x, y) es la esquina SUPERIOR izquierda: las líneas crecen hacia ABAJO.
+    Un texto de tres renglones puesto en el centro de una casilla se sale por
+    abajo — pasó de verdad en una solapa de rótulo.
+
+    fits_in: [x0, y0, x1, y1] de la casilla donde tiene que entrar. Se mide la
+    caja REAL del texto ya dibujado y, si se sale, viene 'warning' con cuánto
+    y por dónde. Mismo criterio que create_table, que ya avisa cuando un texto
+    no entra en su celda.
 
     lineweight: grosor del trazo del texto en centésimas de mm; si se omite
     hereda el de la capa. color_index: color ACI 1-255."""
@@ -2022,6 +2379,32 @@ def create_mtext(
         "text": text, "x": x, "y": y, "z": z, "height": height, "width": width,
         "layer": layer, "style": style, **_style(lineweight, color_index),
     })
+
+    if fits_in and len(fits_in) == 4:
+        try:
+            caja = acad.call("get_entity",
+                             {"handle": resultado["handle"]}).get("bbox")
+        except (acad.AutoCadError, KeyError):
+            caja = None
+        if caja:
+            resultado = dict(resultado)
+            resultado["bbox"] = caja
+            fx0, fy0, fx1, fy1 = (float(c) for c in fits_in)
+            fuera = []
+            if caja[0] < fx0 - 1e-9:
+                fuera.append("%.3g por la izquierda" % (fx0 - caja[0]))
+            if caja[1] < fy0 - 1e-9:
+                fuera.append("%.3g por abajo" % (fy0 - caja[1]))
+            if caja[2] > fx1 + 1e-9:
+                fuera.append("%.3g por la derecha" % (caja[2] - fx1))
+            if caja[3] > fy1 + 1e-9:
+                fuera.append("%.3g por arriba" % (caja[3] - fy1))
+            if fuera:
+                resultado["warning"] = (
+                    "El texto NO entra en [%g, %g, %g, %g]: se sale %s. "
+                    "Recordá que (x, y) es la esquina SUPERIOR izquierda y "
+                    "las líneas crecen hacia abajo."
+                    % (fx0, fy0, fx1, fy1, " y ".join(fuera)))
     _track_text(text, x, y, height, width=width)
     return resultado
 
@@ -2042,13 +2425,18 @@ def create_dimension(
     gigante.
 
     lineweight: grosor de las líneas de cota en centésimas de mm (las cotas van
-    finas, 13-18, para no competir con los muros). color_index: color ACI."""
-    return acad.call("create_dimension", {
+    finas, 13-18, para no competir con los muros). color_index: color ACI.
+
+    La cota queda registrada en el espacio de anotación: check_annotations la
+    ve, y las cadenas siguientes se apilan afuera de ella."""
+    resultado = acad.call("create_dimension", {
         "x1": x1, "y1": y1, "x2": x2, "y2": y2,
         "dimLineX": dim_line_x, "dimLineY": dim_line_y, "layer": layer,
         "scale": scale, "style": style,
         **_style(lineweight, color_index),
     })
+    _track_dimension(x1, y1, x2, y2, dim_line_x, dim_line_y, scale)
+    return resultado
 
 
 @mcp.tool()
@@ -2069,13 +2457,19 @@ def create_dimension_rotated(x1: float, y1: float, x2: float, y2: float,
     hipotenusa.
 
     text: sobrescribe el número medido, para poner "VARIABLE" o un valor de
-    proyecto."""
-    return acad.call("create_dimension_rotated", {
+    proyecto.
+
+    La cota queda registrada en el espacio de anotación: check_annotations la
+    ve, y las cadenas siguientes se apilan afuera de ella."""
+    resultado = acad.call("create_dimension_rotated", {
         "x1": x1, "y1": y1, "x2": x2, "y2": y2,
         "dimLineX": dim_line_x, "dimLineY": dim_line_y, "angleDeg": angle_deg,
         "layer": layer, "style": style, "scale": scale, "text": text,
         "lineweight": lineweight, "colorIndex": None,
     })
+    _track_dimension(x1, y1, x2, y2, dim_line_x, dim_line_y, scale,
+                     angle_deg=angle_deg, text=text)
+    return resultado
 
 
 @mcp.tool()
@@ -2210,7 +2604,11 @@ def create_leader(
     de set_dim_style (el DIMSTYLE activo), para que coincida con las cotas del
     mismo plano; si no hay ninguno configurado, cae a text_height * 0.6.
     lineweight: grosor de la flecha y el texto en centésimas de mm (13-18 es lo
-    habitual). color_index: color ACI 1-255."""
+    habitual). color_index: color ACI 1-255.
+
+    Ojo: si el primer tramo mide menos que el DOBLE de la flecha, AutoCAD
+    suprime la punta EN SILENCIO — en un dibujo en metros con el DIMASZ de
+    fábrica pasa siempre. Se avisa en 'warning' cuando se detecta."""
     resultado = acad.call("create_leader", {
         "points": points, "text": text, "textHeight": text_height,
         "arrowSize": arrow_size, "layer": layer,
@@ -2218,6 +2616,20 @@ def create_leader(
     })
     if points:
         _track_text(text, points[-1][0], points[-1][1], text_height)
+    if len(points) >= 2:
+        tramo = math.hypot(points[1][0] - points[0][0],
+                           points[1][1] - points[0][1])
+        flecha = (arrow_size
+                  or (resultado.get("arrowSize")
+                      if isinstance(resultado, dict) else None)
+                  or text_height * 0.6)
+        if tramo < 2.0 * float(flecha):
+            resultado = dict(resultado)
+            resultado["warning"] = (
+                "El primer tramo del leader mide %.3g y la flecha %.3g: "
+                "AutoCAD suprime la punta cuando el tramo no llega al doble "
+                "de la flecha. Alargá el primer tramo o achicá arrow_size."
+                % (tramo, float(flecha)))
     return resultado
 
 
@@ -2226,19 +2638,41 @@ def create_hatch(
     boundary_handle: str, pattern: str = "SOLID", scale: float = 1.0,
     angle_deg: float = 0.0, layer: Optional[str] = None,
     lineweight: Optional[int] = None, color_index: Optional[int] = None,
-) -> dict[str, Any]:
+    island_handles: Optional[list[str]] = None) -> dict[str, Any]:
     """Rellena una entidad cerrada (Polyline cerrada o Circle, identificada por su
     handle) con un patrón de achurado. 'SOLID' para relleno sólido (p.ej. los
     cuadraditos de una leyenda); nombres de acad.pat como 'ANSI31' o 'AR-CONC'
     para simbología de materiales en un corte.
 
+    island_handles: contornos que quedan SIN rellenar dentro del externo —
+    un anillo, una losa con hueco de escalera, un patio dentro de una planta.
+    Todo caso donde el material rodea algo que no lo lleva. Sin esto el
+    achurado tapaba la isla entera.
+
     lineweight: grosor de las líneas del patrón en centésimas de mm (los rellenos
     van finos, 5-13, para que no tapen el dibujo). color_index: color ACI."""
-    return acad.call("create_hatch", {
-        "boundaryHandle": boundary_handle, "pattern": pattern,
+    r = acad.call("create_hatch", {
+        "boundaryHandle": boundary_handle,
+        "islandHandles": island_handles, "pattern": pattern,
         "scale": scale, "angleDeg": angle_deg, "layer": layer,
         **_style(lineweight, color_index),
     })
+
+    # Un plugin anterior a 1.1.0 IGNORA 'islandHandles' en silencio: devuelve
+    # un handle y ningun error, y el achurado sale tapando la isla entera.
+    # Visto de verdad -- parecia que habia funcionado. Que un dato pedido se
+    # descarte sin avisar es peor que un error.
+    if island_handles:
+        aplicadas = r.get("islands")
+        if aplicadas != len(island_handles):
+            raise acad.AutoCadError(
+                "Se pidieron %d isla(s) y el plugin aplico %s. Tu plugin no "
+                "soporta islas: necesita la version 1.1.0 o superior. "
+                "Recompila e instala (tools/install_bundle.ps1) y reinicia "
+                "AutoCAD; 'ping' te dice que version esta cargada."
+                % (len(island_handles), aplicadas if aplicadas is not None
+                   else "ninguna (ni siquiera lo reporta)"))
+    return r
 
 
 @mcp.tool()
@@ -2789,9 +3223,30 @@ def create_layout(name: str, plot_config: Optional[str] = None,
     el error lista los disponibles.
 
     Después: create_viewport para poner la ventana al modelo."""
-    return acad.call("create_layout", {
+    r = acad.call("create_layout", {
         "name": name, "plotConfig": plot_config, "paperSize": paper_size,
     })
+
+    # Sin paper_size queda el default del dispositivo, que casi nunca es el
+    # que uno tenia en la cabeza. Con un A4 vertical de default y una hoja
+    # apaisada dibujada a mano, el contenido termina en una esquina ocupando
+    # el 8% del papel -- y no hay ningun error que lo delate.
+    avisos = []
+    w, h = r.get("paperWidth") or 0, r.get("paperHeight") or 0
+    if not paper_size:
+        avisos.append(
+            "No se pidio paper_size: quedo %s (%.0f x %.0f mm), el default "
+            "del dispositivo. Si el dibujo no es de ese tamano va a quedar "
+            "en una esquina de la hoja."
+            % (r.get("paperName") or "?", w, h))
+    if w and h:
+        avisos.append("Papel %s: %.0f x %.0f mm (%s)."
+                      % (r.get("paperName") or "?", w, h,
+                         "apaisado" if w >= h else "vertical"))
+    if avisos:
+        r = dict(r)
+        r["warnings"] = avisos
+    return r
 
 
 @mcp.tool()
@@ -2811,7 +3266,7 @@ def create_viewport(layout: str, center_x: float, center_y: float,
                      width: float, height: float,
                      view_center_x: float = 0.0, view_center_y: float = 0.0,
                      scale_denominator: float = 50.0,
-                     model_units_per_mm: float = 1.0,
+                     model_units_per_mm: Optional[float] = None,
                      locked: bool = True) -> dict[str, Any]:
     """Ventana dentro de un layout que muestra una zona del espacio modelo a
     escala fija. Es la forma correcta de armar una lámina: el dibujo vive una
@@ -2821,18 +3276,58 @@ def create_viewport(layout: str, center_x: float, center_y: float,
     MILÍMETROS DE PAPEL, con origen en la esquina inferior izquierda de la hoja.
     view_center_x/y: qué punto del MODELO queda en el centro de la ventana.
     scale_denominator: 50 para 1:50, 100 para 1:100.
-    model_units_per_mm: cuántos milímetros reales mide 1 unidad del modelo —
-    1000 si dibujás en metros, 10 en centímetros, 1 en milímetros. Sin esto la
-    escala del viewport sale mil veces mal.
+    model_units_per_mm: OBLIGATORIO — cuántos milímetros reales mide 1 unidad
+    del modelo: 1000 dibujando en metros, 10 en centímetros, 1 en milímetros.
+    Era opcional con default 1.0 y la escala salía mil veces mal EN SILENCIO
+    en todo dibujo en metros, así que ahora se exige.
     locked: deja el viewport bloqueado para que un zoom accidental no le cambie
     la escala. Es lo que querés casi siempre."""
-    return acad.call("create_viewport", {
+    if model_units_per_mm is None or model_units_per_mm <= 0:
+        sugerido = ""
+        upm = space_mod.units_per_paper_mm()
+        if upm > 0:
+            sugerido = (
+                " Con la escala registrada de la lámina (%g unidades por mm "
+                "de papel) y 1:%g, correspondería model_units_per_mm=%g."
+                % (upm, scale_denominator, scale_denominator / upm))
+        raise ValueError(
+            "model_units_per_mm es obligatorio: 1000 dibujando en metros, "
+            "10 en centímetros, 1 en milímetros. Sin él la escala del "
+            "viewport sale mil veces mal sin ningún error." + sugerido)
+    # Una plantilla de layout casi siempre trae UN viewport de fabrica, y
+    # nadie lo borra. Ese viewport muestra el modelo a otra escala encima de
+    # todo, y despues no se entiende por que la lamina se ve confusa. Se
+    # cuenta ANTES de crear el nuestro, para poder nombrarlos.
+    previos = []
+    try:
+        acad.call("set_current_layout", {"name": layout})
+        for e in acad.call("select_entities", {
+                "x1": None, "y1": None, "x2": None, "y2": None,
+                "layers": None, "types": ["Viewport"],
+                "mode": "inside"}).get("entities", []):
+            previos.append(e["handle"])
+    except acad.AutoCadError:
+        previos = []
+
+    r = acad.call("create_viewport", {
         "layout": layout, "centerX": center_x, "centerY": center_y,
         "width": width, "height": height,
         "viewCenterX": view_center_x, "viewCenterY": view_center_y,
         "scaleDenominator": scale_denominator,
         "modelUnitsPerMm": model_units_per_mm, "locked": locked,
     })
+
+    # El primero de la lista es el viewport "overall" del espacio papel, que
+    # existe siempre y no se dibuja: no cuenta.
+    sobrantes = max(0, len(previos) - 1)
+    if sobrantes:
+        r = dict(r)
+        r["warning"] = (
+            "El layout '%s' YA tenia %d viewport(s) ademas del nuestro (%s). "
+            "Suelen venir con la plantilla y muestran el modelo a otra escala "
+            "encima de todo. Borralos con delete_entities si no los queres."
+            % (layout, sobrantes, ", ".join(previos[1:5])))
+    return r
 
 
 # ----------------------------------------------------- Estilos con nombre
@@ -2967,6 +3462,10 @@ def open_document(path: str, read_only: bool = False) -> dict[str, Any]:
     Olvida lo cacheado del dibujo anterior — ver los 'warnings'."""
     r = acad.call("open_document", {"path": path, "readOnly": read_only})
     avisos = _reset_drawing_state(r.get("active", path))
+    if not read_only:
+        # El archivo abierto es el destino natural del próximo guardado sin
+        # path — así save_drawing() pisa ESTE archivo y no el default.
+        session_mod.note_opened(path)
     if avisos:
         r = dict(r)
         r["warnings"] = avisos
@@ -3135,14 +3634,28 @@ def save_drawing(path: Optional[str] = None,
                   overwrite: bool = False) -> dict[str, Any]:
     """Guarda el dibujo activo en disco.
 
-    path: ruta .dwg destino. Si se omite, guarda sobre el archivo actual — y si
-    el dibujo nunca se guardó, avisa que hace falta pasarlo.
-    overwrite: hace falta en True para pisar un archivo que ya existe (salvo
-    que sea el archivo del propio dibujo).
+    path: ruta .dwg destino. Si se omite, se REUSA el último path guardado o
+    abierto en esta sesión — antes "sin path" podía terminar en el default de
+    AutoCAD (Documents\\Drawing1.dwg) en vez de pisar el mismo archivo, que es
+    exactamente lo que uno quiere al guardar seguido. Si nunca hubo path en la
+    sesión, guarda sobre el archivo actual, y si el dibujo no tiene, avisa.
+    overwrite: hace falta en True para pisar un archivo AJENO que ya existe;
+    al reusar el path recordado se pisa solo, porque es el propio.
 
     Escribe el archivo por API: AutoCAD puede seguir mostrando el nombre viejo
     en la pestaña hasta que lo reabras, pero en disco queda bien."""
-    return acad.call("save_drawing", {"path": path, "overwrite": overwrite})
+    recordado = session_mod.last_save_path()
+    efectivo = path or recordado
+    r = acad.call("save_drawing", {
+        "path": efectivo,
+        "overwrite": overwrite or (path is None and recordado is not None),
+    })
+    session_mod.note_saved(efectivo)
+    if path is None and recordado:
+        r = dict(r)
+        r["note"] = ("path omitido: se guardó sobre el último path de la "
+                     "sesión, '%s'." % recordado)
+    return r
 
 
 @mcp.tool()
@@ -3171,8 +3684,28 @@ def ping() -> dict[str, Any]:
 
 @mcp.tool()
 def zoom_extents() -> dict[str, Any]:
-    """Hace zoom a la extensión completa del dibujo activo."""
+    """Hace zoom a la extensión completa del dibujo activo.
+
+    Es SÍNCRONO: cuando responde, el zoom ya está hecho — así un
+    capture_viewport pedido inmediatamente después no choca con un comando
+    en curso."""
     return acad.call("zoom_extents", {})
+
+
+@mcp.tool()
+def zoom_window(min_x: float, min_y: float, max_x: float,
+                max_y: float) -> dict[str, Any]:
+    """Encuadra una ZONA del dibujo, no la extensión completa.
+
+    Es lo que hace falta para MIRAR un detalle: en un plano grande (o en uno
+    en coordenadas UTM, donde las dos copias del proyecto están a cientos de
+    metros) capture_viewport a la extensión total deja el detalle en un
+    píxel y la foto no sirve para revisar nada.
+
+    El ciclo para revisar una zona es: zoom_window → capture_viewport.
+    Síncrono igual que zoom_extents: al responder, la vista ya está puesta."""
+    return acad.call("zoom_extents", {
+        "minX": min_x, "minY": min_y, "maxX": max_x, "maxY": max_y})
 
 
 @mcp.tool()
@@ -3190,12 +3723,26 @@ def export_pdf(layout: str, path: str, device: Optional[str] = None) -> dict[str
 
     Se plotea con la configuración YA guardada en el layout (papel, escala):
     no vuelve a calcular nada, solo manda a imprimir lo que create_layout +
-    create_viewport ya dejaron armado."""
-    return acad.call("export_pdf", {"layout": layout, "path": path, "device": device})
+    create_viewport ya dejaron armado.
+
+    Si hubo dibujo nuevo desde el último check_all, avisa: exportar es
+    entregar, y un plano se revisa antes de entregarse."""
+    r = acad.call("export_pdf", {"layout": layout, "path": path, "device": device})
+    if session_mod.dirty_since_check():
+        r = dict(r)
+        r["warning"] = (
+            "Se dibujó desde el último check_all (o nunca corrió). Antes de "
+            "dar la lámina por entregada: check_all para los números y "
+            "capture_viewport para MIRAR que nada quedó encimado.")
+    return r
 
 
 @mcp.tool()
-def capture_viewport(path: str, layout: Optional[str] = None) -> dict[str, Any]:
+def capture_viewport(path: str, layout: Optional[str] = None,
+                      min_x: Optional[float] = None,
+                      min_y: Optional[float] = None,
+                      max_x: Optional[float] = None,
+                      max_y: Optional[float] = None) -> dict[str, Any]:
     """Saca una imagen PNG de lo que hay dibujado, para poder MIRAR el
     resultado en vez de confiar solo en los números que devuelven las demás
     tools (get_extents, list_entities, los check_*).
@@ -3209,10 +3756,25 @@ def capture_viewport(path: str, layout: Optional[str] = None) -> dict[str, Any]:
     a un zoom_extents antes de la foto); si es un layout, captura la hoja
     completa tal como quedaría al imprimir.
 
+    min_x/min_y/max_x/max_y: CAPTURAR SOLO ESA ZONA. Es lo que hace falta
+    para revisar un detalle de verdad — a la extensión completa, un mueble
+    de 60 cm en un plano de 16 m sale de unos pocos píxeles y no se puede
+    ver si dos líneas quedaron encimadas. Una foto del plano entero sirve
+    para el encuadre general; para juzgar la CALIDAD del dibujo hay que
+    acercarse. (zoom_window no alcanza: el plot por extensión ignora la
+    vista de pantalla.)
+
     No sirve para nada 3D ni para depurar colores de pantalla — es una foto
     plana de lo que hay, pensada para chequear que nada se encimó o quedó
     fuera de lugar antes de dar un plano por terminado."""
-    return acad.call("capture_viewport", {"path": path, "layout": layout})
+    ventana = [min_x, min_y, max_x, max_y]
+    if any(c is not None for c in ventana) and any(c is None for c in ventana):
+        raise ValueError(
+            "Para capturar una zona hacen falta los CUATRO valores: "
+            "min_x, min_y, max_x, max_y.")
+    return acad.call("capture_viewport", {
+        "path": path, "layout": layout,
+        "minX": min_x, "minY": min_y, "maxX": max_x, "maxY": max_y})
 
 
 @mcp.tool()

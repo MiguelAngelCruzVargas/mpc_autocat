@@ -34,6 +34,8 @@ def _mock_dibujo_limpio() -> None:
             return {"entities": []}
         if cmd == "list_styles":
             return {"textStyles": []}
+        if cmd == "list_xrefs":
+            return {"xrefs": []}
         raise AssertionError(f"comando no mockeado: {cmd}")
     server.acad.call = fake
 
@@ -47,6 +49,8 @@ def _mock_capa_fantasma() -> None:
             return {"entities": []}
         if cmd == "list_styles":
             return {"textStyles": []}
+        if cmd == "list_xrefs":
+            return {"xrefs": []}
         raise AssertionError(f"comando no mockeado: {cmd}")
     server.acad.call = fake
 
@@ -115,10 +119,42 @@ def test_hygiene_se_normaliza_al_mismo_formato() -> None:
         server.acad.call = real
 
 
+def test_xref_roto_es_problema() -> None:
+    """Un xref FileNotFound en la máquina de destino deja la lámina sin la
+    base de otra disciplina, y hasta ahora nadie lo miraba al cierre."""
+    real = server.acad.call
+    try:
+        def fake(cmd, params=None):
+            if cmd == "list_layers":
+                return {"layers": [{"name": "0"}]}
+            if cmd == "list_entities":
+                return {"entities": []}
+            if cmd == "list_styles":
+                return {"textStyles": []}
+            if cmd == "list_xrefs":
+                return {"xrefs": [
+                    {"name": "ARQ-BASE", "path": "C:/x/arq.dwg",
+                     "status": "Resolved", "unloaded": False},
+                    {"name": "ESTRUCTURA", "path": "../est.dwg",
+                     "status": "FileNotFound", "unloaded": False},
+                ]}
+            raise AssertionError(f"comando no mockeado: {cmd}")
+        server.acad.call = fake
+        r = server.check_all()
+        de_xrefs = [p for p in r["problems"] if p["check"] == "xrefs"]
+        check("el xref roto aparece como problema", len(de_xrefs) == 1,
+              r["problems"])
+        check("el resuelto no molesta",
+              all("ESTRUCTURA" in p["problem"] for p in de_xrefs), de_xrefs)
+    finally:
+        server.acad.call = real
+
+
 def main() -> int:
     for fn in [test_junta_problemas_de_layout_y_geometry,
                test_todo_limpio_no_inventa_nada,
-               test_hygiene_se_normaliza_al_mismo_formato]:
+               test_hygiene_se_normaliza_al_mismo_formato,
+               test_xref_roto_es_problema]:
         print(fn.__name__)
         fn()
 

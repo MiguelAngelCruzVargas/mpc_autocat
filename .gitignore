@@ -18,3 +18,10 @@ mcp_server/.pytest_cache/
 /*.dwl
 /*.dwl2
 scratch_*.png
+# Las capturas de revision visual tambien: capture_viewport las deja en la
+# raiz y son de una corrida, igual que los DWG de arriba.
+/*.png
+
+# Log del motor de plot (lo deja el driver PNG/PDF al plotear).
+plot.log
+mcp_server/plot.log

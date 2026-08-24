@@ -34,6 +34,57 @@ LW_TEXT = 18
 OVERFLOW_HARD_RATIO = 1.3
 
 
+# Estilo de cota propio, con la convencion de plano de obra. Existe por la
+# misma razon que layers.ESTILO_TEXTO: el 'Standard' que trae el DWG toma el
+# separador decimal de la CONFIGURACION REGIONAL de Windows, asi que en una
+# maquina en espanol las cotas salen "3,5" -- con coma y un solo decimal. En
+# un plano eso se lee como descuido; la convencion es "3.50".
+ESTILO_COTAS = "MCP-COTAS"
+_DIM_CHECKED = [False]
+
+
+def reset_dim_style() -> None:
+    """Al cambiar de dibujo: el estilo del anterior no existe aca."""
+    _DIM_CHECKED[0] = False
+
+
+def ensure_dim_style(scale: float = 0.0, decimals: int = 2,
+                     paper_mm: float = 2.0) -> Optional[str]:
+    """Deja listo el estilo de cota con punto decimal y dos decimales.
+
+    Las medidas van en MILIMETROS DE PAPEL, no en unidades del modelo: el
+    DIMSCALE que create_dimension_chain le pasa a cada cota (las unidades
+    por mm de papel de la lamina) es el que hace la conversion. Guardarlas
+    ya convertidas las escala DOS veces -- paso de verdad: el texto salio
+    de 0.02 unidades, o sea 2 cm en un plano de 16 m, y las cotas se veian
+    como lineas sin numero. Ademas asi el estilo sirve para cualquier
+    escala, que es justamente para lo que existe DIMSCALE.
+
+    Se corre una sola vez por dibujo. Devuelve el nombre del estilo, o None
+    si no se pudo (un plugin viejo sin 'decimalSeparator', por ejemplo): en
+    ese caso la cota sale igual, solo que con el formato del sistema.
+    """
+    if _DIM_CHECKED[0]:
+        return ESTILO_COTAS
+    _DIM_CHECKED[0] = True
+    try:
+        acad.call("set_dim_style", {
+            "name": ESTILO_COTAS,
+            "textHeight": paper_mm,
+            "arrowSize": paper_mm,
+            "scale": 1.0,
+            "decimalPlaces": decimals,
+            "decimalSeparator": ".",
+            "trailingZeros": True,
+            "extensionOffset": 0.6,
+            "extensionBeyond": 0.8,
+            "setCurrent": False,
+        })
+        return ESTILO_COTAS
+    except (acad.AutoCadError, KeyError, TypeError):
+        return None
+
+
 def _layer(name: str, color: int = 7, lineweight: int = LW_BOX) -> None:
     # Solo si no existe: ver layers.py.
     layers.ensure(name, color, lineweight)

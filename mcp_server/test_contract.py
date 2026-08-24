@@ -50,8 +50,20 @@ def main() -> int:
     # Toda tool MCP deberia terminar en al menos un acad.call. La ventana
     # es amplia a proposito: un docstring largo es deseable y no tiene
     # por que hacer fallar el chequeo.
+    #
+    # El allowlist tiene que incluir TODO modulo al que una tool delegue.
+    # sym_mod./compose_mod. faltaban y sus tools pasaban de casualidad,
+    # porque la ventana de 6000 chars alcanzaba el acad.call de la tool
+    # SIGUIENTE: al insertar create_north entre create_level_mark y ese
+    # acad.call, create_level_mark empezo a fallar sin haber cambiado.
+    delegados = ("sheet_mod.", "arch_mod.", "fur_mod.", "ann_mod.",
+                 "civil_mod.", "elec_mod.", "profile_mod.", "rules_mod.",
+                 "sect_mod.", "qty_mod.", "roof_mod.", "rebar_mod.",
+                 "iso_mod.", "sym_mod.", "compose_mod.", "geom_mod.",
+                 "layers_mod.", "space_mod.", "session_mod.")
+    patron = "|".join(re.escape(d) for d in delegados)
     silent = sorted(t for t in exposed if not re.search(
-        r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|sheet_mod\.|arch_mod\.|fur_mod\.|ann_mod\.|civil_mod\.|elec_mod\.|profile_mod\.|rules_mod\.|sect_mod\.|qty_mod\.|roof_mod\.|rebar_mod\.|iso_mod\.)",
+        r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|" + patron + ")",
         server_src))
     if silent:
         problems.append("Tools que no llaman al plugin: " + ", ".join(silent))
