@@ -303,6 +303,237 @@ def check_geometry(rooms: list[dict[str, Any]],
     }
 
 
+# ------------------------------------------- generador de partido (V1)
+
+# Medidas del esquema, en metros. Salen de proporciones usuales de vivienda
+# entre medianeras, no de ninguna norma: son el punto de partida que después
+# se ajusta a mano si el proyecto lo pide.
+ANCHO_PASILLO = 1.00
+FONDO_SOCIAL = 4.00          # banda de sala + comedor, al frente
+FONDO_SERVICIOS = 3.00       # banda de cocina + baño + lavado
+FONDO_RECAMARA = 3.20
+FONDO_BANO_PPAL = 1.50
+FONDO_PATIO_MIN = 2.00
+# Con el pasillo central de 1.00, cada media crujía mide (frente-1)/2; la
+# cocina (social: 8 m2 minimos a 3.00 de fondo) es la que fija el frente.
+FRENTE_MIN = 6.40
+
+
+def suggest_layout(lot_width: float, lot_depth: float,
+                   bedrooms: int = 2, bathrooms: int = 1) -> dict[str, Any]:
+    """Propone una distribución completa para un lote entre medianeras, YA
+    validada contra check_layout y check_geometry antes de devolverla.
+
+    Es la inversa de los check_*: en vez de validar una zonificación que
+    alguien inventó, la produce el servidor con un esquema determinístico y
+    la pasa por sus propias reglas. El que llama recibe rooms/doors/windows
+    listos para dibujar, no una sugerencia a medio verificar.
+
+    El esquema (V1, un nivel, acceso por el frente en y=0):
+      - banda social al frente: SALA + COMEDOR
+      - banda de servicios: COCINA (derecha), BAÑO y ÁREA DE LAVADO
+        (izquierda), PASILLO central de 1.00 que corre hasta el fondo
+      - recámaras a ambos lados del pasillo, de a pares
+      - PATIO DE SERVICIO al fondo, con acceso desde el pasillo (una
+        circulación común, como manda la regla)
+      - con bathrooms=2, el BAÑO PRINCIPAL sale en-suite de la recámara
+        principal, que es como manda la regla
+
+    Si el programa NO entra (frente menor a 6.40 m, o el fondo no alcanza),
+    lo dice con los números en 'problems' en vez de forzar recintos fuera de
+    mínimo — un programa que no cierra no se arregla dibujando con cuidado.
+
+    bedrooms: 1 a 6. bathrooms: 1 o 2 (2 = agrega el baño principal
+    en-suite). Todo en metros, el frente sobre X y el fondo sobre Y.
+
+    Devuelve rooms/doors/windows (el vocabulario de check_layout), 'areas'
+    por recinto, 'builtDepth' (hasta dónde llega lo construido) y
+    'validation' con el resultado completo de los checks — 'ok' solo si
+    salieron limpios."""
+    if not 1 <= int(bedrooms) <= 6:
+        raise ValueError("bedrooms va de 1 a 6 en este esquema (V1).")
+    if int(bathrooms) not in (1, 2):
+        raise ValueError("bathrooms es 1 o 2 (2 = baño principal en-suite).")
+    if lot_width <= 0 or lot_depth <= 0:
+        raise ValueError("lot_width y lot_depth tienen que ser > 0.")
+    bedrooms, bathrooms = int(bedrooms), int(bathrooms)
+
+    problemas: list[dict[str, str]] = []
+    if lot_width < FRENTE_MIN - 1e-9:
+        problemas.append({
+            "rule": "frente insuficiente",
+            "problem": f"Con {lot_width:.2f} m de frente no cierran los "
+                       f"mínimos habitables: este esquema necesita "
+                       f"{FRENTE_MIN:.2f} m (la cocina de 8 m2 es la que "
+                       "manda).",
+            "fix": "Conseguí más frente, o pedí un esquema a medida: esto "
+                   "no se arregla achicando recintos por debajo del mínimo."})
+        return {"ok": False, "problems": problemas, "rooms": [],
+                "doors": [], "windows": [],
+                "minLotWidth": FRENTE_MIN}
+
+    w = float(lot_width)
+    xm = w / 2.0
+    xc0 = xm - ANCHO_PASILLO / 2.0          # borde izquierdo del pasillo
+    xc1 = xm + ANCHO_PASILLO / 2.0          # borde derecho
+    y_social = FONDO_SOCIAL
+    y_serv = FONDO_SOCIAL + FONDO_SERVICIOS
+
+    rooms: list[dict[str, Any]] = [
+        {"name": "SALA", "x0": 0.0, "y0": 0.0, "x1": xm, "y1": y_social},
+        {"name": "COMEDOR", "x0": xm, "y0": 0.0, "x1": w, "y1": y_social},
+        {"name": "COCINA", "x0": xc1, "y0": y_social, "x1": w, "y1": y_serv},
+        {"name": "BAÑO", "x0": 0.0, "y0": y_social, "x1": xc0, "y1": y_social + 1.8},
+        {"name": "ÁREA DE LAVADO", "x0": 0.0, "y0": y_social + 1.8,
+         "x1": xc0, "y1": y_serv},
+    ]
+    doors: list[dict[str, Any]] = [
+        # El acceso va descentrado a propósito: deja un paño entero libre
+        # para la ventana de la sala en la fachada.
+        {"from": "EXTERIOR", "to": "SALA", "width": 0.90,
+         "x": xm * 0.75, "y": 0.0},
+        # Sala-comedor es un vano abierto, no una puerta con hoja.
+        {"from": "SALA", "to": "COMEDOR", "width": 1.20, "type": "pass",
+         "x": xm, "y": y_social / 2.0},
+        {"from": "COMEDOR", "to": "PASILLO", "width": 0.90,
+         "x": (xm + xc1) / 2.0, "y": y_social},
+        {"from": "COMEDOR", "to": "COCINA", "width": 0.80,
+         "x": (xc1 + w) / 2.0, "y": y_social},
+        {"from": "PASILLO", "to": "BAÑO", "width": 0.70,
+         "x": xc0, "y": y_social + 0.9},
+        {"from": "PASILLO", "to": "ÁREA DE LAVADO", "width": 0.80,
+         "x": xc0, "y": y_social + 2.4},
+    ]
+
+    # Recámaras a ambos lados del pasillo, llenando la columna más corta.
+    # La principal va primero, a la izquierda; su baño en-suite (si hay dos
+    # baños) la sigue en la misma columna, así comparten muro.
+    cursor = {"izq": y_serv, "der": y_serv}
+    col_x = {"izq": (0.0, xc0), "der": (xc1, w)}
+
+    def _colocar(nombre: str, fondo: float, col: str) -> dict[str, Any]:
+        x0, x1 = col_x[col]
+        r = {"name": nombre, "x0": x0, "y0": cursor[col],
+             "x1": x1, "y1": cursor[col] + fondo}
+        cursor[col] += fondo
+        rooms.append(r)
+        return r
+
+    ppal = _colocar("RECÁMARA PRINCIPAL", FONDO_RECAMARA, "izq")
+    doors.append({"from": "PASILLO", "to": "RECÁMARA PRINCIPAL", "width": 0.80,
+                  "x": xc0, "y": (ppal["y0"] + ppal["y1"]) / 2.0})
+    if bathrooms >= 2:
+        bp = _colocar("BAÑO PRINCIPAL", FONDO_BANO_PPAL, "izq")
+        doors.append({"from": "RECÁMARA PRINCIPAL", "to": "BAÑO PRINCIPAL",
+                      "width": 0.70, "x": xc0 / 2.0, "y": bp["y0"]})
+
+    for i in range(2, bedrooms + 1):
+        col = "der" if cursor["der"] <= cursor["izq"] else "izq"
+        r = _colocar(f"RECÁMARA {i}", FONDO_RECAMARA, col)
+        lado = xc0 if col == "izq" else xc1
+        doors.append({"from": "PASILLO", "to": r["name"], "width": 0.80,
+                      "x": lado, "y": (r["y0"] + r["y1"]) / 2.0})
+
+    y_fin = max(cursor["izq"], cursor["der"])
+
+    # Sin huecos muertos: la columna corta se completa. Si quedó vacía del
+    # lado derecho (una sola recámara), ahí va un estudio; si solo quedó
+    # corta, el último recinto de esa columna se estira hasta el fondo.
+    for col in ("izq", "der"):
+        falta = y_fin - cursor[col]
+        if falta < 1e-9:
+            continue
+        propios = [r for r in rooms
+                   if (r["x0"], r["x1"]) == col_x[col] and r["y0"] >= y_serv]
+        if propios:
+            ultimo = propios[-1]
+            if _clase(ultimo["name"]) == "bano" and len(propios) >= 2:
+                # Estirar un baño a 11 m2 no es un partido, es un desperdicio:
+                # crece la recámara y el baño se corre al fondo con su mismo
+                # tamaño (la puerta en-suite se muda con él).
+                previo = propios[-2]
+                previo["y1"] += falta
+                ultimo["y0"] += falta
+                ultimo["y1"] = y_fin
+                for d in doors:
+                    if str(d.get("to")) == ultimo["name"]:
+                        d["y"] = ultimo["y0"]
+            else:
+                ultimo["y1"] = y_fin
+        else:
+            x0, x1 = col_x[col]
+            rooms.append({"name": "ESTUDIO", "x0": x0, "y0": y_serv,
+                          "x1": x1, "y1": y_fin})
+            lado = xc0 if col == "izq" else xc1
+            doors.append({"from": "PASILLO", "to": "ESTUDIO", "width": 0.80,
+                          "x": lado, "y": (y_serv + y_fin) / 2.0})
+        cursor[col] = y_fin
+
+    rooms.append({"name": "PASILLO", "x0": xc0, "y0": y_social,
+                  "x1": xc1, "y1": y_fin})
+
+    fondo_necesario = y_fin + FONDO_PATIO_MIN
+    if lot_depth < fondo_necesario - 1e-9:
+        problemas.append({
+            "rule": "fondo insuficiente",
+            "problem": f"Este programa ({bedrooms} recámara(s), "
+                       f"{bathrooms} baño(s)) necesita {fondo_necesario:.2f} m "
+                       f"de fondo y el lote tiene {lot_depth:.2f}.",
+            "fix": "Quitá una recámara, o pedí el esquema en dos niveles — "
+                   "achicar recintos por debajo del mínimo no es opción."})
+        return {"ok": False, "problems": problemas, "rooms": rooms,
+                "doors": doors, "windows": [],
+                "neededDepth": round(fondo_necesario, 2)}
+
+    rooms.append({"name": "PATIO DE SERVICIO", "x0": 0.0, "y0": y_fin,
+                  "x1": w, "y1": float(lot_depth)})
+    doors.append({"from": "PASILLO", "to": "PATIO DE SERVICIO",
+                  "width": 0.80, "x": xm, "y": y_fin})
+
+    windows = [{"room": "SALA", "wall": "fachada"},
+               {"room": "COMEDOR", "wall": "fachada"}]
+    avisos: list[str] = []
+    for r in rooms:
+        if r["name"] in ("PATIO DE SERVICIO", "PASILLO"):
+            continue
+        if abs(r["y1"] - y_fin) < 1e-9:
+            windows.append({"room": r["name"], "wall": "patio"})
+        elif r["y0"] >= y_serv:
+            avisos.append(
+                f"'{r['name']}' queda interior: necesita patio de luz o "
+                "ventilación cenital si la normativa local la exige.")
+
+    validation = {
+        "layout": check_layout(rooms=rooms, doors=doors,
+                               lot_width=w, lot_depth=float(lot_depth),
+                               windows=windows),
+        "geometry": check_geometry(rooms=rooms, doors=doors),
+    }
+    ok = validation["layout"]["ok"] and validation["geometry"]["ok"]
+
+    resultado: dict[str, Any] = {
+        "ok": ok,
+        "problems": (validation["layout"]["problems"]
+                     + validation["geometry"]["problems"]),
+        "rooms": rooms,
+        "doors": doors,
+        "windows": windows,
+        "areas": {r["name"]: round((r["x1"] - r["x0"]) * (r["y1"] - r["y0"]), 2)
+                  for r in rooms},
+        "builtDepth": round(y_fin, 2),
+        "patioDepth": round(float(lot_depth) - y_fin, 2),
+        "validation": validation,
+        "message": ("Distribución validada por check_layout y check_geometry: "
+                    "lista para dibujar con create_walls sobre las fronteras "
+                    "de 'rooms'." if ok else
+                    "El esquema salió con problemas — revisá 'problems' "
+                    "antes de dibujar."),
+    }
+    if avisos:
+        resultado["warnings"] = avisos
+    return resultado
+
+
 # ------------------------------------------------ coherencia de la muraria
 
 def _dist_punto_segmento(p, a, b) -> float:

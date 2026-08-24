@@ -71,6 +71,408 @@ def _ensure_layer(name: str, color: int, lineweight: int,
     layers.ensure_text_style()
 
 
+# ------------------------------------------------- dibujar un partido entero
+
+def _merge_intervalos(ivs: list[list[float]],
+                      tol: float = 1e-6) -> list[list[float]]:
+    """Une intervalos [a0, a1, ext] que se tocan. 'ext' se contagia: si un
+    pedazo del muro da al exterior, todo el tramo fusionado sale exterior."""
+    out: list[list[float]] = []
+    for a0, a1, ext in sorted(ivs):
+        if out and a0 <= out[-1][1] + tol:
+            out[-1][1] = max(out[-1][1], a1)
+            out[-1][2] = out[-1][2] or ext
+        else:
+            out.append([a0, a1, bool(ext)])
+    return out
+
+
+def draw_layout(rooms: list[dict[str, Any]],
+                doors: Optional[list[dict[str, Any]]] = None,
+                windows: Optional[list[dict[str, Any]]] = None,
+                exterior_thickness: float = 0.15,
+                interior_thickness: float = 0.10,
+                window_width: float = 1.20,
+                merge: bool = True,
+                layer: str = LAYER_WALLS,
+                lineweight: int = LW_WALL) -> dict[str, Any]:
+    """Dibuja la muraria completa de una distribución de recintos.
+
+    Toma el vocabulario de suggest_layout/check_layout (rooms como
+    rectángulos, doors con su posición) y lo convierte en muros de verdad:
+    cada frontera se dibuja UNA vez (dos recintos vecinos no duplican el
+    muro), el perímetro y el frente al patio salen con espesor exterior, lo
+    demás interior, y las puertas caen en el muro que les toca con la hoja
+    abriendo hacia su recinto destino. Las ventanas se ubican solas en el
+    hueco libre más grande del paño de su ambiente.
+
+    Solo entiende recintos ortogonales (rectángulos alineados a los ejes),
+    que es exactamente lo que produce suggest_layout.
+
+    Devuelve los handles, los EJES dibujados (listos para check_walls) y
+    los avisos de lo que no se pudo ubicar."""
+    tol = 1e-4
+    rects: list[dict[str, Any]] = []
+    for i, r in enumerate(rooms or []):
+        try:
+            rects.append({"name": str(r["name"]),
+                          "x0": float(r["x0"]), "y0": float(r["y0"]),
+                          "x1": float(r["x1"]), "y1": float(r["y1"])})
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"El room #{i + 1} necesita name, x0, y0, x1, y1. ({exc})")
+    if not rects:
+        raise ValueError("draw_layout necesita al menos un room.")
+
+    bx0 = min(r["x0"] for r in rects)
+    bx1 = max(r["x1"] for r in rects)
+    by0 = min(r["y0"] for r in rects)
+    by1 = max(r["y1"] for r in rects)
+
+    def _es_patio(nombre: str) -> bool:
+        return "PATIO" in nombre.upper()
+
+    # Cada recinto aporta sus 4 bordes; los compartidos se funden al unir
+    # los intervalos de la misma línea. 'ext' = perímetro del lote o frente
+    # a un patio: llevan el espesor exterior.
+    lineas: dict[tuple[str, float], list[list[float]]] = {}
+
+    def _edge(orient: str, c: float, a0: float, a1: float, ext: bool) -> None:
+        lineas.setdefault((orient, round(c, 4)), []).append(
+            [min(a0, a1), max(a0, a1), ext])
+
+    for r in rects:
+        patio = _es_patio(r["name"])
+        _edge("v", r["x0"], r["y0"], r["y1"], patio or abs(r["x0"] - bx0) < tol)
+        _edge("v", r["x1"], r["y0"], r["y1"], patio or abs(r["x1"] - bx1) < tol)
+        _edge("h", r["y0"], r["x0"], r["x1"], patio or abs(r["y0"] - by0) < tol)
+        _edge("h", r["y1"], r["x0"], r["x1"], patio or abs(r["y1"] - by1) < tol)
+
+    segs: list[dict[str, Any]] = []
+    for (orient, c), ivs in sorted(lineas.items()):
+        for a0, a1, ext in _merge_intervalos(ivs):
+            segs.append({"orient": orient, "c": c, "a0": a0, "a1": a1,
+                         "ext": ext, "openings": []})
+
+    por_nombre = {r["name"].upper(): r for r in rects}
+    avisos: list[str] = []
+    puertas_puestas = 0
+
+    def _buscar_segmento(px: float, py: float) -> Optional[tuple]:
+        mejor = None
+        for s in segs:
+            if s["orient"] == "v":
+                d, a = abs(px - s["c"]), py
+            else:
+                d, a = abs(py - s["c"]), px
+            if d < 0.03 and s["a0"] - 0.03 <= a <= s["a1"] + 0.03:
+                if mejor is None or d < mejor[0]:
+                    mejor = (d, s, a)
+        return mejor
+
+    for d in (doors or []):
+        etiqueta = f"{d.get('from', '?')} -> {d.get('to', '?')}"
+        if "x" not in d or "y" not in d:
+            avisos.append(f"La puerta {etiqueta} no trae posición (x, y): "
+                          "no se dibujó. Agregala a mano o pasale el punto.")
+            continue
+        px, py = float(d["x"]), float(d["y"])
+        hallado = _buscar_segmento(px, py)
+        if not hallado:
+            avisos.append(f"La puerta {etiqueta} en ({px:g}, {py:g}) no cae "
+                          "sobre ningún muro de la distribución: no se dibujó.")
+            continue
+        _, s, a = hallado
+        ancho = float(d.get("width", 0.80))
+        destino = por_nombre.get(str(d.get("to", "")).upper())
+        side = "left"
+        if destino:
+            cx = (destino["x0"] + destino["x1"]) / 2.0
+            cy = (destino["y0"] + destino["y1"]) / 2.0
+            if s["orient"] == "v":
+                side = "left" if cx < s["c"] else "right"
+            else:
+                side = "left" if cy > s["c"] else "right"
+        total = s["a1"] - s["a0"]
+        dist = min(max(a - s["a0"], ancho / 2.0), total - ancho / 2.0)
+        s["openings"].append({"distance": dist, "width": ancho,
+                              "type": str(d.get("type", "door")),
+                              "side": side})
+        puertas_puestas += 1
+
+    # Ventanas: {"room": .., "wall": "fachada"|"patio"} (lo que devuelve
+    # suggest_layout). Se ubican en el hueco libre más grande del paño.
+    ventanas_puestas: list[dict[str, Any]] = []
+    patio_room = next((r for r in rects if _es_patio(r["name"])), None)
+    for wdef in (windows or []):
+        nombre = str(wdef.get("room", ""))
+        r = por_nombre.get(nombre.upper())
+        muro = str(wdef.get("wall", "")).lower()
+        if not r:
+            avisos.append(f"Ventana de '{nombre}': el recinto no está en "
+                          "'rooms'.")
+            continue
+        if muro in ("fachada", "frente", "front") and abs(r["y0"] - by0) < tol:
+            c, i0, i1 = r["y0"], r["x0"], r["x1"]
+        elif (muro == "patio" and patio_room is not None
+              and abs(r["y1"] - patio_room["y0"]) < tol):
+            c, i0, i1 = r["y1"], r["x0"], r["x1"]
+        else:
+            avisos.append(f"Ventana de '{nombre}' en muro '{muro}': no se "
+                          "resuelve sola (colindancia o sin patio vecino). "
+                          "Si va, dibujala a mano.")
+            continue
+        hallado = _buscar_segmento((i0 + i1) / 2.0, c)
+        if not hallado:
+            continue
+        _, s, _a = hallado
+        # El hueco libre más grande dentro del paño del recinto, dejando
+        # 0.30 a cada esquina y 0.15 a cada puerta ya colocada.
+        lim0, lim1 = i0 + 0.30, i1 - 0.30
+        cortes = sorted(
+            (s["a0"] + o["distance"] - o["width"] / 2.0 - 0.15,
+             s["a0"] + o["distance"] + o["width"] / 2.0 + 0.15)
+            for o in s["openings"])
+        mejor_gap = None
+        g0 = lim0
+        for c0, c1 in cortes + [(lim1, lim1)]:
+            g1 = min(c0, lim1)
+            if g1 - g0 > (mejor_gap[1] - mejor_gap[0] if mejor_gap else 0):
+                mejor_gap = (g0, g1)
+            g0 = max(g0, c1)
+        hueco = (mejor_gap[1] - mejor_gap[0]) if mejor_gap else 0.0
+        ancho_v = window_width if hueco >= window_width else (
+            hueco if hueco >= 0.90 else 0.0)
+        if ancho_v <= 0:
+            avisos.append(f"Ventana de '{nombre}': el paño libre mide "
+                          f"{hueco:.2f} m y no entra ni una de 0.90.")
+            continue
+        centro = (mejor_gap[0] + mejor_gap[1]) / 2.0
+        s["openings"].append({"distance": centro - s["a0"],
+                              "width": ancho_v, "type": "window"})
+        ventanas_puestas.append({"room": nombre, "width": round(ancho_v, 2),
+                                 "x": round(centro if s["orient"] == "h"
+                                            else s["c"], 3),
+                                 "y": round(s["c"] if s["orient"] == "h"
+                                            else centro, 3)})
+
+    axes: list[dict[str, Any]] = []
+    handles: list[str] = []
+    tramos = 0
+    for s in segs:
+        if s["orient"] == "v":
+            points = [[s["c"], s["a0"]], [s["c"], s["a1"]]]
+        else:
+            points = [[s["a0"], s["c"]], [s["a1"], s["c"]]]
+        th = exterior_thickness if s["ext"] else interior_thickness
+        r = create_walls(points=points, thickness=th,
+                         openings=sorted(s["openings"],
+                                         key=lambda o: o["distance"]),
+                         layer=layer, lineweight=lineweight)
+        tramos += 1
+        handles.extend(r["wallHandles"])
+        axes.append({"points": points,
+                     "name": f"muro {s['orient']}={s['c']:g} "
+                             f"({s['a0']:g}..{s['a1']:g})"})
+        if r.get("warning"):
+            avisos.append(f"{axes[-1]['name']}: {r['warning']}")
+
+    resultado: dict[str, Any] = {
+        "wallHandles": handles,
+        "segments": tramos,
+        "axes": axes,
+        "doorsPlaced": puertas_puestas,
+        "doorsTotal": len(doors or []),
+        "windowsPlaced": ventanas_puestas,
+        "thicknesses": {"exterior": exterior_thickness,
+                        "interior": interior_thickness},
+    }
+
+    # Fusion de los contornos. SIN esto el plano se ve mal de verdad, y es
+    # lo primero que nota alguien que dibuja: cada tramo es una polilinea
+    # CERRADA, asi que donde un divisorio llega al muro del pasillo su
+    # linea de cierre queda dibujada ATRAVESANDO el otro muro. El encuentro
+    # se ve como un cajon en vez de la T limpia que corresponde -- parece
+    # dibujado a mano y sin cuidado. La union booleana borra esas lineas
+    # interiores y deja el perimetro real de la mamposteria.
+    #
+    # Va al final a proposito: el resultado es una Region y ya no admite
+    # editar vertices (ver CLAUDE.md 5).
+    if merge and len(handles) > 1:
+        try:
+            union = acad.call("union_regions", {
+                "handles": handles, "deleteSources": True})
+            resultado["merged"] = union
+            # union_regions devuelve 'handle' EN SINGULAR (una Region con
+            # todo adentro). Leer 'handles' devolvia None y dejaba en
+            # wallHandles los 29 handles ORIGINALES, que deleteSources ya
+            # borro: cualquiera que los usara despues se comia un
+            # eUnknownHandle, y el conteo mentia sobre lo que se fusiono.
+            nuevo = union.get("handle")
+            if nuevo:
+                resultado["wallHandles"] = [nuevo]
+            resultado["mergedCount"] = union.get("merged", len(handles))
+            if union.get("area"):
+                resultado["masonryArea"] = union["area"]
+            if union.get("perimeter"):
+                resultado["masonryPerimeter"] = union["perimeter"]
+        except acad.AutoCadError as exc:
+            # Que la union falle no invalida el dibujo: los muros ya estan.
+            avisos.append(
+                "No se pudieron fusionar los contornos de muro (%s). Los "
+                "encuentros van a verse como cajon en vez de T: proba "
+                "union_regions a mano sobre 'wallHandles'." % exc)
+
+    if avisos:
+        resultado["warnings"] = avisos
+    return resultado
+
+
+def dimension_layout(rooms: list[dict[str, Any]],
+                     sides: Optional[list[str]] = None,
+                     detail: bool = True,
+                     total: bool = True,
+                     min_gap: float = 0.15,
+                     scale: float = 0.0,
+                     style: Optional[str] = None,
+                     layer: str = "COTAS") -> dict[str, Any]:
+    """Acota la planta entera a partir de los recintos, sin listar posiciones.
+
+    Es la contraparte de draw_layout: los cortes de la cadena de cotas son
+    exactamente las fronteras entre recintos, que ya están en 'rooms'. Que
+    el agente las liste a mano es la clase de aritmética que sale mal —y si
+    sale mal, el plano queda acotado con números que no son los del dibujo.
+
+    Dibuja, por cada lado pedido:
+      - una cadena de DETALLE con todas las fronteras de ese eje
+      - una cadena TOTAL de punta a punta, un nivel más afuera
+
+    El offset lo resuelve create_dimension_chain solo, apilándose afuera de
+    lo que ya haya (incluidas las burbujas de eje). Como es la misma
+    maquinaria de siempre, check_annotations sigue saliendo limpio.
+
+    sides: cuáles acotar, de ("bottom", "top", "left", "right"). Por
+    default 'bottom' e 'left', que es como se acota una planta salvo que
+    algo del otro lado lo impida.
+    min_gap: fronteras más juntas que esto se funden en un solo corte —dos
+    cotas de 3 cm pegadas no se leen, y el número ni entra entre las
+    flechas. Mismo criterio que la separación mínima de ejes.
+    scale: 0 toma la escala registrada de la lámina.
+
+    ACOTAR ES DESPUÉS DE DIBUJAR Y DE COMPONER: si las vistas se mueven
+    (compose_sheet), lo que se reservó deja de valer."""
+    import annotation as ann
+
+    if not rooms:
+        raise ValueError("dimension_layout necesita al menos un room.")
+    lados = list(sides) if sides else ["bottom", "left"]
+    for s in lados:
+        if s not in space.SIDES:
+            raise ValueError(
+                f"side tiene que ser uno de {space.SIDES}, no {s!r}.")
+
+    cajas = []
+    for i, r in enumerate(rooms):
+        try:
+            cajas.append((float(r["x0"]), float(r["y0"]),
+                          float(r["x1"]), float(r["y1"])))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"El room #{i + 1} necesita x0, y0, x1, y1. ({exc})")
+
+    bx0 = min(c[0] for c in cajas)
+    by0 = min(c[1] for c in cajas)
+    bx1 = max(c[2] for c in cajas)
+    by1 = max(c[3] for c in cajas)
+
+    def _cortes(valores: list[float]) -> list[float]:
+        """Ordena, deduplica y funde los que quedan más juntos que min_gap."""
+        out: list[float] = []
+        for v in sorted(valores):
+            if not out or v - out[-1] > min_gap:
+                out.append(v)
+            else:
+                # Se queda el ÚLTIMO del grupo: así el extremo del dibujo
+                # nunca se pierde por fundirse con su vecino de adentro.
+                out[-1] = v
+        return out
+
+    def _cortes_del_lado(s: str) -> list[float]:
+        """Los cortes que se VEN desde ese lado.
+
+        Tomar todas las fronteras del plano mete en la cadena de abajo
+        divisiones que estan al fondo y no tienen nada que ver con ese pano:
+        en la casa de prueba salian dos tramos de 0.50 (el pasillo partido
+        por la frontera sala|comedor, que esta a 13 m de ahi) y los numeros
+        se dibujaban uno encima del otro -- "0.500.50". Un plano se acota
+        por pano: la cadena de abajo acota los recintos que APOYAN abajo.
+        """
+        if s == "bottom":
+            propios = [c for c in cajas if abs(c[1] - by0) < 1e-6]
+        elif s == "top":
+            propios = [c for c in cajas if abs(c[3] - by1) < 1e-6]
+        elif s == "left":
+            propios = [c for c in cajas if abs(c[0] - bx0) < 1e-6]
+        else:
+            propios = [c for c in cajas if abs(c[2] - bx1) < 1e-6]
+        if not propios:
+            propios = cajas          # nada apoya ahi: mejor todo que nada
+        if s in ("bottom", "top"):
+            return _cortes([c[0] for c in propios] + [c[2] for c in propios])
+        return _cortes([c[1] for c in propios] + [c[3] for c in propios])
+
+    cortes_x = _cortes([c[0] for c in cajas] + [c[2] for c in cajas])
+    cortes_y = _cortes([c[1] for c in cajas] + [c[3] for c in cajas])
+
+    # Sin estilo propio, la cota toma el separador decimal de la config
+    # REGIONAL de Windows y sale "3,5" en vez de "3.50".
+    if style is None:
+        style = ann.ensure_dim_style(scale=scale)
+
+    cadenas: list[dict[str, Any]] = []
+    for s in lados:
+        horizontal = s in ("bottom", "top")
+        cortes = _cortes_del_lado(s)
+        if horizontal:
+            referencia = by0 if s == "bottom" else by1
+            extremos = [bx0, bx1]
+        else:
+            referencia = bx0 if s == "left" else bx1
+            extremos = [by0, by1]
+
+        if detail and len(cortes) > 2:
+            cadenas.append({
+                "side": s, "kind": "detalle", "cuts": len(cortes),
+                "positions": cortes,
+                "result": ann.create_dimension_chain(
+                    positions=cortes, side=s, reference=referencia,
+                    scale=scale, style=style, layer=layer)})
+        if total:
+            cadenas.append({
+                "side": s, "kind": "total", "cuts": 2,
+                "positions": extremos,
+                "result": ann.create_dimension_chain(
+                    positions=extremos, side=s, reference=referencia,
+                    scale=scale, style=style, layer=layer)})
+
+    avisos: list[str] = []
+    for c in cadenas:
+        w = c["result"].get("warning")
+        if w:
+            avisos.append("%s (%s): %s" % (c["side"], c["kind"], w))
+
+    resultado: dict[str, Any] = {
+        "chains": cadenas,
+        "count": len(cadenas),
+        "xCuts": cortes_x,
+        "yCuts": cortes_y,
+        "box": [bx0, by0, bx1, by1],
+    }
+    if avisos:
+        resultado["warnings"] = avisos
+    return resultado
+
+
 # ----------------------------------------------------------------- muros
 
 def _wall_segment(axis: Axis, d_start: float, d_end: float, half: float,
@@ -89,6 +491,50 @@ def _wall_segment(axis: Axis, d_start: float, d_end: float, half: float,
 # rectangulito flotando al lado de una puerta. 0.40 es el minimo
 # con el que vale la pena levantar mamposteria.
 MIN_TRAMO = 0.40
+
+
+def _resolver_distancia(axis: Axis, o: dict[str, Any]) -> float:
+    """Donde cae el hueco a lo largo del eje, sin que el llamador sume tramos.
+
+    Sumar 'distance' a mano —recorrer las vueltas del eje llevando la cuenta—
+    es aritmetica que el dibujante delega y que sale mal a ojo. Formas
+    aceptadas, ademas del 'distance' de siempre:
+
+      {"segment": 1, "offset": 0.8}                — a 0.8 del arranque del
+                                                     tramo points[1]→points[2]
+      {"segment": 1, "offset": 0.8, "from": "end"} — a 0.8 del FINAL del tramo
+      {"segment": 1, "at": "center"}               — centrado en el tramo
+
+    Los tramos se numeran desde 0: el tramo i va de points[i] a points[i+1].
+    """
+    if "distance" in o:
+        return float(o["distance"])
+    if "segment" not in o:
+        raise ValueError(
+            "Cada hueco necesita 'distance' (a lo largo del eje desde el "
+            "arranque) o la forma declarativa 'segment' + 'offset' / "
+            "at='center'.")
+    i = int(o["segment"])
+    if not 0 <= i < len(axis.lengths):
+        raise ValueError(
+            f"El hueco pide el tramo {i}, pero el eje tiene "
+            f"{len(axis.lengths)} tramo(s) (numerados desde 0), de largos "
+            + ", ".join(f"{la:g}" for la in axis.lengths) + ".")
+    base = axis.cumulative[i]
+    largo = axis.lengths[i]
+    if str(o.get("at", "")).lower() == "center":
+        return base + largo / 2.0
+    if "offset" not in o:
+        raise ValueError(
+            f"El hueco en el tramo {i} necesita 'offset' (distancia dentro "
+            "del tramo) o at='center'.")
+    offset = float(o["offset"])
+    if not 0 <= offset <= largo + 1e-9:
+        raise ValueError(
+            f"El offset {offset:g} se sale del tramo {i}, que mide {largo:g}.")
+    if str(o.get("from", "start")).lower() == "end":
+        return base + largo - offset
+    return base + offset
 
 
 def create_walls(
@@ -114,7 +560,7 @@ def create_walls(
     holes = []
     for o in (openings or []):
         width = float(o["width"])
-        distance = float(o["distance"])
+        distance = _resolver_distancia(axis, o)
         if width <= 0:
             raise ValueError("El ancho de un hueco tiene que ser > 0.")
         start = distance - width / 2.0 if o.get("centered", True) else distance
@@ -208,6 +654,12 @@ def create_walls(
         "axisLength": total,
         "thickness": thickness,
     }
+    if holes:
+        # La distancia resuelta de cada hueco (centro, a lo largo del eje):
+        # con la forma declarativa el llamador no la calculó, y la necesita
+        # para acotar o para check_geometry.
+        resultado["openingDistances"] = [
+            round((h["start"] + h["end"]) / 2.0, 6) for h in holes]
     if machones:
         # No se falla: el muro se dibuja igual. Pero hay que decirlo, porque un
         # machon de 30 cm entre la esquina y una puerta no es un detalle de

@@ -130,6 +130,50 @@ def test_ventana():
     check("el vidrio cruza todo el hueco", lineas[0]["x2"] - lineas[0]["x1"], 1.5)
 
 
+def test_hueco_declarativo():
+    """Ubicar un hueco por tramo, sin que el llamador sume distancias."""
+    preview.DRAWN.clear()
+    # Eje en L: tramo 0 mide 10, tramo 1 mide 8.
+    r = arch.create_walls(
+        [[0, 0], [10, 0], [10, 8]], thickness=0.15,
+        openings=[{"segment": 1, "offset": 2.0, "width": 1.0, "type": "pass"}])
+    # distancia resuelta: 10 (tramo 0) + 2 = 12
+    check("segment+offset resuelve la distancia", r["openingDistances"][0], 12.0)
+
+    r = arch.create_walls(
+        [[0, 0], [10, 0], [10, 8]], thickness=0.15,
+        openings=[{"segment": 1, "at": "center", "width": 1.0, "type": "pass"}])
+    check("at=center centra en el tramo", r["openingDistances"][0], 14.0)
+
+    r = arch.create_walls(
+        [[0, 0], [10, 0], [10, 8]], thickness=0.15,
+        openings=[{"segment": 1, "offset": 1.5, "from": "end", "width": 1.0,
+                   "type": "pass"}])
+    check("from=end mide desde el final del tramo",
+          r["openingDistances"][0], 16.5)
+
+
+def test_hueco_declarativo_errores():
+    check_raises(
+        "tramo inexistente dice cuantos hay",
+        lambda: arch.create_walls(
+            [[0, 0], [10, 0]], thickness=0.15,
+            openings=[{"segment": 3, "offset": 1.0, "width": 1.0}]),
+        "1 tramo")
+    check_raises(
+        "offset fuera del tramo",
+        lambda: arch.create_walls(
+            [[0, 0], [10, 0]], thickness=0.15,
+            openings=[{"segment": 0, "offset": 12.0, "width": 1.0}]),
+        "se sale del tramo")
+    check_raises(
+        "hueco sin distance ni segment",
+        lambda: arch.create_walls(
+            [[0, 0], [10, 0]], thickness=0.15,
+            openings=[{"width": 1.0}]),
+        "necesita 'distance'")
+
+
 def test_errores_claros():
     check_raises(
         "hueco fuera del muro",
@@ -219,7 +263,8 @@ def main() -> int:
     for fn in [test_muro_recto, test_muro_con_hueco, test_perimetro_cerrado,
                test_perimetro_con_huecos_no_deja_junta,
                test_abatimiento_siempre_90, test_puerta_abre_del_lado_pedido,
-               test_ventana, test_errores_claros, test_ejes,
+               test_ventana, test_hueco_declarativo,
+               test_hueco_declarativo_errores, test_errores_claros, test_ejes,
                test_letras_de_eje, test_convencion_de_rotulos,
                test_vano_pass_no_crea_capa_de_huecos]:
         print(fn.__name__)

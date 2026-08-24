@@ -316,6 +316,429 @@ def place(items: list[dict[str, Any]]) -> dict[str, Any]:
     return {"placed": placed, "count": len(placed)}
 
 
+# ------------------------------------------------- amueblado automatico
+#
+# La regla de oro del amueblado en planta: casi todo mueble se APOYA CONTRA
+# UN MURO, y el muro elegido no puede ser el de la puerta. Con eso resuelto,
+# el resto es elegir que pieza va en que ambiente y verificar que quepa.
+#
+# Todas las piezas del CATALOG se ubican por su esquina inferior izquierda
+# ANTES de rotar y, sin rotar, "miran" hacia +Y (respaldo, cabecera o tanque
+# abajo). De ahi salen las cuatro colocaciones de _contra_muro.
+
+# Holgura de circulacion que se deja libre delante de un mueble.
+PASO_MINIMO = 0.60
+
+# Un muro con puerta no recibe mueble: la hoja barre ese tramo.
+_MARGEN_PUERTA = 0.05
+
+
+def _contra_muro(muro: str, caja: tuple[float, float, float, float],
+                 centro: float, ancho: float,
+                 fondo: float) -> tuple[float, float, float, tuple]:
+    """Donde poner una pieza apoyada contra un muro del recinto.
+
+    Devuelve (x, y, rotacion, huella) donde (x, y) es el punto que espera
+    el CATALOG y 'huella' el rectangulo que va a ocupar de verdad.
+    'centro' es la posicion a lo LARGO del muro donde va el centro de la
+    pieza.
+    """
+    x0, y0, x1, y1 = caja
+    a, f = ancho, fondo
+    if muro == "bottom":
+        return (centro - a / 2.0, y0, 0.0,
+                (centro - a / 2.0, y0, centro + a / 2.0, y0 + f))
+    if muro == "top":
+        return (centro + a / 2.0, y1, 180.0,
+                (centro - a / 2.0, y1 - f, centro + a / 2.0, y1))
+    if muro == "left":
+        return (x0, centro + a / 2.0, 270.0,
+                (x0, centro - a / 2.0, x0 + f, centro + a / 2.0))
+    if muro == "right":
+        return (x1, centro - a / 2.0, 90.0,
+                (x1 - f, centro - a / 2.0, x1, centro + a / 2.0))
+    raise ValueError("muro tiene que ser bottom/top/left/right, no %r" % muro)
+
+
+def _largo_muro(muro: str, caja: tuple[float, float, float, float]) -> float:
+    x0, y0, x1, y1 = caja
+    return (x1 - x0) if muro in ("bottom", "top") else (y1 - y0)
+
+
+def _centro_muro(muro: str, caja: tuple[float, float, float, float]) -> float:
+    x0, y0, x1, y1 = caja
+    return (x0 + x1) / 2.0 if muro in ("bottom", "top") else (y0 + y1) / 2.0
+
+
+def _fondo_disponible(muro: str,
+                      caja: tuple[float, float, float, float]) -> float:
+    """Cuanto mide el recinto en la direccion perpendicular a ese muro."""
+    x0, y0, x1, y1 = caja
+    return (y1 - y0) if muro in ("bottom", "top") else (x1 - x0)
+
+
+def _muros_con_puerta(caja: tuple[float, float, float, float],
+                      nombre: str,
+                      doors: list[dict[str, Any]],
+                      tol: float = 0.25) -> set[str]:
+    """Que muros del recinto tienen una puerta encima."""
+    x0, y0, x1, y1 = caja
+    ocupados: set[str] = set()
+    for d in doors or []:
+        if "x" not in d or "y" not in d:
+            continue
+        nombres = (str(d.get("from", "")).upper(), str(d.get("to", "")).upper())
+        if nombre.upper() not in nombres:
+            continue
+        px, py = float(d["x"]), float(d["y"])
+        if abs(py - y0) <= tol and x0 - tol <= px <= x1 + tol:
+            ocupados.add("bottom")
+        if abs(py - y1) <= tol and x0 - tol <= px <= x1 + tol:
+            ocupados.add("top")
+        if abs(px - x0) <= tol and y0 - tol <= py <= y1 + tol:
+            ocupados.add("left")
+        if abs(px - x1) <= tol and y0 - tol <= py <= y1 + tol:
+            ocupados.add("right")
+    return ocupados
+
+
+def _muros_libres(caja: tuple[float, float, float, float], nombre: str,
+                  doors: list[dict[str, Any]]) -> list[str]:
+    """Los muros sin puerta, del mas largo al mas corto."""
+    ocupados = _muros_con_puerta(caja, nombre, doors)
+    libres = [m for m in ("bottom", "top", "left", "right")
+              if m not in ocupados]
+    libres.sort(key=lambda m: -_largo_muro(m, caja))
+    return libres
+
+
+def _clase_ambiente(nombre: str) -> str:
+    import rules
+    return rules._clase(nombre)
+
+
+def _caja_util(caja: tuple[float, float, float, float],
+               limites: tuple[float, float, float, float],
+               exterior: float, interior: float,
+               tol: float = 1e-6) -> tuple[float, float, float, float]:
+    """La caja del recinto medida a la CARA INTERIOR de sus muros.
+
+    suggest_layout define los recintos por el EJE de los muros (dos cuartos
+    vecinos comparten la frontera), asi que apoyar un mueble en x0 lo mete
+    media pared adentro -- se ve la mesada cruzando el muro y saliendo del
+    otro lado, que fue justo lo que aparecio en la primera casa amueblada.
+    Hay que retirarse la mitad del espesor, y el espesor depende de si ese
+    muro es del perimetro (grueso) o un divisorio (fino).
+    """
+    x0, y0, x1, y1 = caja
+    gx0, gy0, gx1, gy1 = limites
+
+    def mitad(coord: float, borde: float) -> float:
+        return (exterior if abs(coord - borde) < tol else interior) / 2.0
+
+    return (x0 + mitad(x0, gx0), y0 + mitad(y0, gy0),
+            x1 - mitad(x1, gx1), y1 - mitad(y1, gy1))
+
+
+def suggest_furniture(rooms: list[dict[str, Any]],
+                      doors: Optional[list[dict[str, Any]]] = None,
+                      draw: bool = True,
+                      exterior_thickness: float = 0.15,
+                      interior_thickness: float = 0.10) -> dict[str, Any]:
+    """Amuebla la planta entera: qué va en cada ambiente y dónde.
+
+    Es a `place_furniture` lo que `suggest_layout` es a `create_walls`: el
+    servidor decide la posición en vez de que alguien la calcule. Un plano
+    con los recintos vacíos se ve como un esquema; lo que lo convierte en
+    plano de oficina es la cama contra el muro correcto, la estufa que no
+    está pegada al fregadero y el WC que no bloquea la puerta.
+
+    Reglas que aplica, todas de amueblado real:
+      - ningún mueble contra el muro donde abre una puerta (la hoja barre
+        ese tramo)
+      - la pieza principal va contra el muro libre MÁS LARGO
+      - cama matrimonial si el cuarto la admite con su paso de %.2f m; si
+        no, individual; si tampoco, se reporta en 'skipped' en vez de meter
+        a la fuerza un mueble que no cabe
+      - en la cocina, la estufa y el fregadero nunca quedan pegados
+      - lo que no entra NO se dibuja: sale en 'skipped' con el motivo
+      - los muebles se apoyan en la CARA INTERIOR del muro, no en su eje:
+        'rooms' viene en ejes (dos cuartos vecinos comparten la frontera) y
+        apoyar ahi mete el mueble media pared adentro — se veia la mesada
+        cruzando el muro y saliendo del otro lado
+
+    rooms/doors: el mismo vocabulario de suggest_layout y draw_layout.
+    draw=False devuelve la lista de piezas SIN dibujar, para revisarla o
+    ajustarla antes de pasarla a place_furniture.
+
+    Devuelve 'items' (listo para place_furniture), 'byRoom' y 'skipped'.
+    """ % PASO_MINIMO
+    items: list[dict[str, Any]] = []
+    por_ambiente: dict[str, list[str]] = {}
+    salteados: list[dict[str, str]] = []
+
+    # Limites del conjunto: definen que muros son del perimetro (gruesos).
+    cajas_todas = []
+    for i, r in enumerate(rooms or []):
+        try:
+            cajas_todas.append((float(r["x0"]), float(r["y0"]),
+                                float(r["x1"]), float(r["y1"])))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"El room #{i + 1} necesita name, x0, y0, x1, y1. ({exc})")
+    if not cajas_todas:
+        return {"items": [], "placements": [], "byRoom": {}, "count": 0,
+                "skipped": []}
+    limites = (min(c[0] for c in cajas_todas), min(c[1] for c in cajas_todas),
+               max(c[2] for c in cajas_todas), max(c[3] for c in cajas_todas))
+
+    for i, r in enumerate(rooms or []):
+        nombre = str(r["name"])
+        eje = cajas_todas[i]
+        # Las puertas vienen en coordenadas de EJE, asi que se buscan sobre
+        # la caja de eje; los muebles se ubican en la caja util.
+        libres = _muros_libres(eje, nombre, doors or [])
+        caja = _caja_util(eje, limites, exterior_thickness,
+                          interior_thickness)
+        clase = _clase_ambiente(nombre)
+        piezas: list[dict[str, Any]] = []
+
+        if clase == "recamara":
+            piezas = _amueblar_recamara(caja, libres, nombre, salteados)
+        elif clase == "bano":
+            piezas = _amueblar_bano(caja, libres, nombre, salteados)
+        elif "COCINA" in nombre.upper():
+            piezas = _amueblar_cocina(caja, libres, nombre, salteados)
+        elif "COMEDOR" in nombre.upper():
+            piezas = _amueblar_comedor(caja, nombre, salteados)
+        elif clase == "social":
+            piezas = _amueblar_sala(caja, libres, nombre, salteados)
+        else:
+            continue        # pasillo, patio, lavado: sin mobiliario fijo
+
+        if piezas:
+            for p in piezas:
+                p["_room"] = nombre
+            items.extend(piezas)
+            por_ambiente[nombre] = [p["type"] for p in piezas]
+
+    # 'items' va limpio para place_furniture (que rechaza claves que no
+    # conoce); 'placements' lleva ademas a que ambiente pertenece cada
+    # pieza y que caja ocupa -- sin eso, con dos banos y tres recamaras no
+    # hay forma de saber cual es cual al verificar el resultado.
+    internas = ("_box", "_room")
+    limpios = [{k: v for k, v in p.items() if k not in internas}
+               for p in items]
+    resultado: dict[str, Any] = {
+        "items": limpios,
+        "placements": [{"room": p["_room"], "type": p["type"],
+                        "x": p["x"], "y": p["y"],
+                        "box": [round(c, 3) for c in p["_box"]]}
+                       for p in items],
+        "byRoom": por_ambiente,
+        "count": len(items),
+        "skipped": salteados,
+    }
+    if draw and items:
+        resultado["placed"] = place(resultado["items"])
+    return resultado
+
+
+def _cabe(caja: tuple[float, float, float, float], muro: str,
+          ancho: float, fondo: float, paso: float = PASO_MINIMO) -> bool:
+    """Entra la pieza contra ese muro, dejando su paso de circulacion."""
+    return (_largo_muro(muro, caja) >= ancho + _MARGEN_PUERTA * 2
+            and _fondo_disponible(muro, caja) >= fondo + paso)
+
+
+def _pieza(tipo: str, muro: str, caja, centro: float, ancho: float,
+           fondo: float, **extra) -> dict[str, Any]:
+    x, y, rot, huella = _contra_muro(muro, caja, centro, ancho, fondo)
+    p = {"type": tipo, "x": round(x, 3), "y": round(y, 3),
+         "rotation_deg": rot, "_box": huella}
+    p.update(extra)
+    return p
+
+
+def _amueblar_recamara(caja, libres, nombre, salteados) -> list[dict]:
+    piezas: list[dict[str, Any]] = []
+    # Cama matrimonial si entra con su paso; si no, individual.
+    for tipo, ancho, largo in (("bed", 1.60, 2.00),
+                               ("single_bed", 1.00, 1.90)):
+        muro = next((m for m in libres if _cabe(caja, m, ancho, largo)), None)
+        if muro:
+            centro = _centro_muro(muro, caja)
+            piezas.append(_pieza(tipo, muro, caja, centro, ancho, largo,
+                                 width=ancho, length=largo))
+            # Buros a los lados, si sobra lugar contra el mismo muro.
+            sobra = (_largo_muro(muro, caja) - ancho) / 2.0
+            if sobra >= 0.50:
+                for signo in (-1, 1):
+                    c = centro + signo * (ancho / 2.0 + 0.225)
+                    piezas.append(_pieza("nightstand", muro, caja, c,
+                                         0.45, 0.45, size=0.45))
+            # Closet contra otro muro libre.
+            otros = [m for m in libres if m != muro]
+            for m2 in otros:
+                disponible = _largo_muro(m2, caja) - 0.20
+                w = min(1.50, disponible)
+                if w >= 0.90 and _cabe(caja, m2, w, 0.60):
+                    piezas.append(_pieza("closet", m2, caja,
+                                         _centro_muro(m2, caja), w, 0.60,
+                                         width=round(w, 2), depth=0.60))
+                    break
+            return piezas
+    salteados.append({"room": nombre,
+                      "problem": "no entra ni una cama individual con su "
+                                 "paso de circulación"})
+    return piezas
+
+
+def _amueblar_bano(caja, libres, nombre, salteados) -> list[dict]:
+    piezas: list[dict[str, Any]] = []
+    usados: set[str] = set()
+    # WC y lavabo en muros distintos; la regadera en el muro mas largo que
+    # quede. El paso de un bano es mas corto que el general.
+    for tipo, ancho, fondo, extra in (
+            ("wc", 0.38, 0.60, {}),
+            ("lavatory", 0.60, 0.45, {"width": 0.60, "depth": 0.45}),
+            ("shower", 0.90, 0.90, {"width": 0.90, "depth": 0.90})):
+        muro = next((m for m in libres
+                     if m not in usados and _cabe(caja, m, ancho, fondo, 0.45)),
+                    None)
+        if not muro:
+            salteados.append({"room": nombre,
+                              "problem": f"no entra {tipo} en ningún muro libre"})
+            continue
+        usados.add(muro)
+        piezas.append(_pieza(tipo, muro, caja, _centro_muro(muro, caja),
+                             ancho, fondo, **extra))
+    return piezas
+
+
+def _amueblar_cocina(caja, libres, nombre, salteados) -> list[dict]:
+    piezas: list[dict[str, Any]] = []
+    muro = next((m for m in libres if _cabe(caja, m, 2.40, 0.60)), None)
+    if not muro:
+        salteados.append({"room": nombre,
+                          "problem": "no hay muro libre para la mesada"})
+        return piezas
+    largo = _largo_muro(muro, caja)
+    x0, y0, x1, y1 = caja
+    inicio = (x0 if muro in ("bottom", "top") else y0) + _MARGEN_PUERTA
+    util = largo - _MARGEN_PUERTA * 2
+
+    ancho_mesada = min(util, 2.40)
+    fin = inicio + ancho_mesada
+
+    # Fregadero y estufa SEPARADOS sobre la mesada: pegarlos es el error
+    # clasico de cocina (no queda superficie de trabajo entre los dos).
+    aparatos: list[tuple[float, float, str, float]] = []
+    c_sink = inicio + ancho_mesada * 0.25
+    aparatos.append((c_sink - 0.40, c_sink + 0.40, "kitchen_sink", 0.80))
+    if ancho_mesada >= 1.80:
+        c_stove = inicio + ancho_mesada * 0.75
+        aparatos.append((c_stove - 0.30, c_stove + 0.30, "stove", 0.60))
+    else:
+        salteados.append({"room": nombre,
+                          "problem": "la mesada es corta para separar la "
+                                     "estufa del fregadero"})
+
+    # La mesada se dibuja INTERRUMPIDA por los aparatos, no como un
+    # rectangulo entero abajo de ellos. Dibujarla completa deja el contorno
+    # del fregadero y el de la estufa encimados sobre el de la mesada: en
+    # pantalla se ven lineas dobles y el plano parece mal dibujado -- fue
+    # justo lo que se vio al acercarse a la cocina de la casa generada.
+    tramos: list[tuple[float, float]] = []
+    cursor = inicio
+    for a0, a1, _t, _w in sorted(aparatos):
+        if a0 - cursor > 0.05:
+            tramos.append((cursor, a0))
+        cursor = max(cursor, a1)
+    if fin - cursor > 0.05:
+        tramos.append((cursor, fin))
+
+    for t0, t1 in tramos:
+        piezas.append(_pieza("counter", muro, caja, (t0 + t1) / 2.0,
+                             t1 - t0, 0.60,
+                             width=round(t1 - t0, 3), depth=0.60))
+    for a0, a1, tipo, ancho_ap in sorted(aparatos):
+        piezas.append(_pieza(tipo, muro, caja, (a0 + a1) / 2.0,
+                             ancho_ap, 0.60, width=ancho_ap, depth=0.60))
+    # Refrigerador contra otro muro libre.
+    for m2 in libres:
+        if m2 != muro and _cabe(caja, m2, 0.70, 0.70):
+            piezas.append(_pieza("fridge", m2, caja,
+                                 _centro_muro(m2, caja), 0.70, 0.70,
+                                 width=0.70, depth=0.70))
+            break
+    return piezas
+
+
+def _amueblar_comedor(caja, nombre, salteados) -> list[dict]:
+    x0, y0, x1, y1 = caja
+    ancho, fondo = x1 - x0, y1 - y0
+    # La mesa va CENTRADA, no contra un muro: se rodea por los cuatro lados.
+    if ancho < 1.60 + PASO_MINIMO * 2 or fondo < 0.90 + PASO_MINIMO * 2:
+        # Mesa chica de 4 lugares antes de rendirse.
+        if ancho >= 1.20 + PASO_MINIMO * 2 and fondo >= 0.80 + PASO_MINIMO * 2:
+            return [{"type": "dining_table", "x": round((x0 + x1) / 2.0, 3),
+                     "y": round((y0 + y1) / 2.0, 3), "width": 1.20,
+                     "depth": 0.80, "seats_per_side": 2,
+                     "_box": ((x0 + x1) / 2.0 - 0.6, (y0 + y1) / 2.0 - 0.4,
+                              (x0 + x1) / 2.0 + 0.6, (y0 + y1) / 2.0 + 0.4)}]
+        salteados.append({"room": nombre,
+                          "problem": "no entra una mesa con su paso "
+                                     "alrededor"})
+        return []
+    return [{"type": "dining_table", "x": round((x0 + x1) / 2.0, 3),
+             "y": round((y0 + y1) / 2.0, 3), "width": 1.60, "depth": 0.90,
+             "seats_per_side": 3,
+             "_box": ((x0 + x1) / 2.0 - 0.8, (y0 + y1) / 2.0 - 0.45,
+                      (x0 + x1) / 2.0 + 0.8, (y0 + y1) / 2.0 + 0.45)}]
+
+
+def _amueblar_sala(caja, libres, nombre, salteados) -> list[dict]:
+    piezas: list[dict[str, Any]] = []
+    muro = next((m for m in libres if _cabe(caja, m, 1.90, 0.85)), None)
+    if not muro:
+        salteados.append({"room": nombre,
+                          "problem": "no hay muro libre para el sillón"})
+        return piezas
+    centro = _centro_muro(muro, caja)
+    piezas.append(_pieza("sofa", muro, caja, centro, 1.90, 0.85,
+                         width=1.90, depth=0.85))
+    # Mesa de centro delante del sillon, a 0.45 m.
+    x0, y0, x1, y1 = caja
+    if _fondo_disponible(muro, caja) >= 0.85 + 0.45 + 0.55:
+        dist = 0.85 + 0.45
+        if muro == "bottom":
+            piezas.append({"type": "coffee_table", "x": centro - 0.55,
+                           "y": round(y0 + dist, 3), "rotation_deg": 0.0,
+                           "width": 1.10, "depth": 0.55,
+                           "_box": (centro - 0.55, y0 + dist,
+                                    centro + 0.55, y0 + dist + 0.55)})
+        elif muro == "top":
+            piezas.append({"type": "coffee_table", "x": centro + 0.55,
+                           "y": round(y1 - dist, 3), "rotation_deg": 180.0,
+                           "width": 1.10, "depth": 0.55,
+                           "_box": (centro - 0.55, y1 - dist - 0.55,
+                                    centro + 0.55, y1 - dist)})
+        elif muro == "left":
+            piezas.append({"type": "coffee_table", "x": round(x0 + dist, 3),
+                           "y": centro + 0.55, "rotation_deg": 270.0,
+                           "width": 1.10, "depth": 0.55,
+                           "_box": (x0 + dist, centro - 0.55,
+                                    x0 + dist + 0.55, centro + 0.55)})
+        else:
+            piezas.append({"type": "coffee_table", "x": round(x1 - dist, 3),
+                           "y": centro - 0.55, "rotation_deg": 90.0,
+                           "width": 1.10, "depth": 0.55,
+                           "_box": (x1 - dist - 0.55, centro - 0.55,
+                                    x1 - dist, centro + 0.55)})
+    return piezas
+
+
 def label_rooms(rooms: list[dict[str, Any]], height: float,
                 area_height: float = 0.0, layer: str = "TEXTOS",
                 show_area: bool = True) -> dict[str, Any]:
