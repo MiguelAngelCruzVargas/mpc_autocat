@@ -93,9 +93,14 @@ cambios sin guardar, AutoCAD pregunta y el script espera. Nunca lo mata.
         Start-Sleep -Milliseconds 500
     }
     if (Get-AutoCadProcess) {
-        throw ("AutoCAD sigue abierto despues de $CloseTimeoutSeconds s. " +
-               "Casi siempre es un dialogo esperando respuesta (guardar los " +
-               "cambios?): resolvelo en pantalla y volve a correr esto.")
+        throw ("AutoCAD sigue abierto despues de $CloseTimeoutSeconds s.`n`n" +
+               "Puede ser por dos motivos:`n" +
+               "  1. Hay un dialogo esperando respuesta (guardar los cambios?).`n" +
+               "     Miralo en pantalla, resolvelo, y volve a correr esto.`n" +
+               "  2. AutoCAD ignoro el pedido de cierre. Pasa: CloseMainWindow`n" +
+               "     manda un WM_CLOSE y AutoCAD no siempre lo atiende.`n`n" +
+               "En los dos casos la salida es la misma: cerralo a mano y corre`n" +
+               "install_bundle.ps1 sin -CloseAutoCad.")
     }
     Write-Output "AutoCAD cerrado."
     $cerradoPorNosotros = $true

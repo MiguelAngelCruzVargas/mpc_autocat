@@ -10,10 +10,10 @@ namespace AutoCadMcpPlugin.Commands
     public static class InsertBlockCommand
     {
         /// <summary>
-        /// Inserta una referencia de bloque (sÃ­mbolo: puerta, ventana, columna, etc.)
+        /// Inserta una referencia de bloque (símbolo: puerta, ventana, columna, etc.)
         /// params: name, x, y, [z=0], [scale=1], [rotationDeg=0], [layer],
-        ///         [path] (dwg externo con la definiciÃ³n, si el bloque todavÃ­a no
-        ///         existe en el dibujo actual â€” se importa una sola vez),
+        ///         [path] (dwg externo con la definición, si el bloque todavía no
+        ///         existe en el dibujo actual — se importa una sola vez),
         ///         [attributes] ({TAG: valor, ...} para bloques con atributos)
         /// </summary>
         public static JsonObject Run(Document doc, JsonObject pars)
@@ -36,9 +36,9 @@ namespace AutoCadMcpPlugin.Commands
                 {
                     if (string.IsNullOrEmpty(path))
                         throw new InvalidOperationException(
-                            $"El bloque '{name}' no existe en el dibujo y no se pasÃ³ 'path' para importarlo.");
+                            $"El bloque '{name}' no existe en el dibujo y no se pasó 'path' para importarlo.");
                     if (!File.Exists(path))
-                        throw new FileNotFoundException($"No se encontrÃ³ el archivo de bloque: {path}");
+                        throw new FileNotFoundException($"No se encontró el archivo de bloque: {path}");
 
                     ImportBlockFromFile(db, name, path);
                     bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);

@@ -10,10 +10,10 @@ namespace AutoCadMcpPlugin.Commands
     {
         /// <summary>
         /// Convierte entidades ya dibujadas en el espacio modelo (por handle) en
-        /// una definiciÃ³n de bloque reutilizable â€” equivalente al comando BLOCK,
-        /// sin necesitar ningÃºn archivo externo. Las entidades originales sueltas
+        /// una definición de bloque reutilizable — equivalente al comando BLOCK,
+        /// sin necesitar ningún archivo externo. Las entidades originales sueltas
         /// se borran del espacio modelo (quedan "adentro" del bloque nuevo);
-        /// despuÃ©s se insertan con insert_block(name=...).
+        /// después se insertan con insert_block(name=...).
         /// params: name, handles ([...]), basePointX, basePointY, [basePointZ=0]
         /// </summary>
         public static JsonObject Run(Document doc, JsonObject pars)
