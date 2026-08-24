@@ -68,6 +68,58 @@ class ErrorProveedor(RuntimeError):
     """Falla al hablar con la API del modelo."""
 
 
+# Modelos que ACEPTAN imágenes. No hay ninguna API estándar que lo informe,
+# así que se reconoce por el nombre — y se falla del lado seguro: si no
+# está acá, la interfaz no deja adjuntar. Mandarle una imagen a un modelo
+# que no las entiende no da un error claro: unos la ignoran en silencio
+# (el agente responde sobre algo que no vio) y otros rechazan el request
+# entero con un 400 críptico.
+#
+# El caso concreto de este proyecto: gpt-oss-120b, el que anda en Groq,
+# NO es multimodal. Por eso la interfaz tiene que decirlo en vez de dejar
+# subir un croquis que nunca se va a mirar.
+PATRONES_VISION = (
+    "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4.1", "gpt-5",
+    "o1", "o3", "o4-mini", "chatgpt-4o",
+    "claude-3", "claude-4", "claude-sonnet", "claude-opus", "claude-haiku",
+    "gemini", "llava", "bakllava", "pixtral", "molmo", "internvl",
+    "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl",
+    "llama-3.2-11b", "llama-3.2-90b", "llama-4", "vision",
+    "grok-2-vision", "grok-4", "phi-3-vision", "phi-4-multimodal",
+    "deepseek-vl", "mistral-small-3", "step-1v", "yi-vision",
+)
+
+
+def soporta_imagenes(modelo: str) -> bool:
+    """¿Este modelo puede MIRAR una imagen que se le adjunte?"""
+    if not modelo:
+        return False
+    n = modelo.lower()
+    # 'gpt-oss' contiene 'gpt' pero es de solo texto: se descarta primero
+    # para que ningún patrón amplio lo dé por multimodal.
+    if "gpt-oss" in n or "oss-safeguard" in n:
+        return False
+    return any(p in n for p in PATRONES_VISION)
+
+
+def bloque_imagen(data_url: str, formato: str) -> dict[str, Any]:
+    """Una imagen en el formato que espera cada proveedor.
+
+    OpenAI la quiere como image_url con el data: adentro; Anthropic la
+    quiere partida en media_type y base64 puro. Es la misma imagen
+    expresada distinto, y equivocarse acá da un 400 sin explicación.
+    """
+    if formato == "anthropic":
+        cabecera, _, datos = data_url.partition(",")
+        tipo = "image/png"
+        if cabecera.startswith("data:") and ";" in cabecera:
+            tipo = cabecera[5:cabecera.index(";")]
+        return {"type": "image",
+                "source": {"type": "base64", "media_type": tipo,
+                           "data": datos}}
+    return {"type": "image_url", "image_url": {"url": data_url}}
+
+
 class ContadorUso:
     """Tokens consumidos, tal como los informa el proveedor.
 

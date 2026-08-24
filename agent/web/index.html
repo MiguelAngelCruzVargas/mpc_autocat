@@ -15,18 +15,26 @@
 </head>
 <body>
 
-  <!-- Overlay para panel en pantallas pequeñas -->
+  <!-- Overlay para panel en pantallas móviles -->
   <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
   <!-- ======================================================================
-       MODAL DE CONFIGURACIÓN INICIAL
+       MODAL DE CONFIGURACIÓN INICIAL (CON ICONO TÉCNICO DE PLANO / ESCUADRA)
        ====================================================================== -->
   <div id="welcome-modal" class="modal-overlay hidden">
     <div class="modal-card">
       <div class="modal-header">
         <div class="brand-badge">
-          <div class="brand-icon">CAD</div>
-          <div>
+          <div class="brand-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 21L21 21L21 3L3 21Z"></path>
+              <path d="M9 15L15 21"></path>
+              <line x1="12" y1="18" x2="14" y2="20"></line>
+              <line x1="18" y1="21" x2="18" y2="18"></line>
+              <line x1="21" y1="15" x2="18" y2="15"></line>
+            </svg>
+          </div>
+          <div class="modal-title-wrap">
             <h3>Configuración Inicial</h3>
             <p>Conexión del modelo con AutoCAD</p>
           </div>
@@ -35,15 +43,15 @@
       </div>
 
       <div class="wizard-progress-bar">
-        <div class="wizard-progress-step active" title="1. Proveedor"></div>
-        <div class="wizard-progress-step" title="2. Credenciales"></div>
-        <div class="wizard-progress-step" title="3. Verificación"></div>
+        <div class="wizard-progress-step active"></div>
+        <div class="wizard-progress-step"></div>
+        <div class="wizard-progress-step"></div>
       </div>
 
       <!-- Paso 0: Proveedor -->
       <div class="wizard-step-pane active" data-wizard-step="0">
         <h2>Seleccionar Proveedor</h2>
-        <p>Elegí el servicio que procesará los comandos de dibujo. Podés usar proveedores en la nube o un servidor local.</p>
+        <p>Elegí el servicio que procesará tus comandos de dibujo técnico.</p>
         
         <div class="form-group">
           <label for="wizard-provider">Proveedor</label>
@@ -60,13 +68,13 @@
       <!-- Paso 1: API Key -->
       <div class="wizard-step-pane" data-wizard-step="1">
         <h2>Clave de API</h2>
-        <p>La clave se almacena de forma local cifrada con DPAPI en este equipo y solo se envía directamente al proveedor.</p>
+        <p>La clave se almacena de forma cifrada localmente con DPAPI en este equipo.</p>
         
         <div class="form-group">
           <label for="wizard-api-key">API Key</label>
           <div class="input-with-action">
             <input id="wizard-api-key" type="password" placeholder="sk-..." autocomplete="off">
-            <button class="input-action-btn" id="btn-toggle-wizard-key" type="button" title="Mostrar/Ocultar">👁️</button>
+            <button class="input-action-btn" id="btn-toggle-wizard-key" type="button" title="Mostrar/Ocultar">Ver</button>
           </div>
         </div>
         <div id="wizard-key-status-chip" class="chip-status">Sin clave guardada</div>
@@ -110,7 +118,7 @@
 
         <div class="wizard-actions-row">
           <button class="btn" id="btn-wizard-recheck">Reintentar</button>
-          <button class="btn btn-primary" id="btn-wizard-finish">Iniciar AutoCAD IA</button>
+          <button class="btn btn-primary" id="btn-wizard-finish">Comenzar</button>
         </div>
       </div>
     </div>
@@ -121,11 +129,19 @@
        ====================================================================== -->
   <div id="app-layout" class="app-layout">
     
-    <!-- BARRA LATERAL (SIDEBAR DE CONFIGURACIÓN) -->
+    <!-- BARRA LATERAL (SIDEBAR TÉCNICO Y LIMPIO) -->
     <aside id="app-sidebar" class="sidebar">
       <div class="sidebar-header">
         <div class="brand-badge">
-          <div class="brand-icon">CAD</div>
+          <div class="brand-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 21L21 21L21 3L3 21Z"></path>
+              <path d="M9 15L15 21"></path>
+              <line x1="12" y1="18" x2="14" y2="20"></line>
+              <line x1="18" y1="21" x2="18" y2="18"></line>
+              <line x1="21" y1="15" x2="18" y2="15"></line>
+            </svg>
+          </div>
           <div class="brand-info">
             <h1>AutoCAD IA</h1>
             <p>Copiloto de Dibujo Técnico</p>
@@ -136,101 +152,69 @@
 
       <div class="sidebar-scroll">
         
-        <!-- SECCIÓN: PROVEEDOR & CREDENCIALES -->
-        <div class="accordion-item open">
-          <div class="accordion-header" data-toggle="accordion">
-            <span class="section-label">Proveedor de IA</span>
-            <span class="accordion-arrow">▾</span>
+        <!-- PROVEEDOR -->
+        <section class="sidebar-section">
+          <div class="section-title">Proveedor de IA</div>
+          <div class="form-group">
+            <select id="select-provider" class="custom-select"></select>
           </div>
-          <div class="accordion-body">
-            <div class="form-group">
-              <label for="select-provider">Servicio</label>
-              <select id="select-provider" class="custom-select"></select>
-            </div>
-            
-            <div id="key-status-chip" class="chip-status">Cargando estado…</div>
-            
-            <div class="form-group">
-              <label for="input-api-key">API Key</label>
-              <div class="input-with-action">
-                <input id="input-api-key" type="password" placeholder="Nueva clave" autocomplete="off">
-                <button class="input-action-btn" id="btn-toggle-key-visibility" type="button" title="Mostrar/Ocultar">👁️</button>
-              </div>
-            </div>
+          <div id="key-status-chip" class="chip-status">Cargando estado…</div>
+          <div class="input-with-action">
+            <input id="input-api-key" type="password" placeholder="Nueva API Key" autocomplete="off">
+            <button class="input-action-btn" id="btn-toggle-key-visibility" type="button" title="Mostrar/Ocultar">Ver</button>
+          </div>
+          <div class="button-group-row">
+            <button class="btn btn-sm btn-primary" id="btn-save-key">Guardar</button>
+            <button class="btn btn-sm btn-danger" id="btn-delete-key">Borrar</button>
+          </div>
+        </section>
 
-            <div class="button-group-row">
-              <button class="btn btn-sm btn-primary" id="btn-save-key">Guardar</button>
-              <button class="btn btn-sm btn-danger" id="btn-delete-key">Borrar</button>
+        <!-- MODELO -->
+        <section class="sidebar-section">
+          <div class="section-title">Modelo & Parámetros</div>
+          <div class="form-group">
+            <input id="input-model" placeholder="ej. anthropic/claude-3.5-sonnet" autocomplete="off">
+          </div>
+          <div class="button-group-row">
+            <button class="btn btn-sm" id="btn-list-models">Listar</button>
+            <button class="btn btn-sm" id="btn-test-models">Probar Tools</button>
+          </div>
+          <div id="model-list-container" class="model-list-container"></div>
+          
+          <div class="slider-row">
+            <div class="slider-header">
+              <span>Temperatura</span>
+              <span id="temp-val" class="slider-val">0.2</span>
             </div>
+            <input type="range" id="input-temp" min="0" max="1" step="0.1" value="0.2" class="custom-slider">
           </div>
-        </div>
+        </section>
 
-        <!-- SECCIÓN: MODELO LLM -->
-        <div class="accordion-item open">
-          <div class="accordion-header" data-toggle="accordion">
-            <span class="section-label">Modelo & Parámetros</span>
-            <span class="accordion-arrow">▾</span>
+        <!-- HERRAMIENTAS -->
+        <section class="sidebar-section">
+          <div class="section-title">Especialidad & Reglas</div>
+          <div class="form-group">
+            <select id="select-profile" class="custom-select"></select>
           </div>
-          <div class="accordion-body">
-            <div class="form-group">
-              <label for="input-model">Modelo</label>
-              <input id="input-model" placeholder="ej. anthropic/claude-3.5-sonnet" autocomplete="off">
-            </div>
+          <label class="custom-checkbox">
+            <input type="checkbox" id="check-rules" checked>
+            <span>
+              <strong>Reglas constructivas</strong>
+              <small>Envía criterios de muros, vanos y cotas (+11k tokens)</small>
+            </span>
+          </label>
+        </section>
 
-            <div class="button-group-row">
-              <button class="btn btn-sm" id="btn-list-models">Listar</button>
-              <button class="btn btn-sm" id="btn-test-models">Probar Tools</button>
-            </div>
-
-            <div id="model-list-container" class="model-list-container"></div>
-            
-            <div class="form-group" style="margin-top: 6px;">
-              <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-muted); margin-bottom:4px;">
-                <span>Temperatura</span>
-                <span id="temp-val">0.2</span>
-              </div>
-              <input type="range" id="input-temp" min="0" max="1" step="0.1" value="0.2" class="custom-slider">
-            </div>
+        <!-- PLANTILLAS -->
+        <section class="sidebar-section">
+          <div class="section-title">Plantillas Rápidas</div>
+          <div class="quick-prompts-list">
+            <button class="quick-prompt-btn" data-prompt="Dibuja una casa de 2 plantas de 7x15m con 3 recámaras, 2.5 baños, sala, cocina y cochera.">Casa 2 Plantas (7×15m)</button>
+            <button class="quick-prompt-btn" data-prompt="Dibuja una zapata aislada Z-1 de 1.20x1.20m con dado de 30x30cm y armado de varilla #4 @ 15cm.">Zapata Aislada Z-1</button>
+            <button class="quick-prompt-btn" data-prompt="Verifica las capas del dibujo actual, lista los bloques insertados y acota todos los muros principales.">Acotar & Revisar Capas</button>
+            <button class="quick-prompt-btn" data-prompt="Inserta distribución eléctrica básica con luminarias LED empotradas y contactos dobles a 0.30m.">Instalación Eléctrica</button>
           </div>
-        </div>
-
-        <!-- SECCIÓN: HERRAMIENTAS CAD -->
-        <div class="accordion-item open">
-          <div class="accordion-header" data-toggle="accordion">
-            <span class="section-label">Especialidad & Reglas</span>
-            <span class="accordion-arrow">▾</span>
-          </div>
-          <div class="accordion-body">
-            <div class="form-group">
-              <label for="select-profile">Perfil</label>
-              <select id="select-profile" class="custom-select"></select>
-            </div>
-
-            <label class="custom-checkbox">
-              <input type="checkbox" id="check-rules" checked>
-              <span>
-                <strong>Reglas constructivas</strong>
-                <small>Envía criterios de muros, vanos y cotas (+11k tokens)</small>
-              </span>
-            </label>
-          </div>
-        </div>
-
-        <!-- SECCIÓN: PLANTILLAS -->
-        <div class="accordion-item">
-          <div class="accordion-header" data-toggle="accordion">
-            <span class="section-label">Plantillas de Comandos</span>
-            <span class="accordion-arrow">▾</span>
-          </div>
-          <div class="accordion-body">
-            <div class="quick-prompts-list">
-              <button class="quick-prompt-btn" data-prompt="Dibuja una casa de 2 plantas de 7x15m con 3 recámaras, 2.5 baños, sala, cocina y cochera.">Casa 2 Plantas (7x15m)</button>
-              <button class="quick-prompt-btn" data-prompt="Dibuja una zapata aislada Z-1 de 1.20x1.20m con dado de 30x30cm y armado de varilla #4 @ 15cm.">Zapata Aislada Z-1</button>
-              <button class="quick-prompt-btn" data-prompt="Verifica las capas del dibujo actual, lista los bloques insertados y acota todos los muros principales.">Acotado & Capas</button>
-              <button class="quick-prompt-btn" data-prompt="Inserta distribución eléctrica básica con luminarias LED empotradas y contactos dobles a 0.30m.">Instalación Eléctrica</button>
-            </div>
-          </div>
-        </div>
+        </section>
 
       </div>
 
@@ -238,7 +222,7 @@
         <button class="btn btn-sm btn-ghost" id="btn-new-session" title="Reiniciar memoria del agente">
           Nueva Sesión
         </button>
-        <button class="btn btn-sm btn-ghost" id="btn-open-settings" title="Asistente de configuración">
+        <button class="btn btn-sm btn-ghost" id="btn-open-settings" title="Abrir configuración">
           Configuración
         </button>
       </div>
@@ -279,13 +263,22 @@
         </div>
       </header>
 
+      <!-- HILO DE MENSAJES -->
       <div id="chat-messages" class="chat-messages">
         <div class="empty-state" id="empty-state-view">
           <div class="empty-icon-wrapper">
-            <div class="empty-icon">CAD</div>
+            <div class="empty-icon">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 21L21 21L21 3L3 21Z"></path>
+                <path d="M9 15L15 21"></path>
+                <line x1="12" y1="18" x2="14" y2="20"></line>
+                <line x1="18" y1="21" x2="18" y2="18"></line>
+                <line x1="21" y1="15" x2="18" y2="15"></line>
+              </svg>
+            </div>
           </div>
-          <h2>¿Qué vamos a proyectar?</h2>
-          <p>Escribí tu instrucción técnica en lenguaje natural. El agente calculará geometrías, creará capas, insertará bloques y acotará el plano en AutoCAD en tiempo real.</p>
+          <h2>¿Qué vamos a diseñar hoy?</h2>
+          <p>Asegurate de tener AutoCAD abierto con el plugin cargado. Podés pedirme distribuciones completas, cotas, muebles o consultar entidades existentes.</p>
           
           <div class="preset-cards-grid">
             <button class="preset-card">
@@ -312,11 +305,16 @@
         </div>
       </div>
 
+      <!-- FOOTER CON INPUT DE TEXTO -->
       <footer class="chat-footer">
         <div class="input-container">
+          <div id="attach-preview" class="attach-preview hidden"></div>
           <div class="input-box-wrapper">
-            <textarea id="chat-input" rows="1" placeholder="Instrucción de dibujo para AutoCAD…"></textarea>
-            <button class="btn btn-primary btn-send" id="btn-send" title="Enviar (Enter)">
+            <input type="file" id="input-file" accept="image/*" multiple hidden>
+            <button class="btn btn-icon btn-ghost btn-attach" id="btn-attach"
+                    title="Adjuntar croquis o foto">📎</button>
+            <textarea id="chat-input" rows="1" placeholder="Describí lo que querés que dibuje en AutoCAD…"></textarea>
+            <button class="btn btn-primary btn-send" id="btn-send" title="Enviar instrucción (Enter)">
               <span>Enviar</span>
             </button>
           </div>
@@ -332,14 +330,14 @@
     <section id="plan-viewer-pane" class="plan-viewer-pane">
       <div class="viewer-header">
         <div class="viewer-title">
-          <span>Vista de Plano DWG</span>
+          <span>Visor de Plano DWG</span>
         </div>
         <div class="viewer-toolbar">
           <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-in" title="Acercar (+)">＋</button>
           <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-out" title="Alejar (-)">－</button>
           <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-reset" title="Ajustar escala al 100%">1:1</button>
           <button class="btn btn-sm btn-ghost" id="btn-refresh-plan" title="Actualizar captura">Actualizar</button>
-          <button class="btn-icon btn-ghost btn-sm" id="btn-download-plan" title="Descargar imagen PNG">💾</button>
+          <button class="btn-icon btn-ghost btn-sm" id="btn-download-plan" title="Descargar imagen PNG">Guardar</button>
           <button class="btn-icon btn-ghost btn-sm" id="btn-close-plan" title="Ocultar visor">✕</button>
         </div>
       </div>

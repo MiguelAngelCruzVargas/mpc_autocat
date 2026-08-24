@@ -143,6 +143,10 @@ class Handler(BaseHTTPRequestHandler):
                     {"id": p, "tools": conteo.get(p, len(v) if v else 0)}
                     for p, v in PERFILES.items()],
                 "archivoClaves": credenciales.ARCHIVO,
+                # Los ajustes viajan con el estado: la interfaz los aplica
+                # al arrancar sin depender del localStorage del navegador,
+                # que se pierde al cambiar el puerto del servidor.
+                "preferencias": credenciales.leer_preferencias(),
             })
             return
 
@@ -204,6 +208,30 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": True, "proteccion": modo,
                         "clave": credenciales.enmascarar(clave.strip())})
+            return
+
+        if self.path == "/api/preferencias":
+            self._json({"ok": True,
+                        "preferencias": credenciales.guardar_preferencias(
+                            datos.get("preferencias") or datos)})
+            return
+
+        if self.path == "/api/vision":
+            # ¿El modelo elegido puede MIRAR una imagen? La interfaz lo
+            # usa para habilitar o no el adjuntar, y para decir por qué.
+            modelo = str(datos.get("modelo", ""))
+            puede = providers.soporta_imagenes(modelo)
+            self._json({
+                "modelo": modelo,
+                "soportaImagenes": puede,
+                "motivo": ("" if puede else
+                           f"'{modelo}' es un modelo de solo texto: no puede "
+                           "ver imágenes. Si le adjuntás un croquis, o lo "
+                           "ignora en silencio o rechaza el pedido entero. "
+                           "Para trabajar con imágenes usá uno multimodal "
+                           "(gpt-4o, claude-3.5+, gemini, qwen-vl, "
+                           "llama-3.2-vision…)."),
+            })
             return
 
         if self.path == "/api/modelos":
@@ -294,7 +322,9 @@ class Handler(BaseHTTPRequestHandler):
         pantalla congelada preguntándose si se colgó.
         """
         pedido = str(datos.get("mensaje", "")).strip()
-        if not pedido:
+        imagenes = [i for i in (datos.get("imagenes") or [])
+                    if isinstance(i, str) and i.startswith("data:image/")]
+        if not pedido and not imagenes:
             self._json({"error": "El mensaje está vacío."}, 400)
             return
 
@@ -306,6 +336,17 @@ class Handler(BaseHTTPRequestHandler):
                 temperatura=datos.get("temperatura"))
         except providers.ErrorProveedor as exc:
             self._json({"error": str(exc)}, 400)
+            return
+
+        # Se corta ACÁ y no se manda: un modelo de solo texto con una
+        # imagen adjunta o la ignora sin decir nada -- y entonces contesta
+        # sobre algo que no vio -- o devuelve un 400 incomprensible.
+        if imagenes and not providers.soporta_imagenes(proveedor.modelo):
+            self._json({"error":
+                        f"'{proveedor.modelo}' no puede ver imágenes. "
+                        "Elegí un modelo multimodal (gpt-4o, claude-3.5+, "
+                        "gemini, qwen-vl…) o mandá el pedido sin adjuntos."},
+                       400)
             return
 
         perfil = str(datos.get("perfil", "arquitectura"))
@@ -341,8 +382,18 @@ class Handler(BaseHTTPRequestHandler):
                         SESION.reiniciar(_system_prompt(
                             bool(datos.get("conReglas", True)),
                             int(datos.get("limiteReglas") or 0)))
-                    SESION.mensajes.append({"role": "user",
-                                            "content": pedido})
+                    if imagenes:
+                        formato = getattr(proveedor, "formato", "openai")
+                        bloques: list[dict[str, Any]] = [
+                            {"type": "text",
+                             "text": pedido or "Mirá esta imagen."}]
+                        bloques += [providers.bloque_imagen(i, formato)
+                                    for i in imagenes]
+                        SESION.mensajes.append({"role": "user",
+                                                "content": bloques})
+                    else:
+                        SESION.mensajes.append({"role": "user",
+                                                "content": pedido})
                     mensajes = SESION.mensajes
                 await conversar(mcp, proveedor, mensajes, tools,
                                 lambda t, d: emitir(t, d),

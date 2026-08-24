@@ -1,130 +1,100 @@
 /**
- * AutoCAD IA — Aplicación Web Frontend (Responsiva & Modular)
+ * AutoCAD IA — Lógica de Aplicación Frontend
+ * Inicialización segura y comunicación SSE con el agente
  */
 
-// Estado Global
-const AppState = {
-  servidor: null,        // Metadatos de /api/estado
-  trabajando: false,     // Ejecución activa del agente
-  autoPlano: true,       // Apertura automática del visor al dibujar
-  zoomNivel: 1,          // Factor de zoom actual
-  planUrlActual: null,   // URL de la última captura
-  isPanning: false,      // Estado de arrastre del plano
+let AppState = {
+  servidor: null,
+  trabajando: false,
+  autoPlano: true,
+  zoomNivel: 1,
+  planUrlActual: null,
+  isPanning: false,
   panStartX: 0,
   panStartY: 0,
   scrollLeft: 0,
   scrollTop: 0,
+  adjuntos: [],           // Croquis/fotos pendientes de enviar
+  soportaImagenes: false, // Si el modelo elegido puede verlas
 };
 
-// Utilidades DOM
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => document.querySelectorAll(selector);
-
-// Referencias a elementos
-const DOM = {
-  appLayout: $('#app-layout'),
-  appSidebar: $('#app-sidebar'),
-  sidebarBackdrop: $('#sidebar-backdrop'),
-  btnOpenSidebar: $('#btn-open-sidebar'),
-  btnCloseSidebar: $('#btn-close-sidebar'),
-
-  // Chat
-  chatMessages: $('#chat-messages'),
-  chatInput: $('#chat-input'),
-  btnSend: $('#btn-send'),
-  btnCancel: $('#btn-cancel'),
-  typingIndicator: $('#typing-indicator'),
-  tokenCounter: $('#token-counter'),
-  totalTokens: $('#total-tokens'),
-  totalTurns: $('#total-turns'),
-  sessionSubtitle: $('#session-subtitle'),
-  connectionStatus: $('#connection-status'),
-
-  // Configuración
-  selectProvider: $('#select-provider'),
-  keyStatusChip: $('#key-status-chip'),
-  inputApiKey: $('#input-api-key'),
-  btnToggleKeyVisibility: $('#btn-toggle-key-visibility'),
-  btnSaveKey: $('#btn-save-key'),
-  btnDeleteKey: $('#btn-delete-key'),
-  inputModel: $('#input-model'),
-  btnListModels: $('#btn-list-models'),
-  btnTestModels: $('#btn-test-models'),
-  modelListContainer: $('#model-list-container'),
-  inputTemp: $('#input-temp'),
-  tempVal: $('#temp-val'),
-  selectProfile: $('#select-profile'),
-  checkRules: $('#check-rules'),
-  btnNewSession: $('#btn-new-session'),
-  btnOpenSettings: $('#btn-open-settings'),
-
-  // Visor de plano
-  btnTogglePlan: $('#btn-toggle-plan'),
-  planViewerPane: $('#plan-viewer-pane'),
-  planCanvasWrapper: $('#plan-canvas-wrapper'),
-  planFooterInfo: $('#plan-footer-info'),
-  planZoomInfo: $('#plan-zoom-info'),
-  btnRefreshPlan: $('#btn-refresh-plan'),
-  btnClosePlan: $('#btn-close-plan'),
-  btnZoomIn: $('#btn-zoom-in'),
-  btnZoomOut: $('#btn-zoom-out'),
-  btnZoomReset: $('#btn-zoom-reset'),
-  btnDownloadPlan: $('#btn-download-plan'),
-  btnInitialCapture: $('#btn-initial-capture'),
-
-  // Modal Asistente
-  welcomeModal: $('#welcome-modal'),
-  btnCloseWizard: $('#btn-close-wizard'),
-  wizardProvider: $('#wizard-provider'),
-  wizardProviderHint: $('#wizard-provider-hint'),
-  wizardApiKey: $('#wizard-api-key'),
-  btnToggleWizardKey: $('#btn-toggle-wizard-key'),
-  wizardKeyStatusChip: $('#wizard-key-status-chip'),
-  btnWizardSkip: $('#btn-wizard-skip'),
-  btnWizardSaveKey: $('#btn-wizard-save-key'),
-  btnWizardRecheck: $('#btn-wizard-recheck'),
-  btnWizardFinish: $('#btn-wizard-finish'),
-  toastContainer: $('#toast-container'),
-};
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
 
 // ==========================================================================
-// INICIALIZACIÓN
+// PREFERENCIAS — guardadas en el SERVIDOR, no en el navegador
+// ==========================================================================
+// localStorage es por ORIGEN: cambiar el puerto del servidor (8770 -> 8771)
+// hace que el navegador vea otro sitio y los ajustes desaparezcan. También
+// se perdían al limpiar datos o al abrir desde otro navegador. Ahora viven
+// al lado de las credenciales, en el disco, y sobreviven a todo eso.
+// localStorage queda como espejo para que la primera pintada no parpadee.
+let PREFS = {};
+
+function pref(clave, porDefecto = null) {
+  if (PREFS[clave] !== undefined && PREFS[clave] !== null) return PREFS[clave];
+  const local = localStorage.getItem('autocad_ia_' + clave);
+  return local !== null ? local : porDefecto;
+}
+
+/** El modelo elegido para cada proveedor, dentro de las preferencias. */
+function guardarModeloDe(proveedor, modelo) {
+  const mapa = Object.assign({}, pref('modelos', {}) || {});
+  mapa[proveedor] = modelo;
+  guardarPref('modelos', mapa);
+}
+
+let _guardadoPendiente = null;
+function guardarPref(clave, valor) {
+  PREFS[clave] = valor;
+  try { localStorage.setItem('autocad_ia_' + clave, valor); } catch {}
+  // Se agrupan los cambios: mover el slider de temperatura dispararía una
+  // escritura por pixel.
+  clearTimeout(_guardadoPendiente);
+  _guardadoPendiente = setTimeout(() => {
+    fetch('/api/preferencias', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferencias: PREFS }),
+    }).catch(() => {});
+  }, 400);
+}
+
+// ==========================================================================
+// ARRANQUE DE LA APLICACIÓN
 // ==========================================================================
 async function init() {
   try {
     const res = await fetch('/api/estado');
-    if (!res.ok) throw new Error('No se pudo comunicar con el servidor local');
+    if (!res.ok) throw new Error('No se pudo comunicar con el backend local');
     AppState.servidor = await res.json();
-    
+    PREFS = AppState.servidor.preferencias || {};
+
     poblarOpciones();
     cargarConfiguracionGuardada();
-    // Si nunca se eligio proveedor pero YA hay uno con clave guardada,
-    // arrancar en ese. Sin esto la app abre en el primero alfabetico
-    // (anthropic), lo ve sin clave y muestra el asistente a alguien que
-    // en realidad ya estaba configurado.
-    if (!localStorage.getItem('autocad_ia_proveedor')) {
-      const conClave = AppState.servidor.proveedores.find(x => x.clave);
-      if (conClave && DOM.selectProvider) {
-        DOM.selectProvider.value = conClave.id;
-        if (DOM.wizardProvider) DOM.wizardProvider.value = conClave.id;
-      }
-    }
-    marcarProveedorListo();
+    aplicarPreferencias();
+    const varios = elegirProveedorInicial();
     renderizarConfiguracion();
 
     const p = getProveedorActual();
-    const configurado = localStorage.getItem('autocad_ia_configurado');
-    // ?skip=1 salta el asistente sin marcarlo como configurado: sirve para
-    // revisar la interfaz y para volver a abrirlo despues.
+    const configurado = pref('configurado');
     const saltar = new URLSearchParams(location.search).has('skip');
-    if (!p?.clave && !configurado && p?.id !== 'local' && !saltar) {
+
+    if (varios && !saltar) {
+      // Hay más de un proveedor con clave: que elija, en vez de arrancar
+      // en uno cualquiera y que después no entienda por qué está usando
+      // ese. Se pregunta UNA vez; después queda recordado.
+      preguntarCualProveedor(varios);
+    } else if (!p?.clave && !configurado && p?.id !== 'local' && !saltar) {
       abrirWizard(0);
     }
   } catch (err) {
+    console.error('Error inicializando:', err);
     showToast('Error conectando al backend: ' + err.message, 'error');
-    if (DOM.connectionStatus) {
-      DOM.connectionStatus.className = 'status-badge';
-      DOM.connectionStatus.textContent = '● Sin conexión';
+    const conn = $('#connection-status');
+    if (conn) {
+      conn.className = 'status-badge';
+      conn.textContent = '● Sin conexión';
     }
   }
 
@@ -132,90 +102,168 @@ async function init() {
 }
 
 function poblarOpciones() {
+  if (!AppState.servidor) return;
   const { proveedores, perfiles } = AppState.servidor;
 
-  // Los que YA tienen clave van primero y con un candado: son los que se
-  // pueden usar ahora mismo. Ordenar alfabético dejaba a 'anthropic'
-  // arriba aunque no estuviera configurado, y el que sí lo estaba había
-  // que ir a buscarlo en la lista.
-  const listos = proveedores.filter(p => p.clave || p.id === 'local');
-  const pendientes = proveedores.filter(p => !p.clave && p.id !== 'local');
-  const comoOpcion = (p) =>
-    `<option value="${p.id}">${p.clave ? '🔒 ' : p.id === 'local' ? '💻 ' : ''}` +
-    `${p.id.toUpperCase()}${p.clave ? ' — listo' : ''}</option>`;
-
-  const opsProveedores =
-    (listos.length
-      ? `<optgroup label="Configurados">${listos.map(comoOpcion).join('')}</optgroup>`
-      : '') +
-    (pendientes.length
-      ? `<optgroup label="Sin clave">${pendientes.map(comoOpcion).join('')}</optgroup>`
-      : '');
-
-  DOM.selectProvider.innerHTML = opsProveedores;
-  DOM.wizardProvider.innerHTML = opsProveedores;
-
-  DOM.selectProfile.innerHTML = perfiles.map(p =>
-    `<option value="${p.id}" ${p.id === 'arquitectura' ? 'selected' : ''}>` +
-    `${p.id.charAt(0).toUpperCase() + p.id.slice(1)} (${p.tools} tools)</option>`
+  const opsProveedores = proveedores.map(p => 
+    `<option value="${p.id}">${p.id.toUpperCase()}</option>`
   ).join('');
-}
 
-function cargarConfiguracionGuardada() {
-  const prov = localStorage.getItem('autocad_ia_proveedor');
-  if (prov && AppState.servidor.proveedores.some(p => p.id === prov)) {
-    DOM.selectProvider.value = prov;
-    DOM.wizardProvider.value = prov;
+  const selProv = $('#select-provider');
+  const wizProv = $('#wizard-provider');
+  if (selProv) selProv.innerHTML = opsProveedores;
+  if (wizProv) wizProv.innerHTML = opsProveedores;
+
+  const selProf = $('#select-profile');
+  if (selProf) {
+    selProf.innerHTML = perfiles.map(p =>
+      `<option value="${p.id}" ${p.id === 'arquitectura' ? 'selected' : ''}>` +
+      `${p.id.charAt(0).toUpperCase() + p.id.slice(1)} (${p.tools} tools)</option>`
+    ).join('');
   }
 }
 
+/** Vuelve a poner en la interfaz los ajustes de la sesión anterior. */
+function aplicarPreferencias() {
+  const perfil = pref('perfil');
+  const selProf = $('#select-profile');
+  if (perfil && selProf
+      && [...selProf.options].some(o => o.value === perfil)) {
+    selProf.value = perfil;
+  }
+
+  const temp = pref('temperatura');
+  const inTemp = $('#input-temp');
+  if (temp !== null && inTemp) {
+    inTemp.value = temp;
+    const salida = $('#temp-val');
+    if (salida) salida.textContent = parseFloat(temp).toFixed(1);
+  }
+
+  const reglas = pref('conReglas');
+  const chk = $('#check-rules');
+  // Viene como booleano del servidor o como "true"/"false" del navegador.
+  if (reglas !== null && chk) chk.checked = (reglas === true || reglas === 'true');
+}
+
+function cargarConfiguracionGuardada() {
+  const prov = pref('proveedor');
+  if (prov && AppState.servidor?.proveedores?.some(p => p.id === prov)) {
+    const selProv = $('#select-provider');
+    const wizProv = $('#wizard-provider');
+    if (selProv) selProv.value = prov;
+    if (wizProv) wizProv.value = prov;
+  }
+}
+
+/**
+ * Si no hay preferencia guardada, arrancar en un proveedor QUE TENGA CLAVE.
+ * Sin esto la app abre en el primero de la lista (anthropic), lo ve sin
+ * configurar y muestra el asistente a alguien que ya tenía todo listo en
+ * otro proveedor.
+ * Devuelve la lista de configurados SOLO si hay más de uno (para
+ * preguntar cuál); null si no hay que preguntar nada.
+ */
+function elegirProveedorInicial() {
+  if (pref('proveedor')) return null;
+  const listos = (AppState.servidor?.proveedores || [])
+    .filter(p => p.clave);
+  if (!listos.length) return null;
+
+  const selProv = $('#select-provider');
+  const wizProv = $('#wizard-provider');
+  if (selProv) selProv.value = listos[0].id;
+  if (wizProv) wizProv.value = listos[0].id;
+
+  return listos.length > 1 ? listos : null;
+}
+
+/** Pregunta con cuál de los proveedores configurados trabajar. */
+function preguntarCualProveedor(listos) {
+  const msgs = $('#chat-messages');
+  if (!msgs) return;
+  limpiarVacio();
+  const caja = document.createElement('div');
+  caja.className = 'provider-picker';
+  caja.innerHTML =
+    `<div class="picker-title">Tenés ${listos.length} proveedores con clave. ` +
+    `¿Con cuál trabajamos?</div><div class="picker-options"></div>`;
+  const cont = caja.querySelector('.picker-options');
+
+  listos.forEach(p => {
+    const b = document.createElement('button');
+    b.className = 'btn btn-accent picker-option';
+    b.innerHTML = `<b>${p.id.toUpperCase()}</b><small>${p.clave}</small>`;
+    b.onclick = () => {
+      const selProv = $('#select-provider');
+      if (selProv) selProv.value = p.id;
+      guardarPref('proveedor', p.id);
+      renderizarConfiguracion();
+      caja.remove();
+      showToast(`Trabajando con ${p.id.toUpperCase()}`, 'success');
+    };
+    cont.appendChild(b);
+  });
+
+  msgs.appendChild(caja);
+}
+
 function getProveedorActual() {
-  return AppState.servidor?.proveedores.find(p => p.id === DOM.selectProvider.value);
+  const selProv = $('#select-provider');
+  const id = selProv ? selProv.value : (AppState.servidor?.proveedores?.[0]?.id || 'anthropic');
+  return AppState.servidor?.proveedores?.find(p => p.id === id);
 }
 
 function renderizarConfiguracion() {
   const p = getProveedorActual();
   if (!p) return;
 
-  localStorage.setItem('autocad_ia_proveedor', p.id);
+  guardarPref('proveedor', p.id);
 
-  if (p.clave) {
-    const modo = p.proteccion === 'dpapi' ? 'cifrada' : 'almacenada';
-    DOM.keyStatusChip.className = 'chip-status encrypted';
-    DOM.keyStatusChip.innerHTML = `🔒 <span>${p.clave} (${modo})</span>`;
-  } else if (p.id === 'local') {
-    DOM.keyStatusChip.className = 'chip-status';
-    DOM.keyStatusChip.innerHTML = `💻 <span>Local (sin clave)</span>`;
-  } else {
-    DOM.keyStatusChip.className = 'chip-status warning';
-    DOM.keyStatusChip.innerHTML = `⚠️ <span>Sin clave guardada</span>`;
+  const chip = $('#key-status-chip');
+  if (chip) {
+    if (p.clave) {
+      const modo = p.proteccion === 'dpapi' ? 'cifrada' : 'almacenada';
+      chip.className = 'chip-status encrypted';
+      chip.innerHTML = `<span>${p.clave} (${modo})</span>`;
+    } else if (p.id === 'local') {
+      chip.className = 'chip-status';
+      chip.innerHTML = `<span>Local (sin clave)</span>`;
+    } else {
+      chip.className = 'chip-status warning';
+      chip.innerHTML = `<span>Sin clave guardada</span>`;
+    }
   }
 
-  const modeloGuardado = localStorage.getItem('autocad_ia_modelo:' + p.id);
-  DOM.inputModel.value = modeloGuardado || p.modeloSugerido;
-  DOM.modelListContainer.innerHTML = '';
+  const inModel = $('#input-model');
+  if (inModel) {
+    const modeloGuardado = (pref('modelos', {}) || {})[p.id];
+    inModel.value = modeloGuardado || p.modeloSugerido;
+  }
 
-  marcarProveedorListo();
+  const modelList = $('#model-list-container');
+  if (modelList) modelList.innerHTML = '';
+
   actualizarSubtitulo();
 }
 
-function marcarProveedorListo() {
-  // El borde del selector dice de un vistazo si el proveedor elegido se
-  // puede usar ya o le falta la clave.
-  const p = getProveedorActual();
-  if (!DOM.selectProvider) return;
-  DOM.selectProvider.classList.toggle(
-    'listo', !!(p && (p.clave || p.id === 'local')));
-}
-
 function actualizarSubtitulo() {
+  // Cambió el modelo: puede haber dejado de aceptar imágenes (o empezado).
+  // Se engancha acá porque es el único punto por el que pasan TODAS las
+  // formas de cambiar de modelo: escribirlo, elegirlo de la lista o
+  // cambiar de proveedor.
+  refrescarSoporteImagenes();
   const p = getProveedorActual();
-  const m = DOM.inputModel.value.trim() || '(sin modelo)';
-  DOM.sessionSubtitle.textContent = `${m} · ${p ? p.id : ''}`;
+  const inModel = $('#input-model');
+  const m = (inModel ? inModel.value.trim() : '') || '(sin modelo)';
+  const sub = $('#session-subtitle');
+  if (sub) {
+    sub.textContent = `${m} · ${p ? p.id : ''}`;
+  }
 }
 
 // ==========================================================================
-// ACCIONES DE PROVEEDOR Y MODELO
+// CLAVES Y MODELOS
 // ==========================================================================
 async function guardarClave(clave) {
   const p = getProveedorActual();
@@ -233,7 +281,7 @@ async function guardarClave(clave) {
     p.clave = data.clave;
     p.proteccion = data.proteccion;
     renderizarConfiguracion();
-    showToast('Clave guardada y protegida', 'success');
+    showToast('Clave guardada y cifrada', 'success');
     return true;
   } catch (err) {
     showToast('Error al guardar: ' + err.message, 'error');
@@ -261,8 +309,11 @@ async function borrarClave() {
 
 async function listarModelos(probar = false) {
   const p = getProveedorActual();
-  DOM.modelListContainer.innerHTML = `
-    <div style="font-size:11.5px;color:var(--text-muted);padding:6px;">
+  const c = $('#model-list-container');
+  if (!c) return;
+
+  c.innerHTML = `
+    <div style="font-size:11px;color:var(--text-muted);padding:6px;">
       ${probar ? '⚡ Probando compatibilidad con AutoCAD…' : '🔍 Obteniendo catálogo…'}
     </div>`;
 
@@ -274,19 +325,20 @@ async function listarModelos(probar = false) {
     });
     const data = await res.json();
     if (data.error) {
-      DOM.modelListContainer.innerHTML = '';
+      c.innerHTML = '';
       showToast(data.error, 'error');
       return;
     }
 
     if (!data.modelos?.length) {
-      DOM.modelListContainer.innerHTML = `
-        <div style="font-size:11px;color:var(--text-dim);padding:4px;">No se encontraron modelos.</div>`;
+      c.innerHTML = `<div style="font-size:11px;color:var(--text-dim);padding:4px;">No se encontraron modelos.</div>`;
       return;
     }
 
-    const modeloActual = DOM.inputModel.value.trim();
-    DOM.modelListContainer.innerHTML = data.modelos.map(m => {
+    const inModel = $('#input-model');
+    const modeloActual = inModel ? inModel.value.trim() : '';
+
+    c.innerHTML = data.modelos.map(m => {
       const isOk = m.estado.startsWith('OK');
       const isErr = /bloquead|error|sin respuesta|no/.test(m.estado.toLowerCase());
       const isSelected = m.modelo === modeloActual;
@@ -301,15 +353,15 @@ async function listarModelos(probar = false) {
     $$('.model-item').forEach(el => {
       el.onclick = () => {
         const m = el.dataset.model;
-        DOM.inputModel.value = m;
-        localStorage.setItem('autocad_ia_modelo:' + p.id, m);
+        if (inModel) inModel.value = m;
+        guardarModeloDe(p.id, m);
         $$('.model-item').forEach(x => x.classList.remove('selected'));
         el.classList.add('selected');
         actualizarSubtitulo();
       };
     });
   } catch (err) {
-    DOM.modelListContainer.innerHTML = '';
+    c.innerHTML = '';
     showToast('Error al consultar modelos: ' + err.message, 'error');
   }
 }
@@ -322,30 +374,50 @@ function limpiarVacio() {
   if (el) el.remove();
 }
 
-function agregarBurbuja(autor, texto, esUsuario = false) {
+function scrollAbajo() {
+  const msgs = $('#chat-messages');
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+function agregarBurbuja(autor, texto, esUsuario = false, adjuntos = []) {
   limpiarVacio();
+  const msgs = $('#chat-messages');
+  if (!msgs) return;
   const row = document.createElement('div');
   row.className = `message-row ${esUsuario ? 'user' : 'assistant'}`;
   row.innerHTML = `
-    <div class="message-author">${esUsuario ? 'Tú 👤' : 'AutoCAD IA 🤖'}</div>
+    <div class="message-author">${esUsuario ? 'Tú' : 'AutoCAD IA'}</div>
     <div class="message-bubble"></div>
   `;
-  row.querySelector('.message-bubble').textContent = texto;
-  DOM.chatMessages.appendChild(row);
+  const burbuja = row.querySelector('.message-bubble');
+  burbuja.textContent = texto;
+  // Las imágenes enviadas quedan en el hilo: si después el agente dice
+  // algo raro, se puede ver qué fue exactamente lo que miró.
+  if (adjuntos.length) {
+    const tira = document.createElement('div');
+    tira.className = 'message-images';
+    tira.innerHTML = adjuntos
+      .map(a => `<img src="${a.dataUrl}" alt="${a.nombre}" title="${a.nombre}">`)
+      .join('');
+    burbuja.appendChild(tira);
+  }
+  msgs.appendChild(row);
   scrollAbajo();
 }
 
 function agregarToolCard(nombre, args, estado = 'running') {
   limpiarVacio();
+  const msgs = $('#chat-messages');
+  if (!msgs) return;
   const card = document.createElement('div');
   card.className = `tool-card ${estado}`;
   
-  let icono = '⚡';
-  if (estado === 'success') icono = '✓';
-  if (estado === 'error') icono = '✕';
+  let badge = 'EJECUTANDO';
+  if (estado === 'success') badge = 'OK';
+  if (estado === 'error') badge = 'ERROR';
 
   card.innerHTML = `
-    <div class="tool-card-icon">${icono}</div>
+    <div class="tool-card-icon">[${badge}]</div>
     <div class="tool-card-body">
       <div class="tool-card-header">
         <span class="tool-card-name">${nombre}</span>
@@ -354,28 +426,109 @@ function agregarToolCard(nombre, args, estado = 'running') {
     </div>
   `;
   card.querySelector('.tool-card-details').textContent = args;
-  DOM.chatMessages.appendChild(card);
+  msgs.appendChild(card);
   scrollAbajo();
 }
 
 function agregarAvisoChat(texto) {
   limpiarVacio();
+  const msgs = $('#chat-messages');
+  if (!msgs) return;
   const notice = document.createElement('div');
   notice.className = 'chat-notice';
-  notice.innerHTML = `<span>ℹ️</span> <div>${texto}</div>`;
-  DOM.chatMessages.appendChild(notice);
+  notice.innerHTML = `<div>${texto}</div>`;
+  msgs.appendChild(notice);
   scrollAbajo();
-}
-
-function scrollAbajo() {
-  DOM.chatMessages.scrollTop = DOM.chatMessages.scrollHeight;
 }
 
 const REGEX_DIBUJO = /^(create_|draw_|place_|suggest_furniture|dimension_|label_|union_|compose_|delete_|move_|offset_|mirror_|array_|copy_|rotate_|scale_)/;
 
+// ==========================================================================
+// ADJUNTOS (CROQUIS / FOTOS)
+// ==========================================================================
+// Un modelo de solo texto NO puede ver una imagen: unos la ignoran en
+// silencio -- y entonces contestan sobre algo que no miraron -- y otros
+// rechazan el pedido entero con un 400 críptico. Por eso el botón se
+// habilita SOLO cuando el modelo elegido es multimodal, y cuando no lo es
+// dice por qué en vez de dejar adjuntar algo que no va a servir.
+const MAX_ADJUNTO_MB = 4;
+
+async function refrescarSoporteImagenes() {
+  const btn = $('#btn-attach');
+  if (!btn) return;
+  const inModel = $('#input-model');
+  const modelo = inModel ? inModel.value.trim() : '';
+  if (!modelo) { btn.disabled = true; return; }
+
+  try {
+    const r = await (await fetch('/api/vision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelo }),
+    })).json();
+
+    AppState.soportaImagenes = !!r.soportaImagenes;
+    btn.disabled = !r.soportaImagenes;
+    btn.classList.toggle('no-vision', !r.soportaImagenes);
+    btn.title = r.soportaImagenes
+      ? 'Adjuntar croquis o foto (el modelo puede verla)'
+      : r.motivo;
+    if (!r.soportaImagenes && AppState.adjuntos.length) limpiarAdjuntos();
+  } catch {
+    btn.disabled = true;
+  }
+}
+
+function limpiarAdjuntos() {
+  AppState.adjuntos = [];
+  const cont = $('#attach-preview');
+  if (cont) { cont.innerHTML = ''; cont.classList.add('hidden'); }
+}
+
+function pintarAdjuntos() {
+  const cont = $('#attach-preview');
+  if (!cont) return;
+  cont.classList.toggle('hidden', !AppState.adjuntos.length);
+  cont.innerHTML = AppState.adjuntos.map((a, i) => `
+    <div class="attach-chip">
+      <img src="${a.dataUrl}" alt="">
+      <span>${a.nombre}</span>
+      <button class="attach-remove" data-i="${i}" title="Quitar">✕</button>
+    </div>`).join('');
+  cont.querySelectorAll('.attach-remove').forEach(b => b.onclick = () => {
+    AppState.adjuntos.splice(+b.dataset.i, 1);
+    pintarAdjuntos();
+  });
+}
+
+async function agregarArchivos(archivos) {
+  if (!AppState.soportaImagenes) {
+    showToast('El modelo elegido no puede ver imágenes', 'error');
+    return;
+  }
+  for (const f of archivos) {
+    if (!f.type.startsWith('image/')) {
+      showToast(`"${f.name}" no es una imagen`, 'error');
+      continue;
+    }
+    if (f.size > MAX_ADJUNTO_MB * 1024 * 1024) {
+      showToast(`"${f.name}" pesa más de ${MAX_ADJUNTO_MB} MB`, 'error');
+      continue;
+    }
+    const dataUrl = await new Promise(res => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.readAsDataURL(f);
+    });
+    AppState.adjuntos.push({ nombre: f.name, dataUrl });
+  }
+  pintarAdjuntos();
+}
+
 async function enviarMensaje() {
-  const texto = DOM.chatInput.value.trim();
-  if (!texto || AppState.trabajando) return;
+  const inChat = $('#chat-input');
+  const texto = inChat ? inChat.value.trim() : '';
+  if ((!texto && !AppState.adjuntos.length) || AppState.trabajando) return;
 
   const p = getProveedorActual();
   if (!p.clave && p.id !== 'local') {
@@ -383,14 +536,26 @@ async function enviarMensaje() {
     return;
   }
 
-  DOM.chatInput.value = '';
-  DOM.chatInput.style.height = 'auto';
-  agregarBurbuja('Tú', texto, true);
+  if (inChat) {
+    inChat.value = '';
+    inChat.style.height = 'auto';
+  }
+  const adjuntos = AppState.adjuntos.slice();
+  agregarBurbuja('Tú', texto || '(imagen adjunta)', true, adjuntos);
+  limpiarAdjuntos();
 
   AppState.trabajando = true;
-  DOM.btnSend.disabled = true;
-  DOM.btnCancel.style.display = 'inline-flex';
-  DOM.typingIndicator.style.display = 'inline-flex';
+  const btnSend = $('#btn-send');
+  const btnCancel = $('#btn-cancel');
+  const typing = $('#typing-indicator');
+  const inModel = $('#input-model');
+  const selProf = $('#select-profile');
+  const chkRules = $('#check-rules');
+  const inTemp = $('#input-temp');
+
+  if (btnSend) btnSend.disabled = true;
+  if (btnCancel) btnCancel.style.display = 'inline-flex';
+  if (typing) typing.style.display = 'inline-flex';
 
   let huboDibujo = false;
 
@@ -400,11 +565,12 @@ async function enviarMensaje() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         mensaje: texto,
+        imagenes: adjuntos.map(a => a.dataUrl),
         proveedor: p.id,
-        modelo: DOM.inputModel.value.trim(),
-        perfil: DOM.selectProfile.value,
-        conReglas: DOM.checkRules.checked,
-        temperatura: parseFloat(DOM.inputTemp.value) || 0.2,
+        modelo: inModel ? inModel.value.trim() : '',
+        perfil: selProf ? selProf.value : 'arquitectura',
+        conReglas: chkRules ? chkRules.checked : true,
+        temperatura: inTemp ? parseFloat(inTemp.value) : 0.2,
       }),
     });
 
@@ -418,9 +584,9 @@ async function enviarMensaje() {
     agregarAvisoChat('Se cortó la conexión: ' + err.message);
   } finally {
     AppState.trabajando = false;
-    DOM.btnSend.disabled = false;
-    DOM.btnCancel.style.display = 'none';
-    DOM.typingIndicator.style.display = 'none';
+    if (btnSend) btnSend.disabled = false;
+    if (btnCancel) btnCancel.style.display = 'none';
+    if (typing) typing.style.display = 'none';
 
     if (huboDibujo && AppState.autoPlano) {
       capturarPlano();
@@ -459,11 +625,15 @@ async function procesarSSE(response) {
 
 function despacharEvento(ev) {
   if (ev.tipo === 'inicio') {
-    DOM.sessionSubtitle.textContent = `${ev.modelo} · ${ev.tools} tools`;
+    const sub = $('#session-subtitle');
+    if (sub) sub.textContent = `${ev.modelo} · ${ev.tools} tools`;
   } else if (ev.tipo === 'uso') {
-    DOM.tokenCounter.style.display = 'flex';
-    DOM.totalTokens.textContent = ev.total.toLocaleString('es');
-    DOM.totalTurns.textContent = ev.vueltas;
+    const tokenPill = $('#token-counter');
+    const totTokens = $('#total-tokens');
+    const totTurns = $('#total-turns');
+    if (tokenPill) tokenPill.style.display = 'flex';
+    if (totTokens) totTokens.textContent = ev.total.toLocaleString('es');
+    if (totTurns) totTurns.textContent = ev.vueltas;
   } else if (ev.tipo === 'texto') {
     agregarBurbuja('AutoCAD IA', ev.texto, false);
   } else if (ev.tipo === 'tool') {
@@ -487,12 +657,16 @@ function despacharEvento(ev) {
 // VISOR DE PLANO (DWG VIEWPORT)
 // ==========================================================================
 async function capturarPlano(zona = null) {
-  DOM.appLayout.classList.add('con-plano');
-  DOM.planCanvasWrapper.className = 'viewer-canvas-wrapper empty-canvas';
-  DOM.planCanvasWrapper.innerHTML = `
-    <div class="typing-dots"><span></span><span></span><span></span></div>
-    <div style="font-size:13px;color:var(--text-muted);margin-top:8px;">Capturando vista de AutoCAD…</div>
-  `;
+  const layout = $('#app-layout');
+  const canvas = $('#plan-canvas-wrapper');
+  if (layout) layout.classList.add('con-plano');
+  if (canvas) {
+    canvas.className = 'viewer-canvas-wrapper empty-canvas';
+    canvas.innerHTML = `
+      <div class="typing-dots"><span></span><span></span><span></span></div>
+      <div style="font-size:13px;color:var(--text-muted);margin-top:8px;">Capturando vista de AutoCAD…</div>
+    `;
+  }
 
   try {
     const res = await fetch('/api/captura', {
@@ -504,37 +678,43 @@ async function capturarPlano(zona = null) {
     if (data.ok) {
       mostrarPlano(data);
     } else {
-      DOM.planCanvasWrapper.innerHTML = `
-        <div style="color:var(--error);text-align:center;padding:20px;">
-          ✕ ${data.error || 'No se pudo obtener la captura.'}
-        </div>
-      `;
+      if (canvas) {
+        canvas.innerHTML = `
+          <div style="color:var(--error);text-align:center;padding:20px;">
+            ✕ ${data.error || 'No se pudo obtener la captura.'}
+          </div>
+        `;
+      }
     }
   } catch (err) {
-    DOM.planCanvasWrapper.innerHTML = `
-      <div style="color:var(--error);padding:20px;">${err.message}</div>
-    `;
+    if (canvas) {
+      canvas.innerHTML = `<div style="color:var(--error);padding:20px;">${err.message}</div>`;
+    }
   }
 }
 
 function mostrarPlano(data) {
   AppState.zoomNivel = 1;
   AppState.planUrlActual = data.url;
-  DOM.planCanvasWrapper.className = 'viewer-canvas-wrapper';
-  DOM.planCanvasWrapper.innerHTML = `
-    <img id="plan-image" src="${data.url}" alt="Plano AutoCAD" draggable="false">
-  `;
+  const canvas = $('#plan-canvas-wrapper');
+  if (canvas) {
+    canvas.className = 'viewer-canvas-wrapper';
+    canvas.innerHTML = `<img id="plan-image" src="${data.url}" alt="Plano AutoCAD" draggable="false">`;
+  }
 
   actualizarZoom(0);
 
   const ext = data.extension;
-  if (ext && !ext.isEmpty) {
-    const w = (ext.width || 0).toFixed(2);
-    const h = (ext.height || 0).toFixed(2);
-    const ent = ext.entities || 0;
-    DOM.planFooterInfo.textContent = `${w} × ${h} m · ${ent} entidades`;
-  } else {
-    DOM.planFooterInfo.textContent = 'Vista general';
+  const foot = $('#plan-footer-info');
+  if (foot) {
+    if (ext && !ext.isEmpty) {
+      const w = (ext.width || 0).toFixed(2);
+      const h = (ext.height || 0).toFixed(2);
+      const ent = ext.entities || 0;
+      foot.textContent = `${w} × ${h} m · ${ent} entidades`;
+    } else {
+      foot.textContent = 'Vista general';
+    }
   }
 }
 
@@ -544,7 +724,8 @@ function actualizarZoom(delta) {
 
   const img = $('#plan-image');
   if (img) img.style.transform = `scale(${AppState.zoomNivel})`;
-  DOM.planZoomInfo.textContent = `${Math.round(AppState.zoomNivel * 100)}%`;
+  const zInfo = $('#plan-zoom-info');
+  if (zInfo) zInfo.textContent = `${Math.round(AppState.zoomNivel * 100)}%`;
 }
 
 function descargarCaptura() {
@@ -559,13 +740,15 @@ function descargarCaptura() {
 // MODAL / ASISTENTE
 // ==========================================================================
 function abrirWizard(paso = 0) {
-  DOM.welcomeModal.classList.remove('hidden');
+  const modal = $('#welcome-modal');
+  if (modal) modal.classList.remove('hidden');
   irPasoWizard(paso);
 }
 
 function cerrarWizard() {
-  localStorage.setItem('autocad_ia_configurado', '1');
-  DOM.welcomeModal.classList.add('hidden');
+  guardarPref('configurado', '1');
+  const modal = $('#welcome-modal');
+  if (modal) modal.classList.add('hidden');
 }
 
 function irPasoWizard(paso) {
@@ -580,12 +763,15 @@ function irPasoWizard(paso) {
     actualizarHintWizard();
   } else if (paso === 1) {
     const p = getProveedorActual();
-    if (p.clave) {
-      DOM.wizardKeyStatusChip.className = 'chip-status encrypted';
-      DOM.wizardKeyStatusChip.innerHTML = `🔒 Ya configurada (${p.clave})`;
-    } else {
-      DOM.wizardKeyStatusChip.className = 'chip-status';
-      DOM.wizardKeyStatusChip.textContent = 'Sin clave guardada';
+    const wChip = $('#wizard-key-status-chip');
+    if (wChip) {
+      if (p?.clave) {
+        wChip.className = 'chip-status encrypted';
+        wChip.innerHTML = `🔒 Ya configurada (${p.clave})`;
+      } else {
+        wChip.className = 'chip-status';
+        wChip.textContent = 'Sin clave guardada';
+      }
     }
   } else if (paso === 2) {
     ejecutarDiagnosticos();
@@ -593,12 +779,16 @@ function irPasoWizard(paso) {
 }
 
 function actualizarHintWizard() {
-  const p = AppState.servidor.proveedores.find(x => x.id === DOM.wizardProvider.value);
-  if (!p) return;
+  const wizProv = $('#wizard-provider');
+  const val = wizProv ? wizProv.value : 'anthropic';
+  const p = AppState.servidor?.proveedores?.find(x => x.id === val);
+  const hint = $('#wizard-provider-hint');
+  if (!hint || !p) return;
+
   if (p.id === 'local') {
-    DOM.wizardProviderHint.textContent = 'Servidor local (LM Studio / Ollama). No requiere clave de API.';
+    hint.textContent = 'Servidor local (LM Studio / Ollama). No requiere clave de API.';
   } else {
-    DOM.wizardProviderHint.textContent = `Requiere clave de ${p.id.toUpperCase()}` + (p.variable ? ` (o variable ${p.variable}).` : '.');
+    hint.textContent = `Requiere clave de ${p.id.toUpperCase()}` + (p.variable ? ` (o variable ${p.variable}).` : '.');
   }
 }
 
@@ -606,7 +796,7 @@ async function ejecutarDiagnosticos() {
   const p = getProveedorActual();
 
   // 1. Clave
-  const okClave = !!p.clave || p.id === 'local';
+  const okClave = !!p?.clave || p?.id === 'local';
   setDiag('diag-light-key', okClave, 'diag-text-key', 
     okClave ? (p.clave || 'No requerida (local)') : 'Falta guardar la clave');
 
@@ -655,19 +845,22 @@ async function ejecutarDiagnosticos() {
 
 function setDiag(lightId, estado, textId, desc) {
   const el = $('#' + lightId);
-  el.className = 'status-light ' + (estado === null ? 'loading' : estado ? 'ok' : 'error');
-  $('#' + textId).textContent = desc;
+  const tx = $('#' + textId);
+  if (el) el.className = 'status-light ' + (estado === null ? 'loading' : estado ? 'ok' : 'error');
+  if (tx) tx.textContent = desc;
 }
 
 // ==========================================================================
-// TOAST & EVENTOS
+// TOAST & REGISTRO DE EVENTOS
 // ==========================================================================
 function showToast(msg, tipo = 'info') {
+  const container = $('#toast-container');
+  if (!container) return;
   const t = document.createElement('div');
   t.className = `toast ${tipo}`;
   const icon = tipo === 'success' ? '✓' : tipo === 'error' ? '✕' : 'ℹ';
   t.innerHTML = `<span>${icon}</span> <span>${msg}</span>`;
-  DOM.toastContainer.appendChild(t);
+  container.appendChild(t);
   setTimeout(() => {
     t.style.opacity = '0';
     t.style.transform = 'translateY(8px)';
@@ -676,133 +869,233 @@ function showToast(msg, tipo = 'info') {
 }
 
 function registrarEventos() {
-  // Toggle Sidebar Móvil
+  const sidebar = $('#app-sidebar');
+  const backdrop = $('#sidebar-backdrop');
+  const btnOpen = $('#btn-open-sidebar');
+  const btnClose = $('#btn-close-sidebar');
+
   const abrirSidebar = () => {
-    DOM.appSidebar.classList.add('mobile-open');
-    DOM.sidebarBackdrop.classList.add('active');
+    if (sidebar) sidebar.classList.add('mobile-open');
+    if (backdrop) backdrop.classList.add('active');
   };
   const cerrarSidebar = () => {
-    DOM.appSidebar.classList.remove('mobile-open');
-    DOM.sidebarBackdrop.classList.remove('active');
+    if (sidebar) sidebar.classList.remove('mobile-open');
+    if (backdrop) backdrop.classList.remove('active');
   };
-  DOM.btnOpenSidebar.onclick = abrirSidebar;
-  DOM.btnCloseSidebar.onclick = cerrarSidebar;
-  DOM.sidebarBackdrop.onclick = cerrarSidebar;
 
-  // Acordeones colapsables en sidebar
-  $$('[data-toggle="accordion"]').forEach(header => {
-    header.onclick = () => {
-      header.closest('.accordion-item').classList.toggle('open');
+  if (btnOpen) btnOpen.onclick = abrirSidebar;
+  if (btnClose) btnClose.onclick = cerrarSidebar;
+  if (backdrop) backdrop.onclick = cerrarSidebar;
+
+  const inTemp = $('#input-temp');
+  const tempVal = $('#temp-val');
+  if (inTemp && tempVal) {
+    inTemp.oninput = () => {
+      tempVal.textContent = inTemp.value;
     };
-  });
+  }
 
-  // Slider de temperatura
-  DOM.inputTemp.oninput = () => {
-    DOM.tempVal.textContent = DOM.inputTemp.value;
-  };
+  const selProv = $('#select-provider');
+  const wizProv = $('#wizard-provider');
+  if (selProv) {
+    selProv.onchange = () => {
+      if (wizProv) wizProv.value = selProv.value;
+      renderizarConfiguracion();
+    };
+  }
+  if (wizProv) {
+    wizProv.onchange = () => {
+      if (selProv) selProv.value = wizProv.value;
+      renderizarConfiguracion();
+      actualizarHintWizard();
+    };
+  }
 
-  // Cambios de proveedor
-  DOM.selectProvider.onchange = () => {
-    DOM.wizardProvider.value = DOM.selectProvider.value;
-    renderizarConfiguracion();
-  };
-  DOM.wizardProvider.onchange = () => {
-    DOM.selectProvider.value = DOM.wizardProvider.value;
-    renderizarConfiguracion();
-    actualizarHintWizard();
-  };
+  const btnSaveKey = $('#btn-save-key');
+  const inKey = $('#input-api-key');
+  if (btnSaveKey) {
+    btnSaveKey.onclick = async () => {
+      const c = inKey ? inKey.value.trim() : '';
+      if (!c) return showToast('Ingresá una clave', 'error');
+      if (await guardarClave(c)) {
+        if (inKey) inKey.value = '';
+      }
+    };
+  }
 
-  // Claves
-  DOM.btnSaveKey.onclick = async () => {
-    const c = DOM.inputApiKey.value.trim();
-    if (!c) return showToast('Ingresá una clave', 'error');
-    if (await guardarClave(c)) DOM.inputApiKey.value = '';
-  };
-  DOM.btnDeleteKey.onclick = borrarClave;
-  DOM.btnToggleKeyVisibility.onclick = () => {
-    const isPass = DOM.inputApiKey.type === 'password';
-    DOM.inputApiKey.type = isPass ? 'text' : 'password';
-    DOM.btnToggleKeyVisibility.textContent = isPass ? '🙈' : '👁️';
-  };
-  DOM.btnToggleWizardKey.onclick = () => {
-    const isPass = DOM.wizardApiKey.type === 'password';
-    DOM.wizardApiKey.type = isPass ? 'text' : 'password';
-    DOM.btnToggleWizardKey.textContent = isPass ? '🙈' : '👁️';
-  };
+  const btnDeleteKey = $('#btn-delete-key');
+  if (btnDeleteKey) btnDeleteKey.onclick = borrarClave;
 
-  // Modelos
-  DOM.inputModel.oninput = () => {
-    const p = getProveedorActual();
-    localStorage.setItem('autocad_ia_modelo:' + p.id, DOM.inputModel.value);
-    actualizarSubtitulo();
-  };
-  DOM.btnListModels.onclick = () => listarModelos(false);
-  DOM.btnTestModels.onclick = () => listarModelos(true);
+  const btnToggleKey = $('#btn-toggle-key-visibility');
+  if (btnToggleKey && inKey) {
+    btnToggleKey.onclick = () => {
+      const isPass = inKey.type === 'password';
+      inKey.type = isPass ? 'text' : 'password';
+      btnToggleKey.textContent = isPass ? '🙈' : '👁️';
+    };
+  }
 
-  // Sesión
-  DOM.btnNewSession.onclick = async () => {
-    if (!confirm('¿Reiniciar sesión? El agente olvidará los comandos previos.')) return;
-    try {
-      await fetch('/api/reset', { method: 'POST' });
-      DOM.chatMessages.innerHTML = '';
-      DOM.tokenCounter.style.display = 'none';
-      showToast('Nueva sesión iniciada', 'success');
-      agregarAvisoChat('Sesión reiniciada. Listo para un nuevo plano en AutoCAD.');
-    } catch (e) {
-      showToast('Error: ' + e.message, 'error');
-    }
-  };
+  const btnToggleWizKey = $('#btn-toggle-wizard-key');
+  const inWizKey = $('#wizard-api-key');
+  if (btnToggleWizKey && inWizKey) {
+    btnToggleWizKey.onclick = () => {
+      const isPass = inWizKey.type === 'password';
+      inWizKey.type = isPass ? 'text' : 'password';
+      btnToggleWizKey.textContent = isPass ? '🙈' : '👁️';
+    };
+  }
 
-  // Envío de chat
-  DOM.btnSend.onclick = enviarMensaje;
-  DOM.chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      enviarMensaje();
-    }
-  });
-  DOM.chatInput.addEventListener('input', () => {
-    DOM.chatInput.style.height = 'auto';
-    DOM.chatInput.style.height = Math.min(DOM.chatInput.scrollHeight, 160) + 'px';
-  });
+  const inModel = $('#input-model');
+  if (inModel) {
+    inModel.oninput = () => {
+      const p = getProveedorActual();
+      if (p) guardarModeloDe(p.id, inModel.value);
+      actualizarSubtitulo();
+    };
+  }
 
-  // Cancelar agente
-  DOM.btnCancel.onclick = async () => {
-    try {
-      await fetch('/api/cancelar', { method: 'POST' });
-      showToast('Cancelando tras la herramienta actual…', 'info');
-    } catch (e) {
-      showToast('Error: ' + e.message, 'error');
-    }
-  };
+  // --- Ajustes que tienen que sobrevivir al reinicio ---
+  const selProfPref = $('#select-profile');
+  if (selProfPref) {
+    selProfPref.addEventListener('change',
+      () => guardarPref('perfil', selProfPref.value));
+  }
+  const inTempPref = $('#input-temp');
+  if (inTempPref) {
+    inTempPref.addEventListener('change',
+      () => guardarPref('temperatura', parseFloat(inTempPref.value)));
+  }
+  const chkRulesPref = $('#check-rules');
+  if (chkRulesPref) {
+    chkRulesPref.addEventListener('change',
+      () => guardarPref('conReglas', chkRulesPref.checked));
+  }
 
-  // Clic en sugerencias y plantillas de prompts
+  // --- Adjuntar croquis / fotos ---
+  const btnAttach = $('#btn-attach');
+  const inputFile = $('#input-file');
+  if (btnAttach && inputFile) {
+    btnAttach.onclick = () => inputFile.click();
+    inputFile.onchange = () => {
+      agregarArchivos(Array.from(inputFile.files || []));
+      inputFile.value = '';
+    };
+  }
+  // Pegar con Ctrl+V y arrastrar sobre el chat: las dos formas naturales
+  // de mandar una captura, sin pasar por el diálogo de archivos.
+  const areaPegar = $('#chat-input');
+  if (areaPegar) {
+    areaPegar.addEventListener('paste', (e) => {
+      const files = Array.from(e.clipboardData?.files || []);
+      if (files.length) { e.preventDefault(); agregarArchivos(files); }
+    });
+  }
+  const zonaChat = $('#chat-messages');
+  if (zonaChat) {
+    ['dragover', 'drop'].forEach(ev =>
+      zonaChat.addEventListener(ev, (e) => {
+        e.preventDefault();
+        if (ev === 'drop') {
+          agregarArchivos(Array.from(e.dataTransfer?.files || []));
+        }
+        zonaChat.classList.toggle('drag-over', ev === 'dragover');
+      }));
+    zonaChat.addEventListener('dragleave', () =>
+      zonaChat.classList.remove('drag-over'));
+  }
+
+  const btnListModels = $('#btn-list-models');
+  if (btnListModels) btnListModels.onclick = () => listarModelos(false);
+
+  const btnTestModels = $('#btn-test-models');
+  if (btnTestModels) btnTestModels.onclick = () => listarModelos(true);
+
+  const btnNewSession = $('#btn-new-session');
+  if (btnNewSession) {
+    btnNewSession.onclick = async () => {
+      if (!confirm('¿Reiniciar sesión? El agente olvidará los comandos previos.')) return;
+      try {
+        await fetch('/api/reset', { method: 'POST' });
+        const msgs = $('#chat-messages');
+        const tokenPill = $('#token-counter');
+        if (msgs) msgs.innerHTML = '';
+        if (tokenPill) tokenPill.style.display = 'none';
+        showToast('Nueva sesión iniciada', 'success');
+        agregarAvisoChat('Sesión reiniciada. Listo para un nuevo plano en AutoCAD.');
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+      }
+    };
+  }
+
+  const btnSend = $('#btn-send');
+  if (btnSend) btnSend.onclick = enviarMensaje;
+
+  const inChat = $('#chat-input');
+  if (inChat) {
+    inChat.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        enviarMensaje();
+      }
+    });
+    inChat.addEventListener('input', () => {
+      inChat.style.height = 'auto';
+      inChat.style.height = Math.min(inChat.scrollHeight, 150) + 'px';
+    });
+  }
+
+  const btnCancel = $('#btn-cancel');
+  if (btnCancel) {
+    btnCancel.onclick = async () => {
+      try {
+        await fetch('/api/cancelar', { method: 'POST' });
+        showToast('Cancelando tras la herramienta actual…', 'info');
+      } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+      }
+    };
+  }
+
+  // Clic en tarjetas de sugerencia y plantillas
   document.addEventListener('click', (e) => {
     const preset = e.target.closest('.preset-card') || e.target.closest('.quick-prompt-btn');
     if (preset) {
       const texto = preset.dataset.prompt || preset.querySelector('.preset-text')?.textContent.trim();
-      if (texto) {
-        DOM.chatInput.value = texto;
-        DOM.chatInput.focus();
-        DOM.chatInput.style.height = 'auto';
-        DOM.chatInput.style.height = Math.min(DOM.chatInput.scrollHeight, 160) + 'px';
+      if (texto && inChat) {
+        inChat.value = texto;
+        inChat.focus();
+        inChat.style.height = 'auto';
+        inChat.style.height = Math.min(inChat.scrollHeight, 150) + 'px';
         cerrarSidebar();
       }
     }
   });
 
-  // Visor de plano
-  DOM.btnTogglePlan.onclick = () => {
-    const abierto = DOM.appLayout.classList.contains('con-plano');
-    if (abierto) DOM.appLayout.classList.remove('con-plano');
-    else capturarPlano();
-  };
-  DOM.btnRefreshPlan.onclick = () => capturarPlano();
-  DOM.btnClosePlan.onclick = () => DOM.appLayout.classList.remove('con-plano');
-  DOM.btnZoomIn.onclick = () => actualizarZoom(0.25);
-  DOM.btnZoomOut.onclick = () => actualizarZoom(-0.25);
-  DOM.btnZoomReset.onclick = () => actualizarZoom(0);
-  DOM.btnDownloadPlan.onclick = descargarCaptura;
+  const btnTogglePlan = $('#btn-toggle-plan');
+  const layout = $('#app-layout');
+  if (btnTogglePlan && layout) {
+    btnTogglePlan.onclick = () => {
+      const abierto = layout.classList.contains('con-plano');
+      if (abierto) layout.classList.remove('con-plano');
+      else capturarPlano();
+    };
+  }
+
+  const btnRefPlan = $('#btn-refresh-plan');
+  if (btnRefPlan) btnRefPlan.onclick = () => capturarPlano();
+
+  const btnClosePlan = $('#btn-close-plan');
+  if (btnClosePlan && layout) btnClosePlan.onclick = () => layout.classList.remove('con-plano');
+
+  const btnZoomIn = $('#btn-zoom-in');
+  const btnZoomOut = $('#btn-zoom-out');
+  const btnZoomReset = $('#btn-zoom-reset');
+  const btnDownPlan = $('#btn-download-plan');
+  if (btnZoomIn) btnZoomIn.onclick = () => actualizarZoom(0.25);
+  if (btnZoomOut) btnZoomOut.onclick = () => actualizarZoom(-0.25);
+  if (btnZoomReset) btnZoomReset.onclick = () => actualizarZoom(0);
+  if (btnDownPlan) btnDownPlan.onclick = descargarCaptura;
 
   document.addEventListener('click', (e) => {
     if (e.target && e.target.id === 'btn-initial-capture') {
@@ -810,42 +1103,38 @@ function registrarEventos() {
     }
   });
 
-  // Arrastre con mouse (Pan) en el visor
-  DOM.planCanvasWrapper.addEventListener('mousedown', (e) => {
-    if (e.target.id !== 'plan-image') return;
-    AppState.isPanning = true;
-    AppState.panStartX = e.pageX - DOM.planCanvasWrapper.offsetLeft;
-    AppState.panStartY = e.pageY - DOM.planCanvasWrapper.offsetTop;
-    AppState.scrollLeft = DOM.planCanvasWrapper.scrollLeft;
-    AppState.scrollTop = DOM.planCanvasWrapper.scrollTop;
-  });
-  window.addEventListener('mouseup', () => AppState.isPanning = false);
-  DOM.planCanvasWrapper.addEventListener('mousemove', (e) => {
-    if (!AppState.isPanning) return;
-    e.preventDefault();
-    const x = e.pageX - DOM.planCanvasWrapper.offsetLeft;
-    const y = e.pageY - DOM.planCanvasWrapper.offsetTop;
-    DOM.planCanvasWrapper.scrollLeft = AppState.scrollLeft - (x - AppState.panStartX);
-    DOM.planCanvasWrapper.scrollTop = AppState.scrollTop - (y - AppState.panStartY);
-  });
-
-  // Wizard
+  // Modal / Wizard
   $$('[data-wizard-goto]').forEach(b => {
     b.onclick = () => irPasoWizard(+b.dataset.wizardGoto);
   });
-  DOM.btnWizardSkip.onclick = cerrarWizard;
-  DOM.btnWizardFinish.onclick = cerrarWizard;
-  DOM.btnCloseWizard.onclick = cerrarWizard;
-  DOM.btnWizardSaveKey.onclick = async () => {
-    const k = DOM.wizardApiKey.value.trim();
-    if (k) {
-      await guardarClave(k);
-      DOM.wizardApiKey.value = '';
-    }
-    irPasoWizard(2);
-  };
-  DOM.btnWizardRecheck.onclick = ejecutarDiagnosticos;
-  DOM.btnOpenSettings.onclick = () => abrirWizard(0);
+  const btnWizSkip = $('#btn-wizard-skip');
+  const btnWizFinish = $('#btn-wizard-finish');
+  const btnCloseWiz = $('#btn-close-wizard');
+  const btnWizSave = $('#btn-wizard-save-key');
+  const btnWizRecheck = $('#btn-wizard-recheck');
+  const btnOpenSettings = $('#btn-open-settings');
+
+  if (btnWizSkip) btnWizSkip.onclick = cerrarWizard;
+  if (btnWizFinish) btnWizFinish.onclick = cerrarWizard;
+  if (btnCloseWiz) btnCloseWiz.onclick = cerrarWizard;
+  if (btnWizSave) {
+    btnWizSave.onclick = async () => {
+      const inWKey = $('#wizard-api-key');
+      const k = inWKey ? inWKey.value.trim() : '';
+      if (k) {
+        await guardarClave(k);
+        if (inWKey) inWKey.value = '';
+      }
+      irPasoWizard(2);
+    };
+  }
+  if (btnWizRecheck) btnWizRecheck.onclick = ejecutarDiagnosticos;
+  if (btnOpenSettings) btnOpenSettings.onclick = () => abrirWizard(0);
 }
 
-document.addEventListener('DOMContentLoaded', init);
+// Iniciar cuando el DOM esté listo
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

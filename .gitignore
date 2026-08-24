@@ -25,3 +25,5 @@ scratch_*.png
 # Log del motor de plot (lo deja el driver PNG/PDF al plotear).
 plot.log
 mcp_server/plot.log
+
+agent/__pycache__/

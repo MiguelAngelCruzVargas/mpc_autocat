@@ -1,18 +1,17 @@
 /* ==========================================================================
-   AutoCAD IA — Estilos de la Interfaz Web
-   Diseño sobrio, profesional, inspirado en software técnico y CAD
+   AutoCAD IA — Estilos de la Interfaz Web (Estética Técnica CAD Sobria)
+   Cero clichés de IA, sin emojis invasivos, espaciado amplio y profesional
    ========================================================================== */
 
 :root {
-  /* Paleta técnica neutra */
-  --bg-main: #0b0f17;
-  --bg-panel: #111722;
-  --bg-card: #17202e;
-  --bg-elevated: #1e293b;
-  --bg-hover: #273549;
+  --bg-main: #0a0e17;
+  --bg-panel: #101622;
+  --bg-card: #161e2e;
+  --bg-elevated: #1c2638;
+  --bg-hover: #26334a;
   
-  --border-subtle: #1e293b;
-  --border-default: #2b384e;
+  --border-subtle: #1c2638;
+  --border-default: #28364d;
   --border-focus: #3b82f6;
 
   --text-main: #f1f5f9;
@@ -36,7 +35,7 @@
   --font-mono: 'JetBrains Mono', Consolas, monospace;
 
   --transition: 0.15s ease;
-  --shadow-modal: 0 20px 40px -10px rgba(0, 0, 0, 0.7);
+  --shadow-modal: 0 24px 50px rgba(0, 0, 0, 0.75);
 }
 
 /* ==========================================================================
@@ -55,7 +54,7 @@ html, body {
   background-color: var(--bg-main);
   color: var(--text-main);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13.5px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -92,7 +91,7 @@ input, select, textarea {
   background: var(--bg-elevated);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  padding: 9px 12px;
+  padding: 8px 12px;
   color: var(--text-main);
   transition: border-color var(--transition), background var(--transition);
 }
@@ -205,14 +204,14 @@ input::placeholder, textarea::placeholder {
 }
 
 .btn-sm {
-  padding: 5px 9px;
+  padding: 6px 10px;
   font-size: 12px;
   border-radius: var(--radius-sm);
 }
 
 .btn-icon {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   display: inline-grid;
   place-items: center;
@@ -224,7 +223,7 @@ input::placeholder, textarea::placeholder {
    ========================================================================== */
 .app-layout {
   display: grid;
-  grid-template-columns: 280px 1fr 0;
+  grid-template-columns: 310px 1fr 0;
   height: 100vh;
   width: 100vw;
   transition: grid-template-columns 0.3s ease;
@@ -233,7 +232,7 @@ input::placeholder, textarea::placeholder {
 }
 
 .app-layout.con-plano {
-  grid-template-columns: 280px 1fr 48%;
+  grid-template-columns: 310px 1fr 48%;
 }
 
 .mobile-only {
@@ -250,10 +249,10 @@ input::placeholder, textarea::placeholder {
 
 @media (max-width: 1100px) {
   .app-layout {
-    grid-template-columns: 260px 1fr 0;
+    grid-template-columns: 290px 1fr 0;
   }
   .app-layout.con-plano {
-    grid-template-columns: 260px 1fr 45%;
+    grid-template-columns: 290px 1fr 45%;
   }
 }
 
@@ -274,8 +273,8 @@ input::placeholder, textarea::placeholder {
     position: fixed;
     top: 0;
     bottom: 0;
-    left: -300px;
-    width: 290px;
+    left: -320px;
+    width: 310px;
     max-width: 85vw;
     z-index: 50;
     transition: left 0.25s ease;
@@ -320,7 +319,7 @@ input::placeholder, textarea::placeholder {
 }
 
 /* ==========================================================================
-   SIDEBAR
+   SIDEBAR (ESPACIOSO, SIN CONGESTIÓN)
    ========================================================================== */
 aside.sidebar {
   background: var(--bg-panel);
@@ -333,39 +332,41 @@ aside.sidebar {
 }
 
 .sidebar-header {
-  padding: 14px 16px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 .brand-badge {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
 }
 
 .brand-icon {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
-  border: 1px solid var(--primary);
+  border: 1px solid var(--border-default);
   color: var(--primary-light);
   display: grid;
   place-items: center;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
   flex-shrink: 0;
 }
 
+.brand-icon svg {
+  display: block;
+}
+
 .brand-info h1 {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text-main);
+  letter-spacing: -0.2px;
 }
 
 .brand-info p {
@@ -375,101 +376,33 @@ aside.sidebar {
 
 .sidebar-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 12px 14px;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 20px;
 }
 
-.accordion-item {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.accordion-header {
-  padding: 9px 12px;
+.sidebar-section {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  user-select: none;
+  flex-direction: column;
+  gap: 9px;
 }
 
-.accordion-header:hover {
-  background: var(--bg-hover);
-}
-
-/* El proveedor que ya tiene clave se distingue del que falta configurar:
-   un borde verde y su etiqueta con candado en la lista. Sin esto había
-   que abrir el desplegable y acordarse de cuál estaba listo. */
-.custom-select.listo {
-  border-color: rgba(62, 207, 142, .45);
-  background-image: linear-gradient(rgba(62, 207, 142, .06),
-                                    rgba(62, 207, 142, .06));
-}
-
-.custom-select optgroup {
+.section-title {
   font-size: 11px;
-  font-weight: 600;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.8px;
   color: var(--text-dim);
-  background: var(--bg-panel);
-}
-
-/* Chevron dibujado con bordes, no con el caracter ▾: esa flecha no existe
-   en Inter, el navegador cae a una fuente de respaldo y se ve como un
-   guion suelto. Con dos bordes girados sale igual en cualquier sistema. */
-.accordion-arrow {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-right: 1.6px solid var(--text-dim);
-  border-bottom: 1.6px solid var(--text-dim);
-  transform: rotate(45deg);
-  transform-origin: center;
-  margin-bottom: 3px;
-  transition: transform 0.22s ease, border-color 0.22s ease;
-  font-size: 0;            /* oculta el ▾ del HTML si quedó */
-}
-
-.accordion-header:hover .accordion-arrow {
-  border-color: var(--text-main);
-}
-
-.accordion-item.open .accordion-arrow {
-  transform: rotate(-135deg);
-  margin-bottom: -3px;
-}
-
-.accordion-body {
-  padding: 12px;
-  display: none;
-  flex-direction: column;
-  gap: 10px;
-  border-top: 1px solid var(--border-subtle);
-}
-
-.accordion-item.open .accordion-body {
-  display: flex;
-}
-
-.section-label {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-main);
+  margin-bottom: 1px;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.form-group:last-child {
-  margin-bottom: 0;
+  gap: 5px;
 }
 
 .form-group label {
@@ -484,7 +417,7 @@ aside.sidebar {
   font-size: 11.5px;
   color: var(--text-muted);
   line-height: 1.4;
-  margin-top: 5px;
+  margin-top: 4px;
 }
 
 .chip-status {
@@ -520,15 +453,19 @@ aside.sidebar {
 }
 
 .input-with-action input {
-  padding-right: 34px;
+  padding-right: 48px;
 }
 
 .input-action-btn {
   position: absolute;
-  right: 5px;
-  padding: 4px 6px;
-  color: var(--text-dim);
+  right: 6px;
+  padding: 3px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
   border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
 }
 
 .input-action-btn:hover {
@@ -538,19 +475,43 @@ aside.sidebar {
 
 .button-group-row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
+  width: 100%;
 }
 
-.button-group-row > * {
+.button-group-row > .btn {
   flex: 1;
+}
+
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.slider-val {
+  font-family: var(--font-mono);
+  color: var(--primary-light);
+  font-weight: 600;
+  font-size: 11px;
 }
 
 .model-list-container {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   max-height: 140px;
   overflow-y: auto;
+  padding-right: 2px;
 }
 
 .model-item {
@@ -558,7 +519,7 @@ aside.sidebar {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 6px 9px;
   background: var(--bg-elevated);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -582,7 +543,7 @@ aside.sidebar {
 
 .model-badge {
   font-size: 9.5px;
-  padding: 1px 5px;
+  padding: 2px 6px;
   border-radius: 3px;
   background: var(--bg-card);
   color: var(--text-dim);
@@ -601,7 +562,7 @@ aside.sidebar {
 .custom-checkbox {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
   color: var(--text-muted);
   cursor: pointer;
@@ -610,8 +571,8 @@ aside.sidebar {
 }
 
 .custom-checkbox input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   margin-top: 2px;
   accent-color: var(--primary);
   border-radius: var(--radius-sm);
@@ -630,20 +591,20 @@ aside.sidebar {
 }
 
 .custom-checkbox small {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-dim);
 }
 
 .quick-prompts-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 
 .quick-prompt-btn {
   text-align: left;
-  padding: 7px 9px;
-  font-size: 11.5px;
+  padding: 8px 10px;
+  font-size: 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -657,28 +618,37 @@ aside.sidebar {
 }
 
 .sidebar-footer {
-  padding: 10px 14px;
+  padding: 14px 20px;
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-panel);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* ==========================================================================
-   CHAT PRINCIPAL
+   CHAT PRINCIPAL (FONDO CUADRICULADO TIPO PLANO / MODEL SPACE DE AUTOCAD)
    ========================================================================== */
 main.chat-main {
   display: flex;
   flex-direction: column;
-  background: var(--bg-main);
+  background-color: #080c14;
+  background-image: 
+    linear-gradient(to right, rgba(37, 99, 235, 0.12) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(37, 99, 235, 0.12) 1px, transparent 1px),
+    linear-gradient(to right, rgba(40, 54, 77, 0.14) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(40, 54, 77, 0.14) 1px, transparent 1px);
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+  background-position: 0 0, 0 0, 0 0, 0 0;
   min-width: 0;
   position: relative;
   height: 100vh;
 }
 
 .chat-header {
-  padding: 12px 18px;
+  padding: 14px 22px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
@@ -686,6 +656,7 @@ main.chat-main {
   justify-content: space-between;
   gap: 12px;
   z-index: 10;
+  flex-shrink: 0;
 }
 
 .header-left {
@@ -704,7 +675,7 @@ main.chat-main {
 
 .chat-header-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 14.5px;
   color: var(--text-main);
   display: flex;
   align-items: center;
@@ -714,7 +685,7 @@ main.chat-main {
 .status-badge {
   font-size: 10.5px;
   font-weight: 500;
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: var(--radius-full);
 }
 
@@ -725,7 +696,7 @@ main.chat-main {
 }
 
 .chat-header-subtitle {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
   white-space: nowrap;
@@ -745,12 +716,12 @@ main.chat-main {
   font-size: 11.5px;
   color: var(--text-muted);
   background: var(--bg-card);
-  padding: 4px 8px;
+  padding: 5px 9px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .token-counter-pill b {
@@ -761,12 +732,13 @@ main.chat-main {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 22px;
+  padding: 24px 28px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
+/* Estado de inicio */
 .empty-state {
   margin: auto;
   max-width: 580px;
@@ -775,52 +747,50 @@ main.chat-main {
   flex-direction: column;
   align-items: center;
   gap: 14px;
-  padding: 24px 16px;
+  padding: 30px 16px;
 }
 
 .empty-icon-wrapper {
-  position: relative;
+  margin-bottom: 2px;
 }
 
 .empty-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  border: 1px solid var(--primary);
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
   color: var(--primary-light);
   display: grid;
   place-items: center;
-  font-family: var(--font-mono);
-  font-size: 15px;
-  font-weight: 700;
 }
 
 .empty-state h2 {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
+  letter-spacing: -0.4px;
   color: var(--text-main);
 }
 
 .empty-state p {
   color: var(--text-muted);
   font-size: 13.5px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .preset-cards-grid {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .preset-card {
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  padding: 11px 14px;
+  padding: 13px 18px;
   text-align: left;
   color: var(--text-main);
   transition: all var(--transition);
@@ -829,6 +799,7 @@ main.chat-main {
 .preset-card:hover {
   border-color: var(--border-focus);
   background: var(--bg-card);
+  transform: translateY(-1px);
 }
 
 .preset-info {
@@ -838,7 +809,7 @@ main.chat-main {
 }
 
 .preset-info strong {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--primary-light);
 }
 
@@ -847,11 +818,12 @@ main.chat-main {
   color: var(--text-muted);
 }
 
+/* Mensajes de chat */
 .message-row {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 88%;
+  max-width: 85%;
 }
 
 .message-row.user {
@@ -879,7 +851,7 @@ main.chat-main {
   background: var(--bg-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  padding: 11px 15px;
+  padding: 12px 16px;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 13.5px;
@@ -916,8 +888,10 @@ main.chat-main {
 }
 
 .tool-card-icon {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 700;
   margin-top: 1px;
+  color: var(--text-dim);
 }
 
 .tool-card-body {
@@ -952,7 +926,7 @@ main.chat-main {
 
 .chat-notice {
   font-size: 12.5px;
-  padding: 9px 12px;
+  padding: 10px 14px;
   border-radius: var(--radius-sm);
   background: rgba(245, 158, 11, 0.08);
   border: 1px solid rgba(245, 158, 11, 0.25);
@@ -960,27 +934,28 @@ main.chat-main {
 }
 
 .chat-footer {
-  padding: 12px 18px 16px;
+  padding: 14px 22px 18px;
   background: var(--bg-panel);
   border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
 }
 
 .input-container {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   max-width: 1000px;
   margin: 0 auto;
 }
 
 .input-box-wrapper {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: flex-end;
   background: var(--bg-elevated);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  padding: 6px 10px;
+  padding: 8px 12px;
 }
 
 .input-box-wrapper:focus-within {
@@ -990,16 +965,16 @@ main.chat-main {
 .input-box-wrapper textarea {
   border: none;
   background: transparent;
-  padding: 6px 8px;
+  padding: 4px 6px;
   resize: none;
-  min-height: 36px;
+  min-height: 38px;
   max-height: 150px;
   line-height: 1.5;
   box-shadow: none !important;
 }
 
 .btn-send {
-  padding: 7px 12px;
+  padding: 8px 14px;
   border-radius: var(--radius-sm);
 }
 
@@ -1010,26 +985,6 @@ main.chat-main {
   padding: 0 4px;
   font-size: 11px;
   color: var(--text-dim);
-}
-
-/* Las teclas del atajo se leen como teclas, no como texto en negrita. */
-.input-shortcuts b {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-weight: 500;
-  font-size: 10.5px;
-  color: var(--text-muted);
-  background: var(--bg-hover);
-  border: 1px solid var(--border-default);
-  border-radius: 4px;
-  padding: 1px 5px;
-  margin: 0 1px;
-}
-
-.input-brand {
-  font-size: 10.5px;
-  letter-spacing: .3px;
-  opacity: .55;
-  user-select: none;
 }
 
 .typing-dots {
@@ -1071,22 +1026,23 @@ main.chat-main {
 }
 
 .viewer-header {
-  padding: 11px 14px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 .viewer-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 13.5px;
 }
 
 .viewer-toolbar {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
 }
 
 .viewer-canvas-wrapper {
@@ -1124,19 +1080,20 @@ main.chat-main {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .viewer-footer {
-  padding: 8px 14px;
+  padding: 10px 16px;
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-panel);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-muted);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 /* ==========================================================================
@@ -1146,7 +1103,8 @@ main.chat-main {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
   display: grid;
   place-items: center;
   padding: 16px;
@@ -1168,17 +1126,18 @@ main.chat-main {
 
 .modal-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 16px;
 }
 
-.modal-header h3 {
+.modal-title-wrap h3 {
   font-size: 15px;
   font-weight: 700;
+  color: var(--text-main);
 }
 
-.modal-header p {
+.modal-title-wrap p {
   font-size: 11.5px;
   color: var(--text-muted);
 }
@@ -1317,3 +1276,150 @@ main.chat-main {
 .toast.error {
   border-color: rgba(239, 68, 68, 0.4);
 }
+
+/* ==========================================================================
+   ADJUNTOS, ATAJOS Y ESTADO DEL PROVEEDOR
+   ========================================================================== */
+
+/* El proveedor que YA tiene clave se distingue del que falta configurar:
+   sin esto había que abrir el desplegable para saber cuál estaba listo. */
+.custom-select.listo {
+  border-color: rgba(16, 185, 129, 0.45);
+  background-color: rgba(16, 185, 129, 0.06);
+}
+
+.custom-select optgroup {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--bg-panel);
+}
+
+/* Las teclas del atajo se leen como teclas, no como texto en negrita. */
+.input-shortcuts b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  margin: 0 1px;
+}
+
+.input-brand {
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+  opacity: 0.55;
+  user-select: none;
+}
+
+/* --- Botón de adjuntar --- */
+.btn-attach {
+  flex: none;
+  font-size: 16px;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+
+/* Deshabilitado NO significa invisible: tiene que verse que existe y que
+   el tooltip explica por qué no se puede usar con este modelo. */
+.btn-attach:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.btn-attach.no-vision {
+  position: relative;
+}
+
+.btn-attach.no-vision::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 50%;
+  height: 1.5px;
+  background: var(--error);
+  transform: rotate(-35deg);
+  border-radius: 2px;
+}
+
+/* --- Miniaturas pendientes de enviar --- */
+.attach-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 4px 4px;
+}
+
+.attach-preview.hidden {
+  display: none;
+}
+
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 5px 9px 5px 5px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  max-width: 220px;
+}
+
+.attach-chip img {
+  width: 30px;
+  height: 30px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  flex: none;
+}
+
+.attach-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-remove {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: var(--radius-sm);
+  flex: none;
+}
+
+.attach-remove:hover {
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+/* --- Imágenes ya enviadas, dentro del hilo --- */
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.message-images img {
+  max-width: 180px;
+  max-height: 180px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: #fff;
+}
+
+/* Arrastrar una imagen sobre el chat tiene que dar señal de que se puede
+   soltar; si no, no hay forma de saber que el área acepta el archivo. */
+.chat-messages.drag-over {
+  outline: 2px dashed var(--primary);
+  outline-offset: -10px;
+  background: rgba(37, 99, 235, 0.04);
+}
+

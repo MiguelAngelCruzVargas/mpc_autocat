@@ -184,6 +184,44 @@ def listar() -> list[dict[str, str]]:
     return salida
 
 
+# ------------------------------------------------- preferencias de la UI
+#
+# Van al lado de las credenciales y NO en el localStorage del navegador,
+# que es por ORIGEN: cambiar el puerto del servidor (8770 -> 8771) hace que
+# el navegador vea otro sitio y los ajustes desaparezcan. También se
+# perdían al limpiar datos del navegador o al abrir desde otro. Acá
+# sobreviven a todo eso, igual que las claves.
+ARCHIVO_PREFS = os.path.join(DIRECTORIO, "preferencias.json")
+
+# Solo estas claves se guardan: una lista blanca evita que la interfaz
+# escriba cualquier cosa en el disco del usuario.
+PREFS_VALIDAS = ("proveedor", "modelo", "perfil", "temperatura",
+                 "conReglas", "configurado", "autoPlano", "modelos")
+
+
+def leer_preferencias() -> dict[str, Any]:
+    try:
+        with open(ARCHIVO_PREFS, encoding="utf-8") as fh:
+            datos = json.load(fh)
+        return datos if isinstance(datos, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def guardar_preferencias(nuevas: dict[str, Any]) -> dict[str, Any]:
+    datos = leer_preferencias()
+    for clave, valor in (nuevas or {}).items():
+        if clave in PREFS_VALIDAS:
+            datos[clave] = valor
+    try:
+        os.makedirs(DIRECTORIO, exist_ok=True)
+        with open(ARCHIVO_PREFS, "w", encoding="utf-8") as fh:
+            json.dump(datos, fh, indent=2, ensure_ascii=False)
+    except OSError:
+        pass          # no poder guardar no debe romper la sesión en curso
+    return datos
+
+
 def resolver(proveedor: str, explicita: Optional[str],
              variable_entorno: str) -> Optional[str]:
     """La clave a usar, en orden de prioridad. Ver el docstring del módulo."""
