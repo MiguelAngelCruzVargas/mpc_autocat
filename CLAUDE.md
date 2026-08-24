@@ -4,6 +4,14 @@ Reglas de trabajo cuando alguien pide dibujar algo en AutoCAD con estas tools.
 
 ## 0. Antes de dibujar: validar
 
+**Para una vivienda entre medianeras, el partido no se inventa: `suggest_layout`.**
+Con frente, fondo, recámaras y baños devuelve la distribución completa
+(rooms/doors/windows) YA validada por `check_layout` y `check_geometry` —
+banda social al frente, pasillo central, patio al fondo, baño principal
+en-suite si son dos. Si el programa no entra lo dice con números en vez de
+achicar recintos fuera de mínimo. Lo que devuelve es el punto de partida a
+ajustar con el cliente, no un diseño terminado.
+
 Con un terreno y un programa de ambientes, ANTES de trazar nada:
 
 1. **`check_program`** — ¿el programa entra en el terreno? Si no entra, decirlo
@@ -109,17 +117,14 @@ proceso completo cayéndose, y con él todo lo dibujado sin guardar.
 
 `save_drawing` después de cada bloque grande (la lámina recién creada, los
 muros ya trazados, antes de arrancar la cuantificación) es la única defensa
-real. No hace falta al final de cada tool call — sí conviene en los puntos
-donde perder el trabajo hecho hasta ahí dolería: justo después de
-`create_sheet`, después de cerrar la muraria, antes de un bloque largo de
-cotas o de la tabla de cuantificación.
+real. El servidor lo vigila solo: pasadas ~40 operaciones de dibujo sin
+guardar, las tools empiezan a devolver un `warning` recordándolo — hacele
+caso.
 
-Un detalle que costó descubrir: `save_drawing()` sin `path` guarda "sobre
-el archivo actual", pero si un `save_drawing(path=...)` anterior le dio
-nombre al dibujo, el siguiente guardado sin `path` puede terminar en la
-ubicación por default de AutoCAD (`Documents\Drawing1.dwg`) en vez de
-pisar ese mismo archivo — pasó en una sesión real. Conviene repetir el
-mismo `path` explícito cada vez, no confiar en que quedó "recordado".
+`save_drawing()` sin `path` reusa el último path guardado o abierto en la
+sesión (lo dice en `note`), así que ya no puede caer en el default de
+AutoCAD (`Documents\Drawing1.dwg`) como pasó una vez. Igual, el primer
+guardado de un dibujo nuevo necesita su `path` explícito.
 
 `create_sheet` devuelve dos rectángulos:
 
@@ -218,8 +223,12 @@ Espesores típicos dibujando en metros: muro exterior 0.15, muro de tabique 0.28
 divisorio interior 0.10. Puertas de 0.90 (acceso) / 0.80 (interior) / 0.70
 (baño); ventanas de 1.20 a 1.50.
 
-`distance` de un hueco se mide a lo largo del eje desde el arranque, siguiendo
-las vueltas. Conviene calcularla sumando tramos, no a ojo.
+Los huecos se ubican en forma DECLARATIVA, no sumando distancias de cabeza:
+`{"segment": 1, "offset": 0.8}` (a 0.8 del arranque del tramo 1),
+`"from": "end"` para medir desde el final, `{"at": "center"}` para centrarlo
+en el tramo. La suma la hace el servidor y la distancia resuelta vuelve en
+`openingDistances`. El `distance` crudo (a lo largo del eje desde el
+arranque) sigue valiendo para cuando ya se conoce.
 
 ## 4.quater Obra vial: despejar el eje y no rematar el tramo
 
@@ -236,7 +245,42 @@ caen en el mismo lugar. Hay que repartirlas a mano:
 - El sentido del flujo va con `create_flow_arrow`, no con un leader. Un leader
   cuyo primer tramo mida menos que el doble de la flecha sale **sin punta**:
   AutoCAD la suprime en silencio, y en un dibujo en metros con DIMASZ de
-  fábrica eso pasa siempre.
+  fábrica eso pasa siempre — `create_leader` ahora lo detecta y lo avisa en
+  `warning`.
+
+## 4.quater-ter Norte, retícula y tipos de línea
+
+**`create_north` va en TODO plano de terreno o de conjunto.** Sin norte una
+planta no se orienta en el lote ni se sabe qué fachada toma el sol, y en un
+plano que va a licencia es de lo primero que se revisa. `rotation_deg` se
+mide desde arriba y antihorario (0 = norte arriba).
+
+**`create_coordinate_grid`** dibuja la retícula de coordenadas de la vista
+topográfica. Las cruces caen en los múltiplos exactos del espaciamiento, no
+en el borde de la zona. Va en la vista CON coordenadas originales; la vista
+de proyecto se dibuja sin ella — esa doble representación (una topográfica y
+otra de proyecto, lado a lado) es la convención de cualquier juego serio.
+
+**Tipos de línea: un plano se lee por el TRAZO, no solo por el color** —y en
+monocromo el color ni existe. `layers.py` tiene las constantes:
+`LT_EJE` (CENTER2, trazo-punto), `LT_OCULTO` (HIDDEN2, lo que va detrás),
+`LT_PROYECCION` (DASHED2, lo que está arriba: volados, losas) y `LT_LIMITE`
+(PHANTOM2, colindancia y área de proyecto). Si el AutoCAD está en castellano
+y solo tiene CENTRO2/OCULTA2/TRAZOS2, `layers.ensure` cae solo al
+equivalente en vez de fallar; si ninguno carga, crea la capa continua antes
+que dejarla sin existir. Y acordate de `set_display_options(linetype_scale=)`
+o dibujando en metros los trazos salen continuos igual.
+
+## 4.quater-bis Terreno: `create_construction_table`
+
+Todo plano de terreno en México lleva su **cuadro de construcción**: una fila
+por lado del polígono con rumbo cuadrantal (N 45°30'20" W), distancia y
+coordenadas del vértice, más superficie y perímetro al pie. Sin él, el plano
+no se puede replantear en campo. La tool lo CALCULA de los vértices reales
+(los de la polilínea ya dibujada, leídos con `get_entity`) — rumbos por
+`atan2`, superficie por shoelace — y marca los vértices V1, V2... sobre el
+polígono. Nada se escribe de memoria: el número que sale es el que mide el
+dibujo. Formato copiado de un plano profesional real (INFONAVIT).
 
 ## 4.ter Ejes de obra civil: SIEMPRE con `bulges`
 
@@ -401,6 +445,41 @@ Los tres registran su huella en `space`, así que `place_labels` no les escribe
 encima y `check_annotations` los revisa sin que haya que pasárselos.
 
 
+## 5.bis Del partido al plano: `draw_layout` → `suggest_furniture` → `dimension_layout`
+
+Tres tools encadenadas que van desde los `rooms` de `suggest_layout` hasta el
+plano dibujado, sin que nadie calcule una coordenada:
+
+- **`draw_layout`** dibuja la muraria completa: cada frontera UNA vez, puertas
+  en su muro abriendo a su recinto, ventanas en el paño libre más grande, y
+  **fusiona los contornos al terminar** — sin eso cada tramo es una polilínea
+  cerrada y su línea de cierre queda atravesando el muro al que llega: el
+  encuentro se ve como un cajón y el plano parece hecho a mano.
+- **`suggest_furniture`** amuebla: nada contra el muro de una puerta, la pieza
+  principal contra el muro libre más largo, y lo que no entra se reporta en vez
+  de forzarlo. Dos reglas que costó descubrir mirando el dibujo de cerca: los
+  muebles se apoyan en la **cara interior** del muro (los `rooms` vienen en
+  EJES, y apoyar ahí mete el mueble media pared adentro), y la mesada de la
+  cocina se dibuja **interrumpida** por el fregadero y la estufa — entera abajo
+  de ellos deja tres contornos superpuestos y se ven líneas dobles.
+- **`dimension_layout`** acota: cada lado acota **su propio paño**, o sea los
+  recintos que apoyan en ese borde. Tomar todas las fronteras del plano metía
+  en la cadena de abajo divisiones del fondo y los números salían encimados
+  ("0.500.50").
+
+**Mirar de cerca no es opcional.** Los cuatro defectos de arriba pasaron los
+`check_*` y se veían bien en una captura del plano entero: aparecieron recién
+al acercarse. Para eso `capture_viewport` acepta `min_x/min_y/max_x/max_y` —
+una foto a la extensión completa sirve para el encuadre, no para juzgar la
+calidad del dibujo.
+
+**Las cotas necesitan su estilo o salen con el formato del sistema.**
+`annotation.ensure_dim_style()` deja `MCP-COTAS` con punto decimal y dos
+decimales; sin él, en una máquina en español las cotas salen "3,5". Ojo: las
+medidas del estilo van en **mm de papel**, no en unidades del modelo — el
+DIMSCALE que la cadena le pasa a cada cota hace la conversión, y guardarlas ya
+convertidas las escala dos veces (el texto salió de 2 cm en un plano de 16 m).
+
 ## 6. Mobiliario y rótulos
 
 `place_furniture` dibuja todas las piezas en UNA llamada: pasarle la lista
@@ -523,7 +602,9 @@ segunda tanda sale de otro tamaño. Los 2 mm salen de medir un juego de planos
 real; la ISO admite 2.5.
 
 `create_dimension` suelta queda para lo puntual: un detalle, una diagonal, un
-hueco aislado. Si la ubicás a mano, verificá con `check_annotations` antes.
+hueco aislado. Ahora registra sola su franja en el espacio de anotación, así
+que `check_annotations` la ve y las cadenas siguientes se apilan afuera de
+ella — pero seguí prefiriendo la cadena.
 
 La cadena avisa cuando un tramo queda tan corto que el número no entra entre
 las flechas — ese va a una cadena de detalle o a un leader, no apretado.
@@ -596,6 +677,11 @@ ahorra el redibujado.
 
 ## 9. Verificar antes de dar por terminado
 
+`check_all` corre todos los checks de cierre en una llamada, incluidos los
+xrefs (uno `Unresolved`/`FileNotFound` sale como problema). Y `export_pdf`
+avisa si hubo dibujo nuevo desde el último `check_all`: exportar es entregar,
+y un plano se revisa antes de entregarse.
+
 `check_annotations` cierra el ciclo de los otros cuatro `check_*`: ellos miran
 el proyecto, este mira el plano **como dibujo** — que las cotas, las burbujas
 y los rótulos no se encimen. Sale limpio solo mientras se use
@@ -649,8 +735,9 @@ abierto, `--live` agrega `test_live.py`.
 **varias láminas del mismo modelo**, usar `create_layout` + `create_viewport`:
 el dibujo queda una sola vez en el modelo y cada viewport lo muestra a su
 escala. Dentro del layout las coordenadas son milímetros de papel, y
-`create_viewport` necesita `model_units_per_mm` (1000 dibujando en metros) o la
-escala sale mil veces mal.
+`create_viewport` EXIGE `model_units_per_mm` (1000 dibujando en metros, 10 en
+cm, 1 en mm) — antes tenía default 1.0 y la escala salía mil veces mal en
+silencio; ahora sin el dato se niega.
 
 Con el layout armado, `export_pdf(layout, path)` lo plotea a PDF por API con
 la configuración que `create_layout` ya dejó guardada (papel, dispositivo) —
@@ -673,8 +760,28 @@ default) — un dibujo con pestañas sin nombre no dice nada al abrirlo.
 Si esas pestañas por default quedan sin usar, `delete_layout` las saca en
 vez de dejarlas como clutter.
 
-**Dos cosas que pasaron de verdad armando un layout, para no perder tiempo
-la próxima vez:**
+**Tres cosas que pasaron de verdad, para no perder tiempo la próxima vez:**
+
+- Abrir y cerrar documentos rápido por API dispara un bug del PROPIO
+  AutoCAD 2022: `NullReferenceException` en su `CommandEditor` (evento
+  Idle, el plugin ni aparece en el stack), y el diálogo de "Unhandled
+  exception" que sale **congela el socket** hasta que alguien clickea
+  Continue. Desde el plugin 1.3.0 un watchdog (hilo de fondo) le clickea
+  Continue solo y lo anota en `%LOCALAPPDATA%\AutoCadMcp\dialogos.log` —
+  `Application.ThreadException` NO alcanzaba, AutoCAD crea el diálogo
+  directo. Si el socket se cuelga con un plugin más viejo, buscá ese
+  diálogo en pantalla.
+
+**Los errores transitorios se reintentan SOLOS — no reintentes a mano.**
+`autocad_client.call` repite hasta 3 veces las fallas que se arreglan
+esperando (plot ocupado, comando en curso, listener levantándose): siempre
+si la conexión ni se estableció, y solo comandos de lectura/plot si la
+falla fue después — lo que dibuja jamás se repite tras un timeout, porque
+pudo haber llegado y quedaría duplicado. Si un comando falla dos veces
+seguidas, es un error real: leé el mensaje, no insistas. Y `zoom_extents`
+es síncrono desde el plugin 1.4.0: cuando responde, el zoom ya está hecho
+(antes encolaba el comando y un `capture_viewport` inmediato moría con
+`eInvalidInput`).
 - Crear el **primer** layout de un dibujo puede disparar un diálogo modal
   de AutoCAD ("Configurar página" o similar) que bloquea el socket del
   plugin — cualquier comando, hasta `ping`, se cuelga con timeout hasta
