@@ -235,10 +235,52 @@ def _config(argv: list[str]) -> int:
     return 2
 
 
+def _modelos(argv: list[str]) -> int:
+    """Subcomando `modelos`: qué ofrece el proveedor y qué funciona."""
+    p = argparse.ArgumentParser(prog="agent.cli modelos")
+    p.add_argument("--proveedor", default="openrouter")
+    p.add_argument("--api-key", default=None)
+    p.add_argument("--url", default=None)
+    p.add_argument("--probar", action="store_true",
+                   help="Ademas de listar, le manda un 'hola' de 5 tokens a "
+                        "cada uno para ver cual responde y cual acepta tools. "
+                        "Cuesta centavos y evita descubrir un bloqueo a mitad "
+                        "de un plano.")
+    a = p.parse_args(argv)
+
+    try:
+        filas = providers.modelos_disponibles(
+            a.proveedor, api_key=a.api_key, url=a.url, probar=a.probar)
+    except providers.ErrorProveedor as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    if not filas:
+        print("El proveedor no devolvió ningún modelo.")
+        return 1
+    ancho = max(len(f["modelo"]) for f in filas) + 2
+    print(f"{'MODELO':<{ancho}} ESTADO")
+    for f in sorted(filas, key=lambda x: x["modelo"]):
+        print(f"{f['modelo']:<{ancho}} {f['estado']}")
+    if not a.probar:
+        print("\nEstar en la lista no quiere decir que se pueda usar: "
+              "agregá --probar para verificarlo de verdad.")
+    else:
+        usables = [f for f in filas if f["estado"].startswith("OK")]
+        print(f"\n{len(usables)} modelo(s) usables para dibujar.")
+        if not usables:
+            print("Ninguno acepta tools con esta clave. Si dice 'bloqueado "
+                  "por la organizacion', habilitalos en la consola del "
+                  "proveedor (en Groq: console.groq.com/settings/limits).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "config":
         return _config(argv[1:])
+    if argv and argv[0] == "modelos":
+        return _modelos(argv[1:])
 
     p = argparse.ArgumentParser(
         prog="agent.cli",

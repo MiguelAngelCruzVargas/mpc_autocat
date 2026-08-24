@@ -165,6 +165,77 @@ class ProveedorAnthropic:
         return r.json()
 
 
+def modelos_disponibles(proveedor: str, api_key: Optional[str] = None,
+                        url: Optional[str] = None,
+                        probar: bool = False) -> list[dict[str, Any]]:
+    """Qué modelos ofrece el proveedor, y opcionalmente cuáles FUNCIONAN.
+
+    Listar no alcanza: una cuenta puede tener modelos en su catálogo que
+    la organización tiene bloqueados, y eso solo se ve al llamarlos. Pasó
+    de verdad con una clave de Groq -- los siete modelos de chat figuraban
+    en /models y los siete devolvían 403 'blocked at the organization
+    level'. Con probar=True se le manda un "hola" de 5 tokens a cada uno,
+    que cuesta centavos y ahorra descubrir el bloqueo a mitad de un plano.
+    """
+    preset = PRESETS.get(proveedor, {})
+    base = (url or preset.get("url", "")).rstrip("/")
+    from . import credenciales
+    clave = credenciales.resolver(proveedor, api_key, preset.get("env", ""))
+
+    headers = {"Content-Type": "application/json"}
+    if proveedor == "anthropic":
+        headers["x-api-key"] = clave or ""
+        headers["anthropic-version"] = "2023-06-01"
+    elif clave:
+        headers["Authorization"] = f"Bearer {clave}"
+
+    try:
+        r = httpx.get(f"{base}/models", headers=headers, timeout=30.0)
+    except httpx.HTTPError as exc:
+        raise ErrorProveedor(f"No se pudo listar modelos: {exc}") from exc
+    if r.status_code >= 400:
+        raise ErrorProveedor(
+            f"El proveedor respondió {r.status_code}: {r.text[:400]}")
+
+    datos = r.json()
+    crudos = datos.get("data", datos.get("models", []))
+    salida: list[dict[str, Any]] = []
+    for m in crudos:
+        nombre = m.get("id") or m.get("name") or str(m)
+        salida.append({"modelo": nombre, "estado": "?"})
+
+    if not probar:
+        return salida
+
+    for fila in salida:
+        nombre = fila["modelo"]
+        # Los de audio y los clasificadores no hacen chat: probarlos solo
+        # gasta tiempo y devuelve un error que confunde.
+        if any(p in nombre.lower() for p in ("whisper", "tts", "embed",
+                                             "guard", "orpheus")):
+            fila["estado"] = "no es de chat"
+            continue
+        try:
+            rr = httpx.post(
+                f"{base}/chat/completions", headers=headers, timeout=30.0,
+                json={"model": nombre, "max_tokens": 5,
+                      "messages": [{"role": "user", "content": "hola"}],
+                      "tools": [{"type": "function", "function": {
+                          "name": "ping", "description": "prueba",
+                          "parameters": {"type": "object", "properties": {}}}}]})
+            if rr.status_code < 400:
+                fila["estado"] = "OK (acepta tools)"
+            elif rr.status_code == 403:
+                fila["estado"] = "bloqueado por la organizacion"
+            elif "tool" in rr.text.lower():
+                fila["estado"] = "responde, pero NO acepta tools"
+            else:
+                fila["estado"] = f"error {rr.status_code}"
+        except httpx.HTTPError as exc:
+            fila["estado"] = f"sin respuesta ({type(exc).__name__})"
+    return salida
+
+
 def construir(proveedor: str, modelo: Optional[str] = None,
               url: Optional[str] = None, api_key: Optional[str] = None,
               temperatura: Optional[float] = None) -> Any:
