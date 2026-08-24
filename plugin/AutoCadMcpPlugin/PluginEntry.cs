@@ -28,6 +28,18 @@ namespace AutoCadMcpPlugin
             // crashea AutoCAD entero.
             AppDomain.CurrentDomain.AssemblyResolve += ResolvePluginDependency;
 
+            // AutoCAD 2022 tira NullReferenceException en su PROPIO
+            // CommandEditor (set_IsBusy, via el evento Idle) al abrir y
+            // cerrar documentos rapido por API -- el plugin ni aparece en el
+            // stack -- y el dialogo de "Unhandled exception" que muestra
+            // congela el socket hasta que un humano clickea Continue: paso
+            // de verdad, tres veces, corriendo test_live.py. Dos defensas:
+            // el handler (por si la excepcion viene por la ruta WinForms
+            // normal) y el watchdog (para el caso real: AutoCAD crea el
+            // dialogo directo y el handler no lo ve -- ver DialogWatchdog).
+            System.Windows.Forms.Application.ThreadException += OnUiThreadException;
+            DialogWatchdog.Start();
+
             int port = 8765;
             var envPort = Environment.GetEnvironmentVariable("ACAD_MCP_PORT");
             if (!string.IsNullOrEmpty(envPort) && int.TryParse(envPort, out var parsed))
@@ -65,9 +77,24 @@ namespace AutoCadMcpPlugin
 
         public void Terminate()
         {
+            DialogWatchdog.Stop();
+            System.Windows.Forms.Application.ThreadException -= OnUiThreadException;
             Application.DocumentManager.DocumentActivated -= OnDocumentActivated;
             _server?.Stop();
             try { if (File.Exists(PortFilePath)) File.Delete(PortFilePath); } catch { }
+        }
+
+        private static void OnUiThreadException(object sender,
+            System.Threading.ThreadExceptionEventArgs e)
+        {
+            // Equivalente a clickear "Continue" en el dialogo que esto
+            // reemplaza: se ignora y la aplicacion sigue. Solo se anota.
+            try
+            {
+                Log("[MCP] Excepcion no manejada en el hilo de UI (ignorada, " +
+                    "como haria el boton Continue): " + e.Exception.Message);
+            }
+            catch { }
         }
 
         /// <summary>

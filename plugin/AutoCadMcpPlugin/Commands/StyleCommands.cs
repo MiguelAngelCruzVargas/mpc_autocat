@@ -121,6 +121,22 @@ namespace AutoCadMcpPlugin.Commands
                 if (pars["unitsFactor"] != null)
                     record.Dimlfac = pars["unitsFactor"].GetValue<double>();
 
+                // Separador decimal. AutoCAD lo toma de la configuracion
+                // REGIONAL de Windows, asi que en una maquina en espanol las
+                // cotas salen "3,5" -- con coma y sin el segundo decimal.
+                // En un plano de obra eso se lee como descuido: la
+                // convencion es punto y dos decimales ("3.50").
+                if (pars["decimalSeparator"] != null)
+                {
+                    string sep = pars["decimalSeparator"].GetValue<string>();
+                    if (!string.IsNullOrEmpty(sep))
+                        record.Dimdsep = sep[0];
+                }
+                // Ceros a la derecha: DIMZIN 0 los conserva ("3.50" y no
+                // "3.5"), que es como se acota un plano.
+                if (pars["trailingZeros"] != null)
+                    record.Dimzin = pars["trailingZeros"].GetValue<bool>() ? 0 : 8;
+
                 // Separación de la línea de cota respecto del objeto y salida de
                 // las líneas de extensión: sin esto las cotas se pegan al dibujo.
                 if (pars["extensionOffset"] != null)

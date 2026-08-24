@@ -47,13 +47,37 @@ namespace AutoCadMcpPlugin.Commands
                 ? Autodesk.AutoCAD.DatabaseServices.PlotType.Extents
                 : Autodesk.AutoCAD.DatabaseServices.PlotType.Layout;
 
-            PlotHelper.PlotToFile(doc, layoutId, plotType, Device, path);
+            // Ventana explicita: capturar UNA ZONA, no todo. Sin esto no
+            // habia forma de mirar un detalle -- la foto salia siempre a la
+            // extension completa y un mueble de 60 cm en un plano de 16 m
+            // quedaba de unos pocos pixeles, asi que revisar si dos lineas
+            // estaban encimadas era imposible. zoom_window no alcanzaba:
+            // el plot por Extents ignora la vista de pantalla.
+            Extents2d? ventana = null;
+            if (pars["minX"] != null && pars["minY"] != null
+                && pars["maxX"] != null && pars["maxY"] != null)
+            {
+                double wx0 = pars["minX"].GetValue<double>();
+                double wy0 = pars["minY"].GetValue<double>();
+                double wx1 = pars["maxX"].GetValue<double>();
+                double wy1 = pars["maxY"].GetValue<double>();
+                ventana = new Extents2d(System.Math.Min(wx0, wx1),
+                                        System.Math.Min(wy0, wy1),
+                                        System.Math.Max(wx0, wx1),
+                                        System.Math.Max(wy0, wy1));
+                plotType = Autodesk.AutoCAD.DatabaseServices.PlotType.Window;
+            }
+
+            PlotHelper.PlotToFile(doc, layoutId, plotType, Device, path, ventana);
 
             return new JsonObject
             {
                 ["path"] = path,
                 ["layout"] = layoutName,
-                ["space"] = isModel ? "model" : "paper"
+                ["space"] = isModel ? "model" : "paper",
+                ["window"] = ventana == null ? null : new JsonArray(
+                    ventana.Value.MinPoint.X, ventana.Value.MinPoint.Y,
+                    ventana.Value.MaxPoint.X, ventana.Value.MaxPoint.Y)
             };
         }
     }

@@ -64,7 +64,8 @@ namespace AutoCadMcpPlugin.Commands
         /// </summary>
         public static void PlotToFile(Document doc, ObjectId layoutId,
                                       Autodesk.AutoCAD.DatabaseServices.PlotType plotType,
-                                      string device, string path)
+                                      string device, string path,
+                                      Extents2d? window = null)
         {
             if (string.IsNullOrWhiteSpace(path))
                 throw new ArgumentException("Falta 'path' — la ruta de salida del archivo.");
@@ -73,6 +74,18 @@ namespace AutoCadMcpPlugin.Commands
             string dir = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 throw new InvalidOperationException($"No existe la carpeta de destino '{dir}'.");
+
+            // Un comando de línea de comandos en curso (un ZOOM encolado por
+            // SendStringToExecute, un REGEN largo) hace que arrancar el plot
+            // tire eInvalidInput -- visto en vivo: zoom_extents seguido de
+            // capture_viewport fallaba y el reintento a ciegas pasaba. Se le
+            // da un margen a que termine, en vez de fallar y hacer gastar el
+            // reintento al cliente.
+            for (int espera = 0; espera < 100 && !string.IsNullOrEmpty(doc.CommandInProgress); espera++)
+            {
+                System.Windows.Forms.Application.DoEvents();
+                System.Threading.Thread.Sleep(100);
+            }
 
             // El motor de plotting tarda en soltar ProcessPlotState después
             // de que el plot ANTERIOR ya escribió su archivo y devolvió el
@@ -129,7 +142,19 @@ namespace AutoCadMcpPlugin.Commands
                             $"No se pudo usar el dispositivo de impresión '{device}': {ex.Message}");
                     }
                     psv.RefreshLists(ps);
+                    // La ventana se fija ANTES del tipo: SetPlotWindowArea
+                    // no tiene efecto si el tipo todavia no es Window.
+                    if (window.HasValue)
+                        psv.SetPlotWindowArea(ps, window.Value);
                     psv.SetPlotType(ps, plotType);
+
+                    if (window.HasValue)
+                    {
+                        psv.SetUseStandardScale(ps, true);
+                        psv.SetStdScaleType(ps, StdScaleType.ScaleToFit);
+                        psv.SetPlotCentered(ps, true);
+                        psv.SetPlotRotation(ps, PlotRotation.Degrees000);
+                    }
 
                     if (plotType == Autodesk.AutoCAD.DatabaseServices.PlotType.Extents)
                     {
