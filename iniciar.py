@@ -15,10 +15,29 @@ import subprocess
 import sys
 
 RAIZ = os.path.dirname(os.path.abspath(__file__))
-VENV = os.path.join(RAIZ, "mcp_server", ".venv", "Scripts",
-                    "python.exe" if os.name == "nt" else "python")
+_VENV_BIN = os.path.join(RAIZ, "mcp_server", ".venv",
+                         "Scripts" if os.name == "nt" else "bin")
+VENV = os.path.join(_VENV_BIN, "python.exe" if os.name == "nt" else "python")
 if not os.path.exists(VENV):
     VENV = os.path.join(RAIZ, "mcp_server", ".venv", "bin", "python")
+    _VENV_BIN = os.path.dirname(VENV)
+
+
+def _ya_en_venv() -> bool:
+    """True si el intérprete que está corriendo YA vive en la carpeta del
+    venv del proyecto — no importa si es python.exe o pythonw.exe (los dos
+    son válidos, la única diferencia es si abren consola). Comparar contra
+    solo python.exe rompía al lanzar con pythonw.exe (la interfaz sin
+    consola, ver AutoCAD-IA.vbs): se detectaba como "intérprete distinto" y
+    se relanzaba con el Python del sistema — y ESE, al no tener el mismo
+    chequeo, volvía a relanzarse otra vez, dejando hasta 4 procesos vivos
+    para un solo arranque.
+    """
+    try:
+        return os.path.commonpath(
+            [os.path.abspath(sys.executable), _VENV_BIN]) == _VENV_BIN
+    except ValueError:      # unidades de disco distintas en Windows
+        return False
 
 
 def _dependencias_ok(interprete: str) -> bool:
@@ -41,7 +60,7 @@ def main() -> int:
     # es el primer tropiezo de cualquiera que clona esto.
     interprete = VENV if os.path.exists(VENV) else sys.executable
     if not _dependencias_ok(interprete):
-        otro = sys.executable if interprete == VENV else VENV
+        otro = sys.executable if os.path.abspath(interprete) == os.path.abspath(VENV) else VENV
         if os.path.exists(otro) and _dependencias_ok(otro):
             interprete = otro
         else:
@@ -49,7 +68,7 @@ def main() -> int:
                   f"    {interprete} -m pip install mcp httpx\n")
             return 2
 
-    if os.path.abspath(interprete) != os.path.abspath(sys.executable):
+    if not _ya_en_venv():
         # Relanzarse con el intérprete correcto en vez de fallar.
         return subprocess.call([interprete, os.path.abspath(__file__),
                                 "--puerto", str(puerto)])

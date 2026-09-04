@@ -26,4 +26,8 @@ scratch_*.png
 plot.log
 mcp_server/plot.log
 
+# Log del lanzador silencioso (tools/lanzar_silencioso.bat): ahí va a parar
+# lo que antes se veía en la consola negra, de una corrida de cada quien.
+autocad-ia.log
+
 agent/__pycache__/
