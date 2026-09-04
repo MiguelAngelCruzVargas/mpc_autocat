@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -61,6 +62,13 @@ namespace AutoCadMcpPlugin
         private static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
 
         private const uint BM_CLICK = 0x00F5;
+
+        // Windows en inglés y en español, que son los que vimos de verdad
+        // en las máquinas donde corrió esto. El "&" es el subrayado del
+        // atajo de teclado (Alt+C / Alt+U) — Windows lo pone según su
+        // propio idioma, no según el de AutoCAD ni el del plugin.
+        private static readonly string[] BOTONES_CONTINUAR =
+            { "&Continue", "&Continuar" };
 
         private static Thread _thread;
         private static volatile bool _stop;
@@ -126,7 +134,14 @@ namespace AutoCadMcpPlugin
             {
                 var texto = new StringBuilder(256);
                 GetWindowText(h, texto, 256);
-                if (texto.ToString() == "&Continue")
+                // El texto del botón sale del idioma de Windows, no del de
+                // AutoCAD: en una máquina en español el diálogo de .NET
+                // muestra "&Continuar", no "&Continue". El watchdog anduvo
+                // bien el 23 de agosto y se quedó mudo hoy — un diálogo real
+                // se quedó abierto esperando un click humano — porque solo
+                // reconocía el texto en inglés. Se listan los idiomas que
+                // vimos de verdad; si aparece otro, hace falta agregarlo acá.
+                if (BOTONES_CONTINUAR.Contains(texto.ToString()))
                 {
                     boton = h;
                     return false;
