@@ -9,9 +9,11 @@ Unidades: las del modelo (metros si dibujás en metros).
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Optional
 
 import autocad_client as acad
+import geom
 import layers
 import space
 from geom import Axis, Point, densify
@@ -835,6 +837,133 @@ def rumbo(p0: Point, p1: Point) -> str:
     ew = "E" if dx >= 0 else "W"
     angulo = math.degrees(math.atan2(abs(dx), abs(dy)))
     return "%s %s %s" % (ns, _dms(angulo), ew)
+
+
+def parse_rumbo(texto: str) -> float:
+    """Un rumbo cuadrantal ("N 45°30'20\" W") a azimut en grados desde el norte.
+
+    Es el inverso de rumbo(). Acepta lo que aparece en un cuadro de
+    construcción impreso: los símbolos ° ' " o espacios/guiones, decimales o
+    grados-minutos-segundos, y N/S/E/W o N/S/E/O (en castellano el oeste se
+    escribe O y ese detalle rompía la lectura de planos mexicanos).
+    """
+    crudo = str(texto).strip().upper().replace("º", "°")
+    if not crudo:
+        raise ValueError("Rumbo vacío.")
+
+    numeros = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", crudo)]
+    letras = [c for c in re.findall(r"[NSEWO]", crudo)]
+    if not numeros or len(letras) < 2:
+        raise ValueError(
+            "No se entiende el rumbo %r. Se espera algo como "
+            "\"N 45°30'20\\\" W\" o \"S 12.5 E\"." % texto)
+
+    grados = numeros[0]
+    if len(numeros) > 1:
+        grados += numeros[1] / 60.0
+    if len(numeros) > 2:
+        grados += numeros[2] / 3600.0
+    if grados > 90.0 + 1e-9:
+        raise ValueError(
+            "El ángulo de un rumbo cuadrantal va de 0 a 90°, no %.4f. "
+            "Si lo que tenés es un azimut de 0 a 360, pasalo como azimuth."
+            % grados)
+
+    ns, ew = letras[0], letras[-1]
+    if ns not in ("N", "S") or ew not in ("E", "W", "O"):
+        raise ValueError(
+            "Un rumbo se escribe N/S ángulo E/W (o E/O), no %r." % texto)
+
+    oeste = ew in ("W", "O")
+    if ns == "N":
+        return (360.0 - grados) % 360.0 if oeste else grados
+    return 180.0 + grados if oeste else 180.0 - grados
+
+
+def traverse(sides: list[dict[str, Any]],
+             start_x: float = 0.0, start_y: float = 0.0) -> dict[str, Any]:
+    """Del CUADRO DE CONSTRUCCIÓN a las coordenadas: rumbo + distancia por
+    lado, recorrido lado a lado desde el vértice de arranque.
+
+    Es el inverso exacto de create_construction_table, y con los dos se cierra
+    el ciclo: de un plano ajeno se lee su cuadro impreso, se reconstruyen los
+    vértices y se puede volver a dibujar el terreno. Sin esto, un terreno que
+    llega descrito por rumbos hay que resolverlo a mano con trigonometría —
+    y eso es exactamente lo que no debe pasar.
+
+    sides: [{"bearing": "N 45°30'20\\" W", "distance": 26.00}, ...] — un
+    elemento por lado, en orden de recorrido. En vez de 'bearing' se acepta
+    'azimuth' en grados decimales desde el norte, sentido horario.
+
+    Devuelve los vértices, la superficie por shoelace, el perímetro y —lo que
+    de verdad importa en obra— el ERROR DE CIERRE: cuánto le falta al último
+    lado para volver al punto de partida. Un cuadro copiado de un plano casi
+    nunca cierra exacto por el redondeo de los segundos, y hay que saber
+    cuánto: 2 cm en 170 m es redondeo, 2 m es un dato mal leído.
+    """
+    if not sides:
+        raise ValueError("Hace falta al menos un lado en 'sides'.")
+
+    puntos: list[list[float]] = [[float(start_x), float(start_y)]]
+    for i, lado in enumerate(sides):
+        try:
+            distancia = float(lado["distance"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(
+                "El lado %d necesita 'distance' numérica." % (i + 1))
+        if distancia <= 0:
+            raise ValueError(
+                "El lado %d tiene distancia %s: tiene que ser > 0."
+                % (i + 1, distancia))
+
+        if lado.get("azimuth") is not None:
+            azimut = float(lado["azimuth"]) % 360.0
+        elif lado.get("bearing"):
+            try:
+                azimut = parse_rumbo(lado["bearing"])
+            except ValueError as exc:
+                raise ValueError("Lado %d: %s" % (i + 1, exc))
+        else:
+            raise ValueError(
+                "El lado %d necesita 'bearing' (rumbo cuadrantal) o "
+                "'azimuth' (grados desde el norte)." % (i + 1))
+
+        # Azimut se mide DESDE EL NORTE y en sentido horario: el seno va en
+        # x (este) y el coseno en y (norte). Al revés es el error clásico.
+        rad = math.radians(azimut)
+        x, y = puntos[-1]
+        puntos.append([x + distancia * math.sin(rad),
+                       y + distancia * math.cos(rad)])
+
+    cierre_dx = puntos[-1][0] - puntos[0][0]
+    cierre_dy = puntos[-1][1] - puntos[0][1]
+    error = math.hypot(cierre_dx, cierre_dy)
+    perimetro = sum(float(s["distance"]) for s in sides)
+
+    # Los vértices del polígono son los de arranque de cada lado: el último
+    # punto es el intento de volver al primero y no es un vértice nuevo.
+    vertices = [[round(p[0], 4), round(p[1], 4)] for p in puntos[:-1]]
+
+    resultado: dict[str, Any] = {
+        "points": vertices,
+        "closureError": round(error, 4),
+        "closureBy": {"dx": round(cierre_dx, 4), "dy": round(cierre_dy, 4)},
+        "perimeter": round(perimetro, 3),
+        "sides": len(sides),
+    }
+    if len(vertices) >= 3:
+        resultado["area"] = round(geom.polygon_area(vertices), 3)
+    # 1/5000 es la tolerancia habitual de un levantamiento de predio urbano.
+    tolerancia = perimetro / 5000.0
+    resultado["closes"] = error <= max(tolerancia, 0.005)
+    if not resultado["closes"]:
+        resultado["warning"] = (
+            "El polígono NO cierra: le faltan %.3f m para volver al punto de "
+            "partida (%.0f veces la tolerancia de 1/5000, que acá son %.3f m)."
+            " Revisá los rumbos y las distancias del cuadro antes de dibujar:"
+            " un cuadro bien copiado cierra con centímetros."
+            % (error, error / tolerancia if tolerancia else 0, tolerancia))
+    return resultado
 
 
 def create_construction_table(

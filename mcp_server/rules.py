@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 from typing import Any, Optional
 
+import geom
 import space
 
 # Ambientes a los que una puerta de calle NUNCA debe abrir directo.
@@ -46,7 +47,8 @@ def check_layout(rooms: list[dict[str, Any]],
                  doors: list[dict[str, Any]],
                  lot_width: Optional[float] = None,
                  lot_depth: Optional[float] = None,
-                 windows: Optional[list[dict[str, Any]]] = None
+                 windows: Optional[list[dict[str, Any]]] = None,
+                 lot_points: Optional[list[list[float]]] = None
                  ) -> dict[str, Any]:
     """Verifica las reglas de zonificación de una planta ANTES de dibujarla.
 
@@ -152,6 +154,27 @@ def check_layout(rooms: list[dict[str, Any]],
                                f"{muro}, que es límite de predio.",
                     "fix": "En colindancia no se abren vanos salvo patio de luz "
                            "o retiro reglamentario. Pasala a fachada o al patio."})
+
+    # --- 7. Los recintos, DENTRO del terreno ---
+    # Con lot_width x lot_depth esto era una comparacion contra un
+    # rectangulo. Con el poligono real de un terreno irregular hay que
+    # preguntarlo de verdad: un recinto puede caer dentro del rectangulo
+    # que envuelve al terreno y estar fuera del terreno.
+    if lot_points:
+        for r in rooms:
+            try:
+                x0, y0 = float(r["x0"]), float(r["y0"])
+                x1, y1 = float(r["x1"]), float(r["y1"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not geom.rect_in_polygon(x0, y0, x1, y1, lot_points):
+                problemas.append({
+                    "rule": "dentro del terreno",
+                    "problem": ("'%s' se sale del polígono del terreno."
+                                % r.get("name", "?")),
+                    "fix": "Movelo o achicalo hasta que entre; si el programa "
+                           "no cabe en el terreno real, eso lo dice "
+                           "check_program y no se arregla dibujando."})
 
     return {
         "ok": not problemas,

@@ -29,6 +29,7 @@ Unidades: las del modelo. Nada de esto habla con AutoCAD.
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Optional
 
@@ -112,9 +113,61 @@ def paper(mm: float, scale: Optional[float] = None) -> float:
     return mm * (scale if scale else _UNITS_PER_PAPER_MM[0])
 
 
+# El area util de la ULTIMA lamina creada, tal como la devolvio create_sheet.
+# Es lo que hace falta para poder preguntar despues "¿el dibujo entro?".
+#
+# Se PERSISTE, igual que la escala y por el mismo motivo: cada ConexionMcp
+# levanta un server.py nuevo, asi que la lamina que creo un proceso no existe
+# para el que corre el check. Paso de verdad -- check_sheet contesto "ok"
+# sobre un plano que se salia del cajon, solo porque no recordaba la lamina.
+# Un "ok" por amnesia es peor que un error.
+_SHEET_FILE = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+    "AutoCadMcp", "sheet")
+
+
+def _leer_lamina_persistida() -> Optional[dict[str, float]]:
+    try:
+        with open(_SHEET_FILE, encoding="utf-8") as fh:
+            crudo = json.loads(fh.read())
+        return {k: float(crudo[k]) for k in ("x1", "y1", "x2", "y2")}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+_SHEET: list[Optional[dict[str, float]]] = [_leer_lamina_persistida()]
+
+
+def set_sheet(area: Optional[dict[str, Any]]) -> None:
+    """Guarda el area util (drawArea) de la lamina recien creada."""
+    if not area:
+        _SHEET[0] = None
+    else:
+        _SHEET[0] = {k: float(area[k]) for k in ("x1", "y1", "x2", "y2")}
+    try:
+        os.makedirs(os.path.dirname(_SHEET_FILE), exist_ok=True)
+        if _SHEET[0] is None:
+            if os.path.exists(_SHEET_FILE):
+                os.remove(_SHEET_FILE)
+        else:
+            with open(_SHEET_FILE, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(_SHEET[0]))
+    except OSError:
+        # No poder persistir no rompe la corrida: el global ya quedo bien,
+        # solo no sobrevive al proceso.
+        pass
+
+
+def sheet() -> Optional[dict[str, float]]:
+    """El area util de la lamina vigente, o None si no se creo ninguna."""
+    return _SHEET[0]
+
+
 def clear() -> None:
     OCCUPIED.clear()
     FOOTPRINTS.clear()
+    # La lamina describe UN dibujo: al cambiar de documento no vale mas.
+    set_sheet(None)
 
 
 def reserve(x0: float, y0: float, x1: float, y1: float,

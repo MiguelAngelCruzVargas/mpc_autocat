@@ -16,6 +16,8 @@ let AppState = {
   scrollTop: 0,
   adjuntos: [],           // Croquis/fotos pendientes de enviar
   soportaImagenes: false, // Si el modelo elegido puede verlas
+  cronometro: null,       // Segundero mientras AutoCAD plotea la captura
+  capturando: false,      // Hay un plot en curso: no pedir otro
 };
 
 const $ = (s) => document.querySelector(s);
@@ -656,16 +658,47 @@ function despacharEvento(ev) {
 // ==========================================================================
 // VISOR DE PLANO (DWG VIEWPORT)
 // ==========================================================================
+// El plot de AutoCAD tarda ~7 s y no hay forma de acelerarlo desde acá. Lo
+// que SÍ se puede es no dejar el panel en blanco y mudo todo ese rato: sin
+// el segundero, una espera normal se lee como un visor roto.
+function arrancarCronometro() {
+  const marca = $('#capture-elapsed');
+  if (!marca) return null;
+  const t0 = Date.now();
+  return setInterval(() => {
+    marca.textContent = `${((Date.now() - t0) / 1000).toFixed(1)} s`;
+  }, 100);
+}
+
+function pararCronometro() {
+  if (AppState.cronometro) clearInterval(AppState.cronometro);
+  AppState.cronometro = null;
+}
+
 async function capturarPlano(zona = null) {
   const layout = $('#app-layout');
   const canvas = $('#plan-canvas-wrapper');
   if (layout) layout.classList.add('con-plano');
+  // Un clic más mientras AutoCAD plotea no lo apura: lo encola detrás y el
+  // visor tarda el doble. El servidor también lo frena, pero mejor ni
+  // pedirlo.
+  if (AppState.capturando) {
+    showToast('Ya hay una captura en curso, esperá a que termine', 'info');
+    return;
+  }
+  AppState.capturando = true;
+  const btnRef = $('#btn-refresh-plan');
+  if (btnRef) btnRef.disabled = true;
+  pararCronometro();
   if (canvas) {
     canvas.className = 'viewer-canvas-wrapper empty-canvas';
     canvas.innerHTML = `
       <div class="typing-dots"><span></span><span></span><span></span></div>
-      <div style="font-size:13px;color:var(--text-muted);margin-top:8px;">Capturando vista de AutoCAD…</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-top:8px;">Ploteando la vista en AutoCAD…</div>
+      <div id="capture-elapsed" style="font-family:var(--font-mono);font-size:20px;color:var(--text-main);margin-top:6px;">0.0 s</div>
+      <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">suele tardar unos 7 segundos</div>
     `;
+    AppState.cronometro = arrancarCronometro();
   }
 
   try {
@@ -675,6 +708,9 @@ async function capturarPlano(zona = null) {
       body: JSON.stringify({ zona }),
     });
     const data = await res.json();
+    pararCronometro();
+    AppState.capturando = false;
+    if (btnRef) btnRef.disabled = false;
     if (data.ok) {
       mostrarPlano(data);
     } else {
@@ -687,6 +723,9 @@ async function capturarPlano(zona = null) {
       }
     }
   } catch (err) {
+    pararCronometro();
+    AppState.capturando = false;
+    if (btnRef) btnRef.disabled = false;
     if (canvas) {
       canvas.innerHTML = `<div style="color:var(--error);padding:20px;">${err.message}</div>`;
     }

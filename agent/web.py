@@ -59,13 +59,12 @@ def _contar_perfiles() -> dict[str, int]:
     if _CONTEO:
         return _CONTEO
 
-    async def trabajo() -> dict[str, int]:
-        async with ConexionMcp(servidor=SERVIDOR_DEFECTO) as mcp:
-            return {p: len(mcp.catalogo(incluir=pats or None))
-                    for p, pats in PERFILES.items()}
+    async def trabajo(mcp: ConexionMcp) -> dict[str, int]:
+        return {p: len(mcp.catalogo(incluir=pats or None))
+                for p, pats in PERFILES.items()}
 
     try:
-        _CONTEO.update(_correr_async(trabajo()))
+        _CONTEO.update(MOTOR.usar(trabajo))
     except Exception:                                   # noqa: BLE001
         # Sin servidor MCP la interfaz tiene que abrir igual: se cae al
         # número de patrones, que es aproximado pero no rompe nada.
@@ -73,13 +72,144 @@ def _contar_perfiles() -> dict[str, int]:
     return _CONTEO
 
 
-def _correr_async(corutina):
-    """Un event loop propio por request: http.server es síncrono."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(corutina)
-    finally:
-        loop.close()
+class Motor:
+    """El servidor MCP, levantado UNA vez y compartido por todos los requests.
+
+    Antes cada request abría el suyo con `async with ConexionMcp(...)`, y eso
+    son 2.78 s de arranque de subproceso Python ANTES de la primera tool
+    (medido). En la captura del visor era casi un tercio de los ~10 s que
+    tardaba en aparecer la imagen — y todo ese rato el panel se ve blanco,
+    que es lo que hacía pensar que el visor estaba roto.
+
+    Vive en su propio hilo con su propio event loop, porque `http.server` es
+    síncrono y la librería MCP no tolera que sus cancel scopes se abran en un
+    task y se cierren en otro: un solo loop, siempre el mismo, evita el
+    "Attempted to exit cancel scope in a different task".
+
+    Si el subproceso se muere, el hilo termina y el siguiente request lo
+    vuelve a levantar solo.
+    """
+
+    def __init__(self) -> None:
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._mcp: Optional[ConexionMcp] = None
+        self._apagar: Optional[asyncio.Event] = None
+        self._listo = threading.Event()
+        self._error: Optional[BaseException] = None
+        self._lock = threading.Lock()
+
+    # ------------------------------------------------------ ciclo de vida
+
+    def _vivir(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def sesion() -> None:
+            apagar = asyncio.Event()
+            try:
+                async with ConexionMcp(servidor=SERVIDOR_DEFECTO) as mcp:
+                    self._mcp, self._loop, self._apagar = mcp, loop, apagar
+                    self._error = None
+                    self._listo.set()
+                    await apagar.wait()
+            except BaseException as exc:                # noqa: BLE001
+                self._error = exc
+                self._listo.set()
+
+        try:
+            loop.run_until_complete(sesion())
+        finally:
+            self._mcp = None
+            self._loop = None
+            self._apagar = None
+            loop.close()
+
+    def _conexion(self) -> tuple[ConexionMcp, asyncio.AbstractEventLoop]:
+        with self._lock:
+            mcp, loop = self._mcp, self._loop
+            if mcp is not None and loop is not None and not loop.is_closed():
+                return mcp, loop
+            self._listo.clear()
+            self._error = None
+            threading.Thread(target=self._vivir, name="mcp",
+                             daemon=True).start()
+            if not self._listo.wait(timeout=120):
+                raise RuntimeError("El servidor MCP no respondió al arrancar.")
+            mcp, loop = self._mcp, self._loop
+            if mcp is None or loop is None:
+                raise RuntimeError(
+                    "No se pudo levantar el servidor MCP"
+                    + (f": {self._error}" if self._error else "."))
+            return mcp, loop
+
+    # ------------------------------------------------------------- uso
+
+    def usar(self, trabajo: Any) -> Any:
+        """Corre `await trabajo(mcp)` en el hilo del motor y espera."""
+        mcp, loop = self._conexion()
+        return asyncio.run_coroutine_threadsafe(trabajo(mcp), loop).result()
+
+    def precalentar(self) -> None:
+        """Levanta el MCP de fondo, para que la PRIMERA captura no lo pague."""
+        threading.Thread(target=self._precalentar, daemon=True).start()
+
+    def _precalentar(self) -> None:
+        try:
+            _contar_perfiles()
+        except Exception:                               # noqa: BLE001
+            pass        # sin AutoCAD/MCP la interfaz igual tiene que abrir
+
+
+MOTOR = Motor()
+
+
+class CapturaUnica:
+    """Un plot por vez, y los pedidos iguales que lleguen mientras tanto se
+    cuelgan del que ya corre en vez de encolar otro.
+
+    Pasó de verdad: con el visor tardando, se toca "Actualizar" dos o tres
+    veces, cada clic es un request nuevo y cada request era un plot nuevo.
+    AutoCAD los sirve de a uno, así que el tercero esperaba a los dos
+    anteriores — 12 plots seguidos en plot.log, ~40 s cada uno, y un visor
+    que parecía muerto. Ahora el segundo clic con los mismos parámetros
+    recibe la MISMA foto que el primero, apenas termina.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._en_curso: dict[str, tuple[threading.Event, dict[str, Any]]] = {}
+
+    def correr(self, clave: str, fabrica: Any) -> Any:
+        with self._lock:
+            espera = self._en_curso.get(clave)
+            if espera is None:
+                listo: threading.Event = threading.Event()
+                caja: dict[str, Any] = {}
+                self._en_curso[clave] = (listo, caja)
+                titular = True
+            else:
+                listo, caja = espera
+                titular = False
+
+        if not titular:
+            listo.wait()
+            if "error" in caja:
+                raise caja["error"]
+            return caja["valor"]
+
+        try:
+            caja["valor"] = fabrica()
+            return caja["valor"]
+        except BaseException as exc:                    # noqa: BLE001
+            caja["error"] = exc
+            raise
+        finally:
+            with self._lock:
+                self._en_curso.pop(clave, None)
+            listo.set()
+
+
+CAPTURA_UNICA = CapturaUnica()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -284,17 +414,17 @@ class Handler(BaseHTTPRequestHandler):
             params.update({k: float(zona[k]) for k in
                            ("minX", "minY", "maxX", "maxY")})
 
-        async def trabajo() -> dict[str, Any]:
-            async with ConexionMcp(servidor=SERVIDOR_DEFECTO) as mcp:
-                if not zona:
-                    await mcp.ejecutar("zoom_extents", {})
-                salida, error = await mcp.ejecutar("capture_viewport", params)
-                extension, _ = await mcp.ejecutar("get_extents", {})
-                return {"error": error, "salida": salida,
-                        "extension": extension}
+        async def trabajo(mcp: ConexionMcp) -> dict[str, Any]:
+            if not zona:
+                await mcp.ejecutar("zoom_extents", {})
+            salida, error = await mcp.ejecutar("capture_viewport", params)
+            extension, _ = await mcp.ejecutar("get_extents", {})
+            return {"error": error, "salida": salida,
+                    "extension": extension}
 
         try:
-            r = _correr_async(trabajo())
+            r = CAPTURA_UNICA.correr(json.dumps(params, sort_keys=True),
+                                     lambda: MOTOR.usar(trabajo))
         except Exception as exc:                        # noqa: BLE001
             self._json({"error": f"No se pudo capturar: {exc}"}, 500)
             return
@@ -370,39 +500,38 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, ValueError):
                 pass        # el navegador cerró la pestaña; no es un error
 
-        async def trabajo() -> None:
-            async with ConexionMcp(servidor=SERVIDOR_DEFECTO) as mcp:
-                tools = mcp.catalogo(
-                    incluir=incluir or None,
-                    limite_descripcion=int(datos.get("limiteDescripcion") or 0))
-                emitir("inicio", {"tools": len(tools),
-                                  "modelo": proveedor.modelo})
-                with SESION.lock:
-                    if not SESION.mensajes:
-                        SESION.reiniciar(_system_prompt(
-                            bool(datos.get("conReglas", True)),
-                            int(datos.get("limiteReglas") or 0)))
-                    if imagenes:
-                        formato = getattr(proveedor, "formato", "openai")
-                        bloques: list[dict[str, Any]] = [
-                            {"type": "text",
-                             "text": pedido or "Mirá esta imagen."}]
-                        bloques += [providers.bloque_imagen(i, formato)
-                                    for i in imagenes]
-                        SESION.mensajes.append({"role": "user",
-                                                "content": bloques})
-                    else:
-                        SESION.mensajes.append({"role": "user",
-                                                "content": pedido})
-                    mensajes = SESION.mensajes
-                await conversar(mcp, proveedor, mensajes, tools,
-                                lambda t, d: emitir(t, d),
-                                vueltas_max=int(datos.get("vueltas") or 40),
-                                cancelado=SESION.cancelar.is_set)
+        async def trabajo(mcp: ConexionMcp) -> None:
+            tools = mcp.catalogo(
+                incluir=incluir or None,
+                limite_descripcion=int(datos.get("limiteDescripcion") or 0))
+            emitir("inicio", {"tools": len(tools),
+                              "modelo": proveedor.modelo})
+            with SESION.lock:
+                if not SESION.mensajes:
+                    SESION.reiniciar(_system_prompt(
+                        bool(datos.get("conReglas", True)),
+                        int(datos.get("limiteReglas") or 0)))
+                if imagenes:
+                    formato = getattr(proveedor, "formato", "openai")
+                    bloques: list[dict[str, Any]] = [
+                        {"type": "text",
+                         "text": pedido or "Mirá esta imagen."}]
+                    bloques += [providers.bloque_imagen(i, formato)
+                                for i in imagenes]
+                    SESION.mensajes.append({"role": "user",
+                                            "content": bloques})
+                else:
+                    SESION.mensajes.append({"role": "user",
+                                            "content": pedido})
+                mensajes = SESION.mensajes
+            await conversar(mcp, proveedor, mensajes, tools,
+                            lambda t, d: emitir(t, d),
+                            vueltas_max=int(datos.get("vueltas") or 40),
+                            cancelado=SESION.cancelar.is_set)
 
         SESION.cancelar.clear()
         try:
-            _correr_async(trabajo())
+            MOTOR.usar(trabajo)
         except Exception as exc:                        # noqa: BLE001
             emitir("aviso", {"texto": f"Se cortó la corrida: {exc}"})
         emitir("fin", {})
@@ -412,6 +541,9 @@ def iniciar(puerto: int = 8770, abrir: bool = True) -> None:
     # 127.0.0.1 y no 0.0.0.0: nadie más en la red puede llegar acá, que es
     # lo que corresponde para algo que tiene tus API keys.
     servidor = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
+    # El MCP se levanta YA, de fondo, mientras el navegador todavía está
+    # abriendo: así la primera captura no arranca pagando el subproceso.
+    MOTOR.precalentar()
     url = f"http://127.0.0.1:{puerto}/"
     print(f"\n  AutoCAD IA — interfaz lista en {url}")
     print("  (Ctrl+C para cerrar)\n")

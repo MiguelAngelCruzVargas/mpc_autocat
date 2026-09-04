@@ -246,6 +246,44 @@ def test_errores_claros() -> None:
         check("un room incompleto se niega", False, "no dio error")
 
 
+def test_lista_repetida_no_se_dibuja_dos_veces() -> None:
+    """Dos piezas identicas dejan contornos exactamente superpuestos.
+
+    Paso de verdad: un modelo mando la salida de suggest_furniture DOS veces
+    en la misma llamada a place_furniture. No fallo nada -- se dibujo todo
+    dos veces, y el defecto solo aparecio despues, en
+    check_drawing_hygiene: "16 grupo(s) de entidades duplicadas exactas
+    (32 entidades)". En pantalla no se nota; al plotear sale linea doble.
+    """
+    limpiar()
+    items = [{"type": "bed", "x": 1.0, "y": 1.0},
+             {"type": "nightstand", "x": 3.0, "y": 1.0}]
+
+    una_vez = fur.place(items)
+    dibujadas_una_vez = len(preview.DRAWN)
+
+    limpiar()
+    dos_veces = fur.place(items + items)
+
+    check("solo dibuja las piezas unicas",
+          dos_veces["count"] == una_vez["count"] == 2, dos_veces["count"])
+    check("dibuja la misma geometria que sin repetir",
+          len(preview.DRAWN) == dibujadas_una_vez,
+          f"{len(preview.DRAWN)} vs {dibujadas_una_vez}")
+    check("lo avisa en vez de callarselo",
+          "warning" in dos_veces and len(dos_veces["duplicates"]) == 2,
+          dos_veces.get("warning"))
+    check("sin repetidos no molesta con un warning",
+          "warning" not in una_vez, una_vez.get("warning"))
+
+    # Dos piezas del MISMO tipo en puntos distintos no son un duplicado.
+    limpiar()
+    distintas = fur.place([{"type": "nightstand", "x": 1.0, "y": 1.0},
+                           {"type": "nightstand", "x": 2.5, "y": 1.0}])
+    check("dos iguales en puntos distintos si se dibujan",
+          distintas["count"] == 2 and "warning" not in distintas, distintas)
+
+
 def main() -> int:
     for fn in [test_colocacion_contra_los_cuatro_muros,
                test_no_amuebla_el_muro_de_la_puerta,
@@ -258,7 +296,8 @@ def main() -> int:
                test_ningun_mueble_se_pisa_con_otro,
                test_la_mesada_se_interrumpe_en_los_aparatos,
                test_dibuja_de_verdad_y_deja_huella,
-               test_errores_claros]:
+               test_errores_claros,
+               test_lista_repetida_no_se_dibuja_dos_veces]:
         print(fn.__name__)
         fn()
 

@@ -10,6 +10,7 @@ apoyar contra cualquier muro.
 """
 from __future__ import annotations
 
+import json
 import math
 from typing import Any, Optional
 
@@ -283,6 +284,15 @@ def place(items: list[dict[str, Any]]) -> dict[str, Any]:
     """
     ensure_layer()
     placed = []
+    # Dos piezas IDENTICAS (mismo tipo, mismo punto, mismas medidas) son
+    # siempre un error de quien arma la lista: dibujarlas deja dos contornos
+    # exactamente superpuestos, que no se ven en pantalla pero salen como
+    # linea doble al plotear y como "entidades duplicadas" en
+    # check_drawing_hygiene. Paso de verdad: un modelo mando la lista de
+    # suggest_furniture dos veces en la misma llamada y quedaron 32
+    # entidades encimadas en MOBILIARIO. Se dibuja la primera y se avisa.
+    vistos: set[str] = set()
+    repetidos: list[str] = []
 
     for i, item in enumerate(items):
         kind = str(item.get("type", "")).lower()
@@ -310,10 +320,29 @@ def place(items: list[dict[str, Any]]) -> dict[str, Any]:
                     f"Acepta: {', '.join(sorted(defaults) + ['rotation_deg'])}."
                 )
 
+        firma = json.dumps([kind, round(float(item["x"]), 4),
+                            round(float(item["y"]), 4),
+                            sorted((k, str(v)) for k, v in kwargs.items())],
+                           sort_keys=True)
+        if firma in vistos:
+            repetidos.append(f"#{i + 1} {kind} en "
+                             f"({item['x']}, {item['y']})")
+            continue
+        vistos.add(firma)
+
         fn(float(item["x"]), float(item["y"]), **kwargs)
         placed.append({"type": kind, "x": item["x"], "y": item["y"]})
 
-    return {"placed": placed, "count": len(placed)}
+    resultado: dict[str, Any] = {"placed": placed, "count": len(placed)}
+    if repetidos:
+        resultado["duplicates"] = repetidos
+        resultado["warning"] = (
+            "%d pieza(s) venian repetidas y NO se dibujaron de nuevo (%s%s). "
+            "Dos muebles identicos en el mismo punto dejan contornos "
+            "superpuestos: revisa si la lista se mando dos veces."
+            % (len(repetidos), "; ".join(repetidos[:4]),
+               "..." if len(repetidos) > 4 else ""))
+    return resultado
 
 
 # ------------------------------------------------- amueblado automatico

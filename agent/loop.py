@@ -23,7 +23,7 @@ import json
 from typing import Any, Callable, Optional
 
 from .mcp_link import ConexionMcp
-from .providers import ErrorProveedor
+from .providers import ErrorProveedor, ToolInvalida
 
 VUELTAS_MAX = 40
 
@@ -88,6 +88,8 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
     def se_corto() -> bool:
         return bool(cancelado and cancelado())
 
+    invalidas = 0        # veces seguidas que pidió una tool inexistente
+
     for vuelta in range(vueltas_max):
         if se_corto():
             avisar("aviso", {"texto": "Cancelado. Lo que ya se dibujó queda "
@@ -95,9 +97,35 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
             break
         try:
             respuesta = proveedor.completar(mensajes, tools)
+        except ToolInvalida as exc:
+            # Pidió una tool que no está en este perfil. Es un error del
+            # MODELO, no de la conexión: se le dice cuáles tiene y sigue,
+            # igual que con cualquier error de tool. Cortar acá tiraba dos
+            # minutos de dibujo por un nombre mal puesto — pasó de verdad:
+            # check_all avisó de 16 grupos de entidades duplicadas, el
+            # modelo quiso arreglarlo con delete_entities (que no estaba en
+            # el perfil) y Groq rechazó el request entero con un 400.
+            invalidas += 1
+            if invalidas > 3:
+                avisar("aviso", {"texto":
+                                 f"{exc} Insistió {invalidas} veces con tools "
+                                 "que no tiene; se corta."})
+                break
+            avisar("aviso", {"texto": f"{exc} Se le avisa y sigue."})
+            disponibles = ", ".join(
+                t.get("function", {}).get("name", "") for t in tools)
+            mensajes.append({
+                "role": "user",
+                "content": (f"ERROR: la tool '{exc.tool or '?'}' no existe en "
+                            "este perfil, así que la llamada NO se ejecutó. "
+                            "Las que tenés son: " + disponibles + ". Si "
+                            "necesitás una que no está, decilo y seguí con el "
+                            "resto del trabajo.")})
+            continue
         except ErrorProveedor as exc:
             avisar("aviso", {"texto": str(exc)})
             break
+        invalidas = 0
 
         if hasattr(proveedor, "resumen"):
             avisar("uso", proveedor.resumen())

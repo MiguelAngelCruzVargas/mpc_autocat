@@ -35,6 +35,12 @@ PERFILES: dict[str, list[str]] = {
         "create_level_mark", "create_section_mark", "set_layer",
         "save_drawing", "zoom_", "capture_viewport", "get_extents",
         "new_document", "open_document", "list_documents",
+        # Sin esto el perfil deja DIAGNOSTICAR pero no CORREGIR: check_all
+        # avisa "16 grupos de entidades duplicadas" y el agente no tiene con
+        # qué borrarlas. Pasó de verdad, y encima Groq rechazó el request
+        # entero por pedir una tool que no estaba en la lista.
+        "delete_entity", "delete_entities", "undo",
+        "list_entities", "get_entity", "select_entities",
     ],
     "civil": [
         "create_alignment", "create_road", "create_stationing",

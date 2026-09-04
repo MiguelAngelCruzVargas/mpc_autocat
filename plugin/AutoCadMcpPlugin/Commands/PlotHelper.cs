@@ -104,6 +104,46 @@ namespace AutoCadMcpPlugin.Commands
                     "Ya hay un plot en curso en este AutoCAD; esperá a que termine antes " +
                     "de pedir otro.");
 
+            // BACKGROUNDPLOT: con el valor de fábrica (2 = publicar en segundo
+            // plano) el PublishEngine le pasa el trabajo a OTRO acad.exe que
+            // AutoCAD lanza como proceso hijo. Medido en vivo: ese hijo vive
+            // ~40 s por captura, y mientras vive ProcessPlotState no vuelve
+            // a NotPlotting -- el siguiente plot se queda en la espera de
+            // arriba y todo lo demás (zoom_extents, get_extents) se encola
+            // detrás. Una captura pasaba de 7 s a 40-80 s en cuanto había
+            // dos seguidas. En primer plano (0) el mismo proceso renderiza,
+            // termina, y el estado se libera al instante. Se restaura al
+            // salir: es una preferencia del usuario, no de este plugin.
+            object backgroundPlotAnterior = null;
+            try
+            {
+                backgroundPlotAnterior = Application.GetSystemVariable("BACKGROUNDPLOT");
+                Application.SetSystemVariable("BACKGROUNDPLOT", (short)0);
+            }
+            catch (System.Exception)
+            {
+                backgroundPlotAnterior = null;   // se plotea igual, como antes
+            }
+
+            try
+            {
+            PlotToFileCore(doc, layoutId, plotType, device, fullPath, window);
+            }
+            finally
+            {
+                if (backgroundPlotAnterior != null)
+                {
+                    try { Application.SetSystemVariable("BACKGROUNDPLOT", backgroundPlotAnterior); }
+                    catch (System.Exception) { /* no vale la pena fallar el plot por esto */ }
+                }
+            }
+        }
+
+        private static void PlotToFileCore(Document doc, ObjectId layoutId,
+                                           Autodesk.AutoCAD.DatabaseServices.PlotType plotType,
+                                           string device, string fullPath,
+                                           Extents2d? window)
+        {
             var db = doc.Database;
             string layoutName;
             using (var tr0 = db.TransactionManager.StartTransaction())

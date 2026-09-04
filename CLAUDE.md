@@ -17,6 +17,16 @@ Con un terreno y un programa de ambientes, ANTES de trazar nada:
 1. **`check_program`** — ¿el programa entra en el terreno? Si no entra, decirlo
    con el número y las opciones, y esperar la decisión del cliente. Un programa
    que no cierra no se arregla dibujando con cuidado.
+
+   **El terreno casi nunca es un rectángulo.** Cuando no lo sea, pasá
+   `lot_points` con el polígono real en vez de `lot_width`/`lot_depth`: la
+   superficie sale por shoelace de los vértices. Un lote de "26 x 60" con
+   laterales de 64.00 y 62.30 no mide 1,560 m² — describirlo como rectángulo
+   regala decenas de m² que no existen, y sobre ese número se decide si el
+   programa entra. `check_layout` acepta el mismo `lot_points` y verifica que
+   cada recinto caiga DENTRO del terreno y no dentro del rectángulo que lo
+   envuelve: en un terreno irregular no es lo mismo, y en uno cóncavo (en L)
+   no alcanza ni con que las cuatro esquinas estén adentro.
 2. **`check_layout`** — ¿la zonificación cumple? Verifica lo que la geometría no
    muestra y que hace inconstruible un plano bien dibujado.
 
@@ -101,6 +111,18 @@ Elegir formato y escala según lo que entre:
 | Planta arquitectónica, cortes, fachadas | 1:50 – 1:100 | A1 |
 | Planta de un local chico | 1:50 | A2 / A3 |
 | Detalles constructivos | 1:5 – 1:20 | A3 |
+
+**El `drawArea` no es informativo: es dónde va el dibujo.** Trazar en el origen
+mientras el cajón quedó en otro lado deja la planta cruzando el marco, y eso ya
+pasó. `check_sheet` lo verifica al cierre, pero el momento de acertarle es al
+empezar: las coordenadas del plano salen del `drawArea`, no de (0,0).
+
+**No hagas esa cuenta a mano: `sheet_origin`.** Se le pasa cuánto va a medir el
+dibujo y devuelve el punto donde apoyar su esquina inferior izquierda, ya con
+el margen descontado (en **mm de papel**, no del modelo — la confusión de
+siempre). Si no entra lo dice con los números y sugiere el denominador de
+escala; nunca propone achicar el dibujo. Calcular el origen a mano en un
+script es exactamente lo que hacía que este error volviera.
 
 Verificá que el dibujo entre: el `drawArea` que devuelve `create_sheet` está en
 unidades del modelo. Si el terreno mide 40x25m y el área útil da 80.6x51.8,
@@ -281,6 +303,28 @@ no se puede replantear en campo. La tool lo CALCULA de los vértices reales
 `atan2`, superficie por shoelace — y marca los vértices V1, V2... sobre el
 polígono. Nada se escribe de memoria: el número que sale es el que mide el
 dibujo. Formato copiado de un plano profesional real (INFONAVIT).
+
+**Y al revés: `traverse`.** Del cuadro impreso de un plano ajeno a las
+coordenadas — rumbo + distancia por lado, recorridos en orden. Es el inverso
+exacto de `create_construction_table`, y con los dos se cierra el ciclo: se
+lee el cuadro de un plano de otro estudio, se reconstruyen los vértices y se
+vuelve a dibujar el terreno, sin resolver trigonometría a mano.
+
+Lee el rumbo como sale impreso (`N 45°30'20" W`, con símbolos o sin ellos, y
+**E/O** además de E/W: en castellano el oeste se escribe O, y ese detalle
+rompía la lectura de planos mexicanos). Acepta `azimuth` en grados decimales
+como alternativa.
+
+Lo que de verdad devuelve es el **error de cierre**: cuánto le falta al último
+lado para volver al arranque. Un cuadro bien copiado cierra con centímetros
+(la tolerancia es 1/5000 del perímetro); si no cierra, el dato está mal leído
+y dibujarlo sería propagar el error. Pasó en la primera prueba: cuatro rumbos
+tipeados de una imagen borrosa daban 4.29 m de error — 125 veces la
+tolerancia — y la tool lo dijo en vez de dibujar un terreno inventado.
+
+Ojo con la precisión del formato: un cuadro se escribe en segundos enteros,
+así que la ida y vuelta vértices→rumbos→vértices tiene hasta medio segundo de
+redondeo. Sobre un lado de 60 m son 0.15 mm; despreciable, pero no es cero.
 
 ## 4.ter Ejes de obra civil: SIEMPRE con `bulges`
 
@@ -682,10 +726,25 @@ xrefs (uno `Unresolved`/`FileNotFound` sale como problema). Y `export_pdf`
 avisa si hubo dibujo nuevo desde el último `check_all`: exportar es entregar,
 y un plano se revisa antes de entregarse.
 
+`check_sheet` responde la pregunta que ningún otro check podía: **¿el dibujo
+entra en el área útil de su propia lámina?** `create_sheet` devuelve
+`drawArea` y hasta ahora nadie lo verificaba — pasó de verdad que la planta se
+trazó en el origen mientras el cajón estaba en otra parte, y la casa terminó
+cruzando el marco con todos los demás `check_*` en verde, porque cada tool
+había hecho bien SU parte. Distingue los dos casos, que se arreglan distinto:
+si el dibujo **entra pero está corrido** se mueve (`move_entities`, o rehacer
+la lámina con `get_extents` + `fit_sheet`); si **no entra ni centrado** hay
+que subir el formato o el denominador de escala, nunca achicar el dibujo.
+
 `check_annotations` cierra el ciclo de los otros cuatro `check_*`: ellos miran
 el proyecto, este mira el plano **como dibujo** — que las cotas, las burbujas
-y los rótulos no se encimen. Sale limpio solo mientras se use
-`create_dimension_chain`; da problemas cuando algo se ubicó a mano.
+y los rótulos no se encimen. Revisa por dos caminos: la memoria de la sesión
+(lo que reservaron las cadenas y los ejes) **y el DWG**, preguntándole a
+AutoCAD la caja de cada texto. El segundo es el único que sirve en un plano
+que dibujó OTRO proceso — otra sesión de la interfaz, otro agente: sin él
+devolvía "limpio" con siete `RECÁMARA PRINCIPAL 11.2 m2` encimados a la
+vista. Cuesta ~0.5 s por texto (es una consulta al plugin por cada uno), así
+que en un plano grande tarda: `drawing=False` mira solo la memoria.
 
 `create_table` es de lo que se ubica a mano: no sabe qué más hay dibujado, así
 que un cuadro de especificaciones al lado de una ilustración (un detalle de
@@ -726,7 +785,11 @@ Antes de dar por buena cualquier cambio, correr `python mcp_server/run_tests.py`
 inglete de las esquinas, el partido de los huecos, que los abatimientos barran
 90°, que las cadenas de cota y las burbujas no se pisen en ningún orden de
 dibujo, y que cambiar de dibujo no arrastre el estado del anterior. Con AutoCAD
-abierto, `--live` agrega `test_live.py`.
+abierto corre **solo** además `test_live.py` (`--no-live` para que no lo haga),
+y ese dibuja sobre el **dibujo activo** — el del usuario — y tarda ~3 min.
+Limpia lo suyo al final, pero si la corrida se corta o AutoCAD se cae, lo que
+dibujó se queda ahí (pasó: 133 entidades de prueba dentro del plano de una
+casa). Con el plano de un cliente activo: guardarlo antes, o `--no-live`.
 
 ## Espacio papel vs espacio modelo
 
@@ -794,6 +857,22 @@ es síncrono desde el plugin 1.4.0: cuando responde, el zoom ya está hecho
   el layout terminado y mirarlo antes de darlo por bueno — no asumir que
   la escala/orientación quedó como se pidió solo porque `create_viewport`
   no tiró error.
+- **Cada plot lanzaba un `acad.exe` hijo** que vivía ~40 s: con
+  `BACKGROUNDPLOT` en su valor de fábrica, el `PublishEngine` manda el
+  trabajo a otro proceso, y mientras ese hijo vive `ProcessPlotState` no
+  vuelve a `NotPlotting` — el siguiente `capture_viewport` esperaba al
+  anterior y **todo lo demás** (`zoom_extents`, `get_extents`) se encolaba
+  detrás: una captura pasaba de 7 s a 40-80 s en cuanto había dos seguidas,
+  y el visor de la interfaz se veía en blanco todo ese rato. Desde el plugin
+  1.7.0 `PlotHelper` fuerza `BACKGROUNDPLOT=0` durante el plot y lo restaura
+  al salir. Si `ping` devuelve una versión anterior y ves `acad.exe` hijos
+  en el administrador de tareas, es eso.
+- **Cada comando al plugin cuesta ~0.5 s aunque no haga nada** (`ping`
+  incluido): la cola `MainThreadQueue` se vacía en `Application.Idle`, y ese
+  evento tiene esa cadencia. No es la red ni AutoCAD: es el diseño de la
+  cola. Por eso todo lo que itera entidades (`check_annotations` contra el
+  DWG, la limpieza de `test_live`) tiene que agrupar en UNA llamada
+  (`delete_entities`, cache de `get_entity`) en vez de hacer N viajes.
 
 ## La fuente: nunca dejar `txt.shx`
 

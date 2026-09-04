@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Optional
 
 import httpx
@@ -66,6 +67,38 @@ PRESETS: dict[str, dict[str, str]] = {
 
 class ErrorProveedor(RuntimeError):
     """Falla al hablar con la API del modelo."""
+
+
+class ToolInvalida(ErrorProveedor):
+    """El modelo pidio una tool que no esta en el catalogo que se le mando.
+
+    Groq (y otros con validacion del lado del servidor) rechazan el request
+    ENTERO con un 400 en vez de devolver la llamada para que el host la
+    conteste. Tratarlo como fatal tira la corrida por un nombre mal puesto;
+    es un error del modelo, y como cualquier otro error de tool tiene que
+    volverle a EL para que lo corrija.
+    """
+
+    def __init__(self, mensaje: str, tool: str = "") -> None:
+        super().__init__(mensaje)
+        self.tool = tool
+
+
+def _error_de_respuesta(codigo: int, texto: str) -> ErrorProveedor:
+    """El 400 que corresponda: tool inexistente se distingue del resto."""
+    try:
+        detalle = json.loads(texto).get("error") or {}
+    except (ValueError, AttributeError, TypeError):
+        detalle = {}
+    mensaje = str(detalle.get("message", ""))
+    if detalle.get("code") == "tool_use_failed" or (
+            "not in request.tools" in mensaje):
+        m = re.search(r"tool '([^']+)'", mensaje)
+        nombre = m.group(1) if m else ""
+        return ToolInvalida(
+            f"El modelo pidió la tool '{nombre or '?'}', que no está en el "
+            "perfil elegido.", nombre)
+    return ErrorProveedor(f"El modelo respondió {codigo}: {texto[:600]}")
 
 
 # Modelos que ACEPTAN imágenes. No hay ninguna API estándar que lo informe,
@@ -192,8 +225,7 @@ class ProveedorOpenAI(ContadorUso):
                 f"No se pudo llamar a {self.url}: {exc}") from exc
 
         if r.status_code >= 400:
-            raise ErrorProveedor(
-                f"El modelo respondió {r.status_code}: {r.text[:600]}")
+            raise _error_de_respuesta(r.status_code, r.text)
         datos = r.json()
         if not datos.get("choices"):
             raise ErrorProveedor(

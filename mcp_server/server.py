@@ -26,6 +26,7 @@ import rules as rules_mod
 import furniture as fur_mod
 import geom as geom_mod
 import layers as layers_mod
+import placement as placement_mod
 import sections as sect_mod
 import session as session_mod
 import sheet as sheet_mod
@@ -239,7 +240,8 @@ def suggest_layout(lot_width: float, lot_depth: float,
 def check_layout(rooms: list[dict[str, Any]], doors: list[dict[str, Any]],
                   lot_width: Optional[float] = None,
                   lot_depth: Optional[float] = None,
-                  windows: Optional[list[dict[str, Any]]] = None
+                  windows: Optional[list[dict[str, Any]]] = None,
+                  lot_points: Optional[list[list[float]]] = None
                   ) -> dict[str, Any]:
     """Verifica las reglas de zonificación de una planta ANTES de dibujarla.
 
@@ -257,14 +259,22 @@ def check_layout(rooms: list[dict[str, Any]], doors: list[dict[str, Any]],
            from='EXTERIOR' marca la puerta de calle.
     windows: [{"room": "SALA", "wall": "izquierda"}] para colindancias.
 
+    lot_points: el POLÍGONO real del terreno, [[x,y], ...], para cuando no es
+    rectangular — que es casi siempre en un lote real. Con él se verifica
+    además que cada recinto caiga DENTRO del terreno, y no dentro del
+    rectángulo que lo envuelve: en un terreno irregular no es lo mismo.
+
     Devuelve 'ok' y, por cada problema, la regla que viola y cómo corregirlo."""
     return rules_mod.check_layout(rooms=rooms, doors=doors, lot_width=lot_width,
-                                  lot_depth=lot_depth, windows=windows)
+                                  lot_depth=lot_depth, windows=windows,
+                                  lot_points=lot_points)
 
 
 @mcp.tool()
-def check_program(lot_width: float, lot_depth: float,
-                   spaces: list[dict[str, Any]],
+def check_program(spaces: list[dict[str, Any]],
+                   lot_width: Optional[float] = None,
+                   lot_depth: Optional[float] = None,
+                   lot_points: Optional[list[list[float]]] = None,
                    outdoor: Optional[list[dict[str, Any]]] = None,
                    wall_thickness: float = 0.15,
                    circulation_factor: float = 0.12,
@@ -279,6 +289,13 @@ def check_program(lot_width: float, lot_depth: float,
 
     spaces: [{"name": "Recámara", "width": 3.85, "depth": 4.00}] o con
     "area" directamente.
+    El terreno se describe de UNA de dos formas: lot_width x lot_depth si es
+    rectangular, o lot_points con el POLÍGONO real ([[x,y], ...]) si no lo es
+    — que es casi siempre en un lote real. La superficie sale por shoelace de
+    los vértices, no de multiplicar frente por fondo: un terreno de 26 x 60
+    con laterales de 64.00 y 62.30 no mide 1,560 m2, y sobre ese número se
+    decide si el programa entra.
+
     outdoor: áreas descubiertas que se restan del terreno (cochera, jardín,
     patio de servicio), mismo formato.
     circulation_factor: pasillos y vestíbulos como fracción del programa; 0.12
@@ -288,26 +305,171 @@ def check_program(lot_width: float, lot_depth: float,
     podría salir (reducir la cochera, achicar el ambiente mayor, repartir)."""
     return sheet_mod.check_program(
         lot_width=lot_width, lot_depth=lot_depth, spaces=spaces,
-        outdoor=outdoor, wall_thickness=wall_thickness,
+        lot_points=lot_points, outdoor=outdoor,
+        wall_thickness=wall_thickness,
         circulation_factor=circulation_factor, model_units=model_units)
 
 
 @mcp.tool()
-def check_annotations(items: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+def check_annotations(items: Optional[list[dict[str, Any]]] = None,
+                      drawing: bool = True,
+                      margin: float = 0.0,
+                      ignore_layers: Optional[list[str]] = None,
+                      limit: int = 400) -> dict[str, Any]:
     """¿El aparato de anotación se pisa entre sí? Cotas, burbujas de eje y rótulos.
 
     Los otros check_* miran el proyecto; este mira el plano COMO DIBUJO, que es
     donde aparece el error que no se ve hasta abrir el DWG: la cadena de cotas
     generales cruzando la fila de burbujas de eje.
 
-    Normalmente sale limpio solo, porque create_dimension_chain y
-    create_axis_grid reservan la franja que ocupan y se apilan una afuera de
-    otra. Da problemas cuando algo se ubicó a mano eligiendo el offset de
-    memoria — que es exactamente el caso que conviene verificar.
+    Revisa por DOS caminos, y hacen falta los dos:
+
+    - La memoria de la sesión (space.py): lo que create_dimension_chain y
+      create_axis_grid reservaron. Sirve para apilar la próxima cadena afuera
+      de las que ya hay.
+    - **El DWG**: le pregunta a AutoCAD la caja de cada texto y qué cae
+      adentro. Es el único que sirve en un plano que dibujó OTRO proceso —
+      otra sesión de la interfaz, otro agente, otro estudio. La memoria de
+      esta sesión de ese dibujo no sabe nada, y sin este segundo camino el
+      check devolvía 'limpio' con siete rótulos superpuestos a la vista.
+
+    El camino por el DWG CUESTA: son dos consultas a AutoCAD por texto (su
+    caja, y qué cae dentro), ~0.85 s cada texto medido con AutoCAD ocioso.
+    Una planta de 104 textos son ~90 s. Es el precio de revisar de verdad —
+    y sigue siendo mucho menos que descubrir el rótulo encimado cuando el
+    plano ya está impreso. Para acelerar: `limit` más bajo, o `drawing=False`
+    si solo se quiere apilar la próxima cadena de cotas.
+
+    drawing: False para revisar SOLO la memoria (sin AutoCAD abierto).
+    margin: aire exigido alrededor de cada texto, en unidades del dibujo.
+    ignore_layers: capas que no cuentan como estorbo (un fondo de referencia).
+    limit: cuántos textos del DWG se revisan como máximo.
 
     items: rectángulos a verificar SIN dibujarlos, para preguntar ANTES de
     ubicar algo a mano: [{"x0":.., "y0":.., "x1":.., "y1":.., "what":".."}]."""
-    return rules_mod.check_annotations(items=items)
+    r = rules_mod.check_annotations(items=items)
+    if not drawing:
+        return r
+
+    try:
+        dib = placement_mod.check_text_placement(
+            margin=margin, ignore_layers=ignore_layers, limit=limit)
+    except acad.AutoCadError as exc:
+        # Sin AutoCAD el chequeo de memoria sigue valiendo: se devuelve lo
+        # que hay y se dice qué parte NO se pudo mirar, en vez de fallar
+        # entero y dejar al que llama sin ninguna de las dos revisiones.
+        r["warning"] = ("No se pudo revisar el DWG (%s): lo que sigue mira "
+                        "solo la memoria de esta sesión, así que un texto "
+                        "encimado que venga de otro proceso no aparece."
+                        % exc)
+        return r
+
+    nuevos = [{
+        "rule": "anotacion encimada",
+        "problem": p["problem"],
+        "fix": ("Movelo con place_labels, que busca el primer lugar libre y "
+                "registra el texto para que el siguiente tampoco se encime; "
+                "si el rótulo está duplicado, borrá el que sobra."),
+        "box": p.get("box"),
+        "handle": p.get("handle"),
+        "kind": p.get("kind"),
+    } for p in dib.get("problems", [])]
+
+    r["problems"] = list(r.get("problems", [])) + nuevos
+    r["count"] = len(r["problems"])
+    r["ok"] = not r["problems"]
+    r["textsChecked"] = dib.get("checked", 0)
+    if dib.get("warning"):
+        r["warning"] = dib["warning"]
+    franjas = r.get("bands", [])
+    r["message"] = (
+        "El margen esta limpio: %d franja(s) de anotacion y %d texto(s) del "
+        "dibujo, sin encimarse." % (len(franjas), r["textsChecked"])
+        if r["ok"] else
+        "%d encimadura(s): %s" % (r["count"],
+                                  "; ".join(p["problem"]
+                                            for p in r["problems"])))
+    return r
+
+
+@mcp.tool()
+def sheet_origin(width: float, height: float, margin_mm: float = 10.0,
+                 align: str = "center") -> dict[str, Any]:
+    """DÓNDE arrancar a dibujar para caer dentro del área útil de la lámina.
+
+    Llamala DESPUÉS de create_sheet y ANTES de trazar la primera línea, con
+    cuánto va a medir el dibujo. Devuelve el punto donde apoyar su esquina
+    inferior izquierda, y a partir de ahí se corren todas las coordenadas.
+
+    Existe porque el error se repetía: `create_sheet` devuelve `drawArea` y
+    el plano se trazaba igual en el origen, quedando cruzado con el cajón.
+    `check_sheet` lo detecta al final; esto lo evita al principio.
+
+    width/height: el tamaño de la GEOMETRÍA sola, en unidades del modelo.
+    margin_mm: aire alrededor, en MILÍMETROS DE PAPEL (10 mm es cómodo; una
+    cadena de cotas ocupa unos 26 mm, así que subilo si vas a acotar).
+    align: "center" (default) o "bottom-left".
+
+    Si no entra lo dice con los números y sugiere el denominador de escala que
+    haría falta. Nunca propone achicar el dibujo: eso lo sacaría de escala."""
+    return sheet_mod.sheet_origin(width=width, height=height,
+                                  margin_mm=margin_mm, align=align)
+
+
+@mcp.tool()
+def traverse(sides: list[dict[str, Any]], start_x: float = 0.0,
+             start_y: float = 0.0) -> dict[str, Any]:
+    """Del CUADRO DE CONSTRUCCIÓN a las coordenadas: rumbo + distancia por lado.
+
+    Es el inverso de `create_construction_table`, y con los dos se cierra el
+    ciclo: del cuadro impreso de un plano ajeno se reconstruyen los vértices
+    del terreno y se puede volver a dibujarlo. Sin esto, un terreno descrito
+    por rumbos hay que resolverlo a mano con trigonometría — y eso es
+    exactamente lo que no tiene que pasar.
+
+    sides: un elemento por lado, EN ORDEN DE RECORRIDO:
+      [{"bearing": "N 45°30'20\\" W", "distance": 26.00}, ...]
+    En vez de 'bearing' se acepta 'azimuth' en grados decimales desde el
+    norte, horario. El rumbo se lee tal como sale impreso (° ' " o espacios,
+    y E/W o E/O — en castellano el oeste se escribe O).
+
+    Devuelve los vértices listos para create_polyline, la superficie por
+    shoelace, el perímetro y el ERROR DE CIERRE: cuánto le falta al último
+    lado para volver al arranque. Eso último es lo que importa en obra — un
+    cuadro bien copiado cierra con centímetros; si no cierra, el dato está
+    mal leído y dibujarlo sería propagar el error."""
+    return civil_mod.traverse(sides=sides, start_x=start_x, start_y=start_y)
+
+
+@mcp.tool()
+def check_sheet() -> dict[str, Any]:
+    """¿Lo dibujado ENTRA en el área útil de la lámina, o cruza el cajón?
+
+    `create_sheet` devuelve `drawArea` — el rectángulo donde tiene que entrar
+    todo el plano — y hasta acá nadie lo verificaba: quedaba en manos de quien
+    dibuja acordarse. Pasó de verdad: la planta se trazó en el origen mientras
+    el cajón estaba en otra parte, y la casa terminó cruzando el marco. Los
+    demás `check_*` daban limpio, porque cada tool hizo bien SU parte; el error
+    estaba en la relación entre dos cosas que nadie miraba juntas.
+
+    Compara la extensión real del dibujo (sin las capas CAJON y ROTULO, que
+    son el marco mismo) contra el área útil de la última lámina creada en esta
+    sesión. Distingue los dos casos, que se arreglan distinto: si el dibujo
+    entra pero está corrido, se mueve; si no entra ni centrado, hay que subir
+    el formato o la escala — nunca achicar el dibujo fuera de escala.
+
+    Sin `create_sheet` previo en esta sesión no hay contra qué comparar y lo
+    dice en 'skipped' en vez de inventar un veredicto."""
+    area = space_mod.sheet()
+    if area is None:
+        return {"ok": True,
+                "skipped": "no se creó ninguna lámina en esta sesión: no hay "
+                           "contra qué comparar. Llamá create_sheet primero."}
+    extents = acad.call("get_extents",
+                        {"layers": None,
+                         "excludeLayers": [sheet_mod.LAYER_FRAME,
+                                           sheet_mod.LAYER_TITLE]})
+    return sheet_mod.fit_report(extents, area)
 
 
 @mcp.tool()
@@ -681,6 +843,13 @@ def check_all(rooms: Optional[list[dict[str, Any]]] = None,
                                       min_length=wall_min_length)
     else:
         skipped.append("walls (falta walls)")
+
+    # Que el dibujo entre en su propia lámina: el error que ningún otro
+    # check_* podía ver, porque cada tool hizo bien su parte por separado.
+    try:
+        checks["sheet"] = check_sheet()
+    except acad.AutoCadError:
+        skipped.append("sheet (no se pudo medir la extensión)")
 
     checks["annotations"] = check_annotations(items=annotation_items)
     checks["hygiene"] = check_drawing_hygiene(

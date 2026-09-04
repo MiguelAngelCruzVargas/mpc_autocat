@@ -41,16 +41,30 @@ TIPOS_ANOTACION = frozenset({
 TIPOS_TEXTO = ("DBText", "MText")
 
 
-def _caja(handle: str) -> Optional[list[float]]:
-    """La caja de una entidad, tal como la calcula AutoCAD."""
+def _caja(handle: str,
+          cache: Optional[dict[str, Optional[list[float]]]] = None
+          ) -> Optional[list[float]]:
+    """La caja de una entidad, tal como la calcula AutoCAD.
+
+    Con `cache`, cada handle se le pregunta a AutoCAD UNA vez. No es un
+    detalle: la misma entidad grande -- el contorno de muros, el cajon de la
+    lamina -- cae en la caja de casi todos los textos, y sin cache se pedia
+    su bbox una vez por texto. En un plano de 104 textos eso eran ~200
+    llamadas de mas, y cada llamada al plugin cuesta ~0.5 s.
+    """
+    if cache is not None and handle in cache:
+        return cache[handle]
     try:
         d = acad.call("get_entity", {"handle": handle})
     except acad.AutoCadError:
-        return None
-    caja = d.get("bbox")
-    if not caja or len(caja) != 4:
-        return None
-    return [float(c) for c in caja]
+        caja = None
+    else:
+        cruda = d.get("bbox")
+        caja = ([float(c) for c in cruda]
+                if cruda and len(cruda) == 4 else None)
+    if cache is not None:
+        cache[handle] = caja
+    return caja
 
 
 def _contiene(afuera: Optional[list[float]],
@@ -84,6 +98,7 @@ def check_text_placement(margin: float = 0.0,
         raise ValueError("margin no puede ser negativo.")
 
     ignorar = {c.upper() for c in (ignore_layers or [])}
+    cajas: dict[str, Optional[list[float]]] = {}
 
     sel = acad.call("select_entities", {
         "x1": None, "y1": None, "x2": None, "y2": None,
@@ -96,7 +111,7 @@ def check_text_placement(margin: float = 0.0,
     encerrados = 0
 
     for t in textos:
-        caja = _caja(t["handle"])
+        caja = _caja(t["handle"], cajas)
         if caja is None:
             sin_caja += 1
             continue
@@ -127,7 +142,8 @@ def check_text_placement(margin: float = 0.0,
             #
             # Un Hatch es la excepcion: si el texto cae adentro de un achurado,
             # el achurado le pasa POR ENCIMA aunque lo contenga.
-            if o["type"] != "Hatch" and _contiene(_caja(o["handle"]), caja):
+            if (o["type"] != "Hatch"
+                    and _contiene(_caja(o["handle"], cajas), caja)):
                 recuadros.append({"handle": o["handle"], "type": o["type"],
                                   "layer": o.get("layer")})
                 continue

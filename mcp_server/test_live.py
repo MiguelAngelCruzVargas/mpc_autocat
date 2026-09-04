@@ -73,10 +73,32 @@ def run(name: str, fn) -> None:
 
 
 def track(result: dict) -> dict:
-    h = result.get("handle")
-    if isinstance(h, str):
-        created.append(h)
+    """Anota lo que la tool dibujo, para borrarlo al final.
+
+    Recorre TODA la respuesta: 'handle' suelto, 'handles' en lista, y lo que
+    venga anidado ('views', 'placements', 'entities'...). Antes miraba solo
+    el 'handle' de primer nivel, y las tools que devuelven varios (perfil,
+    secciones, tablas, leyenda, cadenamiento, lamina, mobiliario, rotulos)
+    quedaban sin anotar: 133 entidades de prueba se quedaron a vivir en el
+    plano de una casa que estaba abierto en ese momento. El dibujo activo
+    es el del USUARIO -- lo que se le dibuja encima se le tiene que sacar.
+    """
+    _recoger(result)
     return result
+
+
+def _recoger(nodo) -> None:
+    if isinstance(nodo, dict):
+        for clave, valor in nodo.items():
+            if clave == "handle" and isinstance(valor, str):
+                created.append(valor)
+            elif clave == "handles" and isinstance(valor, list):
+                created.extend(h for h in valor if isinstance(h, str))
+            else:
+                _recoger(valor)
+    elif isinstance(nodo, list):
+        for item in nodo:
+            _recoger(item)
 
 
 # ------------------------------------------------- tools que faltaba probar
@@ -1317,12 +1339,23 @@ def limpiar() -> None:
         return
 
     if created:
-        print(f"\nlimpiando {len(created)} entidades...")
-        for h in created:
-            try:
-                acad.call("delete_entity", {"handle": h})
-            except acad.AutoCadError:
-                pass
+        # Sin repetidos y en UNA llamada: 300 delete_entity de a uno son
+        # 300 viajes al socket (~0.5 s cada uno por la cola de Idle del
+        # plugin) -- dos minutos y medio solo para limpiar.
+        unicos = list(dict.fromkeys(created))
+        print(f"\nlimpiando {len(unicos)} entidades...")
+        try:
+            r = acad.call("delete_entities", {"handles": unicos,
+                                              "ignoreMissing": True})
+            print(f"borradas {r.get('deleted', '?')}")
+        except acad.AutoCadError as exc:
+            print(f"no se pudo limpiar de una: {str(exc)[:80]}; "
+                  "se intenta de a una.")
+            for h in unicos:
+                try:
+                    acad.call("delete_entity", {"handle": h})
+                except acad.AutoCadError:
+                    pass
 
     if LAYOUT["nombre"]:
         try:

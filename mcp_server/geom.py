@@ -30,6 +30,116 @@ def left_normal(u: Point) -> Point:
     return -u[1], u[0]
 
 
+def _cerrar(points: list) -> list[Point]:
+    """La lista de vértices sin repetir el primero al final."""
+    pts = [(float(p[0]), float(p[1])) for p in points]
+    if len(pts) >= 2 and math.dist(pts[0], pts[-1]) < EPS:
+        pts = pts[:-1]
+    if len(pts) < 3:
+        raise ValueError("Un polígono necesita al menos 3 vértices distintos.")
+    return pts
+
+
+def polygon_area(points: list) -> float:
+    """Superficie de un polígono por la fórmula del zapatero (shoelace).
+
+    Siempre positiva: no importa si los vértices vienen en sentido horario o
+    antihorario, que es como llegan de un plano real según por dónde se
+    empezó a recorrer el terreno.
+    """
+    pts = _cerrar(points)
+    doble = 0.0
+    for i, p0 in enumerate(pts):
+        p1 = pts[(i + 1) % len(pts)]
+        doble += p0[0] * p1[1] - p1[0] * p0[1]
+    return abs(doble) / 2.0
+
+
+def polygon_perimeter(points: list) -> float:
+    pts = _cerrar(points)
+    return sum(math.dist(pts[i], pts[(i + 1) % len(pts)])
+               for i in range(len(pts)))
+
+
+def point_in_polygon(x: float, y: float, points: list,
+                     tolerance: float = EPS) -> bool:
+    """¿El punto cae DENTRO del polígono? (un punto sobre el borde cuenta).
+
+    Ray casting horizontal. El borde se acepta a propósito: un recinto que
+    apoya justo en la colindancia está adentro del terreno, y rechazarlo
+    obligaría a dejar un retiro que el proyecto puede no tener.
+    """
+    pts = _cerrar(points)
+    n = len(pts)
+
+    for i in range(n):
+        p0, p1 = pts[i], pts[(i + 1) % n]
+        if _en_segmento(x, y, p0, p1, tolerance):
+            return True
+
+    adentro = False
+    for i in range(n):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % n]
+        if (y0 > y) != (y1 > y):
+            corte = x0 + (y - y0) * (x1 - x0) / (y1 - y0)
+            if x < corte:
+                adentro = not adentro
+    return adentro
+
+
+def _en_segmento(x: float, y: float, p0: Point, p1: Point,
+                 tolerance: float) -> bool:
+    """¿El punto está sobre el segmento, dentro de la tolerancia?"""
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    largo = math.hypot(dx, dy)
+    if largo < EPS:
+        return math.dist((x, y), p0) <= tolerance
+    # Distancia perpendicular a la recta, y que caiga entre los extremos.
+    t = ((x - p0[0]) * dx + (y - p0[1]) * dy) / (largo * largo)
+    if t < -tolerance or t > 1.0 + tolerance:
+        return False
+    px, py = p0[0] + t * dx, p0[1] + t * dy
+    return math.hypot(x - px, y - py) <= tolerance
+
+
+def segments_cross(a0: Point, a1: Point, b0: Point, b1: Point) -> bool:
+    """¿Dos segmentos se cruzan de verdad? (tocarse en un extremo no cuenta)."""
+    def lado(p: Point, q: Point, r: Point) -> float:
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    d1, d2 = lado(b0, b1, a0), lado(b0, b1, a1)
+    d3, d4 = lado(a0, a1, b0), lado(a0, a1, b1)
+    return ((d1 > EPS and d2 < -EPS) or (d1 < -EPS and d2 > EPS)) and \
+           ((d3 > EPS and d4 < -EPS) or (d3 < -EPS and d4 > EPS))
+
+
+def rect_in_polygon(x0: float, y0: float, x1: float, y1: float,
+                    points: list, tolerance: float = 1e-6) -> bool:
+    """¿El rectángulo entra ENTERO en el polígono?
+
+    No alcanza con que las cuatro esquinas estén adentro: en un terreno
+    cóncavo (una escuadra, un terreno en L) las cuatro pueden caer dentro y
+    el rectángulo cruzar igual por afuera. Por eso además se comprueba que
+    ningún lado del rectángulo corte un lado del polígono.
+    """
+    ax0, ax1 = min(x0, x1), max(x0, x1)
+    ay0, ay1 = min(y0, y1), max(y0, y1)
+    esquinas = [(ax0, ay0), (ax1, ay0), (ax1, ay1), (ax0, ay1)]
+    if not all(point_in_polygon(px, py, points, tolerance)
+               for px, py in esquinas):
+        return False
+
+    pts = _cerrar(points)
+    n = len(pts)
+    for i in range(4):
+        a0, a1 = esquinas[i], esquinas[(i + 1) % 4]
+        for j in range(n):
+            if segments_cross(a0, a1, pts[j], pts[(j + 1) % n]):
+                return False
+    return True
+
+
 def intersect(p: Point, u: Point, q: Point, v: Point) -> Optional[Point]:
     """Intersección de las rectas p+s·u y q+t·v. None si son paralelas."""
     den = u[0] * v[1] - u[1] * v[0]

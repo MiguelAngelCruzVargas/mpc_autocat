@@ -18,6 +18,7 @@ import math
 from typing import Any, Optional
 
 import autocad_client as acad
+import geom
 import furniture as fur
 import space
 
@@ -274,6 +275,8 @@ def create_sheet(
         "full_x1": fx1, "full_y1": fy1, "full_x2": tx1, "full_y2": fy2,
     }
 
+    space.set_sheet(draw)
+
     resultado = {
         "format": fmt_name,
         "scale": scale_text,
@@ -292,9 +295,172 @@ def create_sheet(
     return resultado
 
 
+def fit_report(extents: dict[str, Any],
+               area: Optional[dict[str, float]]) -> dict[str, Any]:
+    """¿Lo dibujado entra en el area util de la lamina?
+
+    Geometria pura, sin AutoCAD: recibe la extension medida y el rectangulo
+    util, y dice por que lado se sale y cuanto. La cuenta es trivial; lo que
+    faltaba era que ALGUIEN la hiciera. Un plano que cruza su propio cajon
+    pasa todos los demas check_*, porque cada tool hizo bien su parte: el
+    error esta en la relacion entre dos cosas que nadie miraba juntas.
+    """
+    if area is None:
+        return {"ok": True, "skipped": "no se creo ninguna lamina en esta "
+                                       "sesion: no hay contra que comparar."}
+    if not extents or extents.get("isEmpty"):
+        return {"ok": True, "drawArea": area,
+                "skipped": "no hay nada dibujado todavia."}
+
+    try:
+        x0 = float(extents["minX"]); y0 = float(extents["minY"])
+        x1 = float(extents["maxX"]); y1 = float(extents["maxY"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("extents necesita minX/minY/maxX/maxY numericos. "
+                         f"({exc})")
+
+    ax0, ay0 = min(area["x1"], area["x2"]), min(area["y1"], area["y2"])
+    ax1, ay1 = max(area["x1"], area["x2"]), max(area["y1"], area["y2"])
+
+    fuera = {}
+    if x0 < ax0:
+        fuera["left"] = round(ax0 - x0, 4)
+    if y0 < ay0:
+        fuera["bottom"] = round(ay0 - y0, 4)
+    if x1 > ax1:
+        fuera["right"] = round(x1 - ax1, 4)
+    if y1 > ay1:
+        fuera["top"] = round(y1 - ay1, 4)
+
+    ancho_util, alto_util = ax1 - ax0, ay1 - ay0
+    ancho, alto = x1 - x0, y1 - y0
+    # No es lo mismo "se salio porque esta corrido" que "no entra ni
+    # centrado": el primero se arregla moviendo, el segundo obliga a
+    # cambiar de formato o de escala, y el consejo tiene que decirlo.
+    cabe_centrado = ancho <= ancho_util + 1e-9 and alto <= alto_util + 1e-9
+
+    problemas = []
+    if fuera:
+        lados = ", ".join(f"{lado} {cuanto:g}"
+                          for lado, cuanto in sorted(fuera.items()))
+        if cabe_centrado:
+            arreglo = ("El dibujo SI entra en la lamina, esta corrido. Movelo "
+                       "con move_entities, o rehace la lamina con "
+                       "create_sheet(origin_x=, origin_y=) sobre el dibujo "
+                       "que ya existe (get_extents + fit_sheet).")
+        else:
+            arreglo = ("El dibujo NO entra ni centrado (mide %.2f x %.2f y el "
+                       "area util es %.2f x %.2f). Subi el formato o el "
+                       "denominador de escala -- NUNCA achiques el dibujo "
+                       "fuera de escala." % (ancho, alto, ancho_util,
+                                             alto_util))
+        problemas.append({
+            "rule": "dibujo dentro de la lamina",
+            "problem": ("Lo dibujado se sale del area util del cajon por: "
+                        + lados + " (unidades del modelo)."),
+            "fix": arreglo})
+
+    return {
+        "ok": not problemas,
+        "problems": problemas,
+        "count": len(problemas),
+        "drawArea": {"x0": ax0, "y0": ay0, "x1": ax1, "y1": ay1},
+        "drawn": {"x0": x0, "y0": y0, "x1": x1, "y1": y1},
+        "outsideBy": fuera,
+        "fitsIfCentered": cabe_centrado,
+        "message": ("El dibujo entra en el area util de la lamina."
+                    if not problemas else problemas[0]["problem"]),
+    }
+
+
 # ------------------------------------------- encuadre sobre lo ya dibujado
 
 # Formatos ordenados de menor a mayor, para elegir el primero que alcance.
+def sheet_origin(width: float, height: float,
+                 margin_mm: float = 10.0,
+                 align: str = "center") -> dict[str, Any]:
+    """DÓNDE arranca el dibujo para que caiga dentro del área útil de la lámina.
+
+    Es la cuenta que se venía haciendo a mano —y que se venía olvidando—:
+    `create_sheet` devuelve el `drawArea` y después el dibujo se trazaba en el
+    origen igual, quedando cruzado con el cajón. Acá se pide el punto de
+    inserción y se dibuja a partir de él.
+
+    width/height: cuánto va a medir lo que se va a dibujar, en unidades del
+    modelo. Es el tamaño de la GEOMETRÍA sola; el aire para cotas, burbujas de
+    eje y rótulos se agrega con `margin_mm`, que va en milímetros de papel
+    (10 mm es una franja cómoda; una cadena de cotas ocupa ~26 mm).
+
+    align: "center" centra en las dos direcciones; "bottom-left" apoya en la
+    esquina inferior izquierda del área útil, que es lo que conviene cuando el
+    dibujo se acota por abajo y por la izquierda.
+
+    Devuelve el punto (x, y) donde apoyar la esquina inferior izquierda, si
+    entra, y —cuando no entra— cuánto se pasa y qué denominador de escala
+    haría falta. NUNCA achica el dibujo: eso sería sacarlo de escala.
+    """
+    if width <= 0 or height <= 0:
+        raise ValueError("width y height tienen que ser > 0.")
+    if margin_mm < 0:
+        raise ValueError("margin_mm no puede ser negativo.")
+
+    area = space.sheet()
+    if not area:
+        raise ValueError(
+            "No hay lámina: llamá create_sheet antes. El punto de inserción "
+            "sale de su área útil, no de un supuesto.")
+
+    margen = margin_mm * space.units_per_paper_mm()
+    ax0, ay0 = area["x1"] + margen, area["y1"] + margen
+    ax1, ay1 = area["x2"] - margen, area["y2"] - margen
+    disponible_w, disponible_h = ax1 - ax0, ay1 - ay0
+
+    entra = width <= disponible_w + 1e-9 and height <= disponible_h + 1e-9
+
+    if align == "bottom-left":
+        x, y = ax0, ay0
+    elif align == "center":
+        x = ax0 + (disponible_w - width) / 2.0
+        y = ay0 + (disponible_h - height) / 2.0
+    else:
+        raise ValueError(
+            "align tiene que ser 'center' o 'bottom-left', no %r." % align)
+
+    resultado: dict[str, Any] = {
+        "x": round(x, 4), "y": round(y, 4),
+        "fits": entra,
+        "available": {"width": round(disponible_w, 3),
+                      "height": round(disponible_h, 3)},
+        "needed": {"width": round(width, 3), "height": round(height, 3)},
+        "marginModel": round(margen, 3),
+    }
+
+    if not entra:
+        falta_w = max(0.0, width - disponible_w)
+        falta_h = max(0.0, height - disponible_h)
+        resultado["shortBy"] = {"width": round(falta_w, 3),
+                                "height": round(falta_h, 3)}
+        # Cuánto habría que agrandar el denominador para que entre. Se
+        # redondea hacia ARRIBA a un valor de uso corriente: una escala
+        # 1:137 no existe en un plano.
+        actual = space.units_per_paper_mm()
+        factor = max(width / disponible_w if disponible_w > 0 else 99.0,
+                     height / disponible_h if disponible_h > 0 else 99.0)
+        denominador = actual * 1000.0 * factor
+        for candidato in (25, 50, 75, 100, 125, 150, 200, 250, 500, 1000):
+            if candidato >= denominador - 1e-6:
+                resultado["suggestedScaleDenominator"] = candidato
+                break
+        resultado["warning"] = (
+            "NO entra: el dibujo mide %.2f x %.2f y el área útil deja %.2f x "
+            "%.2f (con %g mm de margen). Subí el formato de lámina o el "
+            "denominador de escala%s — achicar el dibujo lo sacaría de escala."
+            % (width, height, disponible_w, disponible_h, margin_mm,
+               (" (probá 1:%d)" % resultado["suggestedScaleDenominator"])
+               if "suggestedScaleDenominator" in resultado else ""))
+    return resultado
+
+
 FORMATOS_ORDENADOS = ["A4", "A3", "A2", "A1", "A0"]
 
 # Escalas de dibujo usuales; se prueban de la mas detallada a la mas chica.
@@ -433,8 +599,10 @@ def fit_sheet(min_x: float, min_y: float, max_x: float, max_y: float,
 
 # ------------------------------------------ validacion del programa vs lote
 
-def check_program(lot_width: float, lot_depth: float,
-                  spaces: list[dict[str, Any]],
+def check_program(lot_width: Optional[float] = None,
+                  lot_depth: Optional[float] = None,
+                  spaces: Optional[list[dict[str, Any]]] = None,
+                  lot_points: Optional[list[list[float]]] = None,
                   outdoor: Optional[list[dict[str, Any]]] = None,
                   wall_thickness: float = 0.15,
                   circulation_factor: float = 0.12,
@@ -457,8 +625,21 @@ def check_program(lot_width: float, lot_depth: float,
     Devuelve fits (True/False), el déficit en m2 y en porcentaje, y qué habría
     que hacer para que cierre.
     """
-    if lot_width <= 0 or lot_depth <= 0:
-        raise ValueError("El terreno tiene que tener dimensiones positivas.")
+    # El terreno se describe de UNA de dos formas: el rectangulo de
+    # siempre, o el poligono real. El poligono manda cuando esta, porque
+    # un terreno irregular metido en un rectangulo miente la superficie
+    # -- y sobre esa superficie se decide si el programa entra.
+    if lot_points:
+        area_lote = geom.polygon_area(lot_points)
+        lote_desc = "%s vertices, %.2f m2 medidos" % (len(lot_points),
+                                                      area_lote)
+    else:
+        if not lot_width or not lot_depth or lot_width <= 0 or lot_depth <= 0:
+            raise ValueError(
+                "Falta el terreno: pasá lot_width y lot_depth, o lot_points "
+                "con el polígono real si el terreno no es rectangular.")
+        area_lote = lot_width * lot_depth
+        lote_desc = "%.2f x %.2f m" % (lot_width, lot_depth)
     if not spaces:
         raise ValueError("Hay que pasar al menos un ambiente en 'spaces'.")
 
@@ -475,7 +656,6 @@ def check_program(lot_width: float, lot_depth: float,
             raise ValueError(f"{donde} '{item.get('name','?')}': área <= 0.")
         return a
 
-    area_lote = lot_width * lot_depth
     descubierto = [{"name": o.get("name", "descubierto"),
                     "area": area_de(o, "Área descubierta")}
                    for o in (outdoor or [])]

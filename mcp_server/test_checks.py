@@ -36,6 +36,8 @@ def _mock_dibujo_limpio() -> None:
             return {"textStyles": []}
         if cmd == "list_xrefs":
             return {"xrefs": []}
+        if cmd == "select_entities":
+            return {"entities": []}
         raise AssertionError(f"comando no mockeado: {cmd}")
     server.acad.call = fake
 
@@ -51,6 +53,8 @@ def _mock_capa_fantasma() -> None:
             return {"textStyles": []}
         if cmd == "list_xrefs":
             return {"xrefs": []}
+        if cmd == "select_entities":
+            return {"entities": []}
         raise AssertionError(f"comando no mockeado: {cmd}")
     server.acad.call = fake
 
@@ -131,6 +135,8 @@ def test_xref_roto_es_problema() -> None:
                 return {"entities": []}
             if cmd == "list_styles":
                 return {"textStyles": []}
+            if cmd == "select_entities":
+                return {"entities": []}
             if cmd == "list_xrefs":
                 return {"xrefs": [
                     {"name": "ARQ-BASE", "path": "C:/x/arq.dwg",
@@ -150,11 +156,81 @@ def test_xref_roto_es_problema() -> None:
         server.acad.call = real
 
 
+def test_texto_encimado_en_el_dwg_se_detecta() -> None:
+    """El rotulo duplicado que check_annotations daba por bueno.
+
+    Paso de verdad: un plano dibujado por OTRO proceso (otra sesion de la
+    interfaz web) quedo con 'RECAMARA PRINCIPAL 11.2 m2' escrito siete veces,
+    uno encima de otro, y check_annotations contesto "el margen esta limpio".
+    No fallaba la comparacion: la memoria de space.py de ESTA sesion no sabia
+    que esos textos existian. Ahora se le pregunta al dibujo.
+    """
+    real = server.acad.call
+    try:
+        cajas = {"A1": [1.0, 9.0, 3.0, 9.2],     # los dos rotulos
+                 "A2": [1.1, 9.05, 3.1, 9.25]}   # pisandose
+        def fake(cmd, params=None):
+            if cmd == "list_layers":
+                return {"layers": [{"name": "0"}]}
+            if cmd == "list_entities":
+                return {"entities": []}
+            if cmd == "list_styles":
+                return {"textStyles": []}
+            if cmd == "list_xrefs":
+                return {"xrefs": []}
+            if cmd == "get_entity":
+                return {"bbox": cajas[params["handle"]]}
+            if cmd == "select_entities":
+                # Sin tipos pedidos es la consulta "que cae en esta caja".
+                if params.get("types") is None:
+                    return {"entities": [
+                        {"handle": "A1", "type": "DBText", "layer": "TEXTOS"},
+                        {"handle": "A2", "type": "DBText", "layer": "TEXTOS"}]}
+                return {"entities": [
+                    {"handle": "A1", "layer": "TEXTOS"},
+                    {"handle": "A2", "layer": "TEXTOS"}]}
+            raise AssertionError(f"comando no mockeado: {cmd}")
+        server.acad.call = fake
+
+        r = server.check_annotations()
+        check("los dos rotulos encimados salen como problema",
+              not r["ok"] and r["count"] >= 2, r)
+        check("dice de que texto se trata",
+              all(p.get("handle") for p in r["problems"]), r["problems"])
+        check("cuenta los textos que reviso", r.get("textsChecked") == 2, r)
+
+        # Y sigue sirviendo sin AutoCAD, mirando solo la memoria.
+        solo_memoria = server.check_annotations(drawing=False)
+        check("drawing=False no toca el dibujo", solo_memoria["ok"],
+              solo_memoria)
+    finally:
+        server.acad.call = real
+
+
+def test_sin_autocad_avisa_en_vez_de_fallar() -> None:
+    """Si el dibujo no se puede leer, el chequeo de memoria igual vale: se
+    devuelve lo que hay y se dice que parte quedo sin mirar."""
+    real = server.acad.call
+    try:
+        def fake(cmd, params=None):
+            raise server.acad.AutoCadError("no hay conexion con AutoCAD")
+        server.acad.call = fake
+        r = server.check_annotations()
+        check("no explota", isinstance(r, dict), r)
+        check("avisa que no pudo leer el DWG",
+              "no se pudo revisar el dwg" in (r.get("warning") or "").lower(),
+              r.get("warning"))
+    finally:
+        server.acad.call = real
+
+
 def main() -> int:
     for fn in [test_junta_problemas_de_layout_y_geometry,
                test_todo_limpio_no_inventa_nada,
                test_hygiene_se_normaliza_al_mismo_formato,
-               test_xref_roto_es_problema]:
+               test_xref_roto_es_problema,
+               test_texto_encimado_en_el_dwg_se_detecta,
+               test_sin_autocad_avisa_en_vez_de_fallar]:
         print(fn.__name__)
         fn()
 
