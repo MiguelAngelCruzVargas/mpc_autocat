@@ -209,10 +209,10 @@
         <section class="sidebar-section">
           <div class="section-title">Plantillas Rápidas</div>
           <div class="quick-prompts-list">
-            <button class="quick-prompt-btn" data-prompt="Dibuja una casa de 2 plantas de 7x15m con 3 recámaras, 2.5 baños, sala, cocina y cochera.">Casa 2 Plantas (7×15m)</button>
-            <button class="quick-prompt-btn" data-prompt="Dibuja una zapata aislada Z-1 de 1.20x1.20m con dado de 30x30cm y armado de varilla #4 @ 15cm.">Zapata Aislada Z-1</button>
-            <button class="quick-prompt-btn" data-prompt="Verifica las capas del dibujo actual, lista los bloques insertados y acota todos los muros principales.">Acotar & Revisar Capas</button>
-            <button class="quick-prompt-btn" data-prompt="Inserta distribución eléctrica básica con luminarias LED empotradas y contactos dobles a 0.30m.">Instalación Eléctrica</button>
+            <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Dibuja una casa de 2 plantas de 7x15m con 3 recámaras, 2.5 baños, sala, cocina y cochera.">Casa 2 Plantas (7×15m)</button>
+            <button class="quick-prompt-btn" data-perfil="estructura" data-prompt="Dibuja una zapata aislada Z-1 de 1.20x1.20m con dado de 30x30cm y armado de varilla #4 @ 15cm.">Zapata Aislada Z-1</button>
+            <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Verifica las capas del dibujo actual, lista los bloques insertados y acota todos los muros principales.">Acotar & Revisar Capas</button>
+            <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Inserta distribución eléctrica básica con luminarias LED empotradas y contactos dobles a 0.30m.">Instalación Eléctrica</button>
           </div>
         </section>
 
@@ -224,6 +224,9 @@
         </button>
         <button class="btn btn-sm btn-ghost" id="btn-open-settings" title="Abrir configuración">
           Configuración
+        </button>
+        <button class="btn btn-sm btn-danger" id="btn-apagar" title="Cerrar la interfaz por completo (ya no queda ninguna consola para hacerlo)">
+          Apagar
         </button>
       </div>
     </aside>
@@ -239,6 +242,7 @@
             <div class="chat-header-title">
               <span id="session-title">AutoCAD IA</span>
               <span class="status-badge live" id="connection-status">● Listo</span>
+              <span class="status-badge acad-checking" id="acad-status" title="Se revisa solo cada 15s, sin pedirle nada al modelo.">🔌 AutoCAD: verificando…</span>
             </div>
             <div class="chat-header-subtitle" id="session-subtitle">Iniciando…</div>
           </div>
@@ -281,21 +285,21 @@
           <p>Asegurate de tener AutoCAD abierto con el plugin cargado. Podés pedirme distribuciones completas, cotas, muebles o consultar entidades existentes.</p>
           
           <div class="preset-cards-grid">
-            <button class="preset-card">
+            <button class="preset-card" data-perfil="arquitectura">
               <div class="preset-info">
                 <strong>Distribución Arquitectónica</strong>
                 <span class="preset-text">Dibujá una casa de 3 recámaras y 2 baños en un lote de 8×16 m, amueblada y acotada</span>
               </div>
             </button>
 
-            <button class="preset-card">
+            <button class="preset-card" data-perfil="basico">
               <div class="preset-info">
                 <strong>Diagnóstico y Capas</strong>
                 <span class="preset-text">Hacé ping al plugin de AutoCAD y decime qué versión y capas están cargadas</span>
               </div>
             </button>
 
-            <button class="preset-card">
+            <button class="preset-card" data-perfil="estructura">
               <div class="preset-info">
                 <strong>Detalle Estructural</strong>
                 <span class="preset-text">Dibujá el detalle de cimentación con zapatas aisladas de 1.50x1.50m con trabes de liga</span>

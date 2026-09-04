@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -53,6 +54,69 @@ CAPTURAS = os.path.join(os.environ.get("TEMP", "."), "autocad_mcp_ui")
 # catálogo real y se cachea — abrir el servidor MCP en cada request para
 # esto sería absurdo.
 _CONTEO: dict[str, int] = {}
+
+
+# ---------------------------------------------------------- estado del plugin
+
+# Mismo puerto que usa mcp_server/autocad_client.py, para no depender de
+# él: ese módulo asume que corre desde su propia carpeta (importa 'session'
+# por nombre pelado) y traerlo acá solo para un chequeo de conectividad
+# complica más de lo que ahorra. Es la misma lógica, duplicada a propósito.
+_ACAD_HOST = os.environ.get("ACAD_MCP_HOST", "127.0.0.1")
+_ACAD_PORT_FILE = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "AutoCadMcp", "port")
+
+
+def _puerto_plugin() -> int:
+    explicito = os.environ.get("ACAD_MCP_PORT")
+    if explicito:
+        return int(explicito)
+    try:
+        with open(_ACAD_PORT_FILE, encoding="utf-8") as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return 8765
+
+
+def _verificar_autocad(timeout: float = 1.5) -> dict[str, Any]:
+    """Chequeo rápido e independiente del bucle del agente.
+
+    Antes la única forma de saber si AutoCAD estaba conectado era pedirle
+    algo al modelo y esperar: si el perfil de tools no incluía 'ping' (le
+    faltaba a arquitectura/civil/estructura — ver PERFILES en cli.py, ya
+    corregido) el modelo ni sabía que existía esa pregunta, y si el pedido
+    SÍ llegaba a intentar dibujar, tardaba 30+ segundos en fallar. Esto
+    contesta en ~1.5s como mucho, sin gastar un solo token, y la interfaz
+    lo consulta sola cada 15s (ver actualizarEstadoAutoCAD en app.js).
+    """
+    puerto = _puerto_plugin()
+    try:
+        with socket.create_connection((_ACAD_HOST, puerto), timeout=timeout) as sock:
+            pedido = json.dumps({"id": "estado-ui", "cmd": "ping", "params": {}})
+            sock.sendall(pedido.encode("utf-8") + b"\n")
+            sock.settimeout(timeout)
+            buffer = b""
+            while not buffer.endswith(b"\n"):
+                trozo = sock.recv(4096)
+                if not trozo:
+                    break
+                buffer += trozo
+    except (OSError, socket.timeout):
+        return {"conectado": False,
+                "detalle": f"No se pudo conectar en {_ACAD_HOST}:{puerto}."}
+
+    if not buffer:
+        return {"conectado": False,
+                "detalle": "El plugin cerró la conexión sin responder."}
+    try:
+        respuesta = json.loads(buffer.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return {"conectado": False, "detalle": "Respuesta del plugin ilegible."}
+
+    if not respuesta.get("ok"):
+        return {"conectado": False,
+                "detalle": respuesta.get("error", "Error desconocido en el plugin.")}
+    return {"conectado": True, **(respuesta.get("result") or {})}
 
 
 def _contar_perfiles() -> dict[str, int]:
@@ -258,6 +322,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(cuerpo)
             return
 
+        if self.path == "/api/autocad_estado":
+            self._json(_verificar_autocad())
+            return
+
         if self.path == "/api/estado":
             guardadas = {f["proveedor"]: f for f in credenciales.listar()}
             conteo = _contar_perfiles()
@@ -387,6 +455,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True})
             return
 
+        if self.path == "/api/apagar":
+            # Sin consola visible (lanzado con pythonw), este es el único
+            # botón de apagado que le queda al usuario — antes era cerrar
+            # la ventana negra.
+            self._json({"ok": True, "mensaje": "Apagando…"})
+            threading.Thread(target=_apagar_en_hilo_aparte, daemon=True).start()
+            return
+
         if self.path == "/api/captura":
             self._captura(datos)
             return
@@ -488,7 +564,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
+        # NO "keep-alive": esta respuesta no manda Content-Length ni va
+        # chunked (se escribe evento a evento a medida que el agente
+        # trabaja), así que la única forma en que un cliente HTTP sabe
+        # dónde termina el cuerpo es viendo que el socket se cierra. Decir
+        # "keep-alive" sin eso es mentirle al cliente: curl y el navegador
+        # se quedan esperando para siempre después del último evento —
+        # confirmado en vivo, con AutoCAD real conectado: el chat quedaba
+        # con "Agente procesando…" y Enviar bloqueado hasta refrescar la
+        # página, aunque la respuesta ya estuviera completa y renderizada.
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
 
         def emitir(tipo: str, cuerpo: dict) -> None:
@@ -537,10 +623,28 @@ class Handler(BaseHTTPRequestHandler):
         emitir("fin", {})
 
 
+_SERVIDOR: Optional[ThreadingHTTPServer] = None
+
+
+def _apagar_en_hilo_aparte() -> None:
+    """servidor.shutdown() bloquea hasta que serve_forever() para — llamarlo
+    desde el mismo hilo que está corriendo serve_forever() (el del pedido
+    HTTP que llega a /api/apagar) se queda esperando a sí mismo para
+    siempre. Por eso corre en un hilo aparte, con un respiro corto para que
+    la respuesta HTTP de "apagando" le alcance a llegar al navegador antes.
+    """
+    import time
+    time.sleep(0.3)
+    if _SERVIDOR is not None:
+        _SERVIDOR.shutdown()
+
+
 def iniciar(puerto: int = 8770, abrir: bool = True) -> None:
+    global _SERVIDOR
     # 127.0.0.1 y no 0.0.0.0: nadie más en la red puede llegar acá, que es
     # lo que corresponde para algo que tiene tus API keys.
     servidor = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
+    _SERVIDOR = servidor
     # El MCP se levanta YA, de fondo, mientras el navegador todavía está
     # abriendo: así la primera captura no arranca pagando el subproceso.
     MOTOR.precalentar()

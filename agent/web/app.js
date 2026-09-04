@@ -63,6 +63,37 @@ function guardarPref(clave, valor) {
 }
 
 // ==========================================================================
+// ESTADO DEL PLUGIN DE AUTOCAD
+// ==========================================================================
+// Antes esto no se veía en ningún lado: había que pedirle algo al agente y
+// esperar (y si el perfil no tenía la tool 'ping', ni eso). Ahora se
+// consulta solo, cada 15s, contra /api/autocad_estado — que no le cuesta
+// un token a nadie y contesta en ~1.5s como mucho aunque AutoCAD esté
+// cerrado.
+async function actualizarEstadoAutoCAD() {
+  const badge = $('#acad-status');
+  if (!badge) return;
+  try {
+    const res = await fetch('/api/autocad_estado');
+    const datos = await res.json();
+    if (datos.conectado) {
+      badge.className = 'status-badge live';
+      const version = datos.pluginVersion || datos.version;
+      badge.textContent = '🔌 AutoCAD: conectado' + (version ? ` (v${version})` : '');
+      badge.title = 'El plugin respondió al último chequeo.';
+    } else {
+      badge.className = 'status-badge acad-off';
+      badge.textContent = '🔌 AutoCAD: sin conectar';
+      badge.title = datos.detalle || 'Abrí AutoCAD con el plugin cargado.';
+    }
+  } catch {
+    badge.className = 'status-badge acad-off';
+    badge.textContent = '🔌 AutoCAD: sin conectar';
+    badge.title = 'No se pudo consultar el estado.';
+  }
+}
+
+// ==========================================================================
 // ARRANQUE DE LA APLICACIÓN
 // ==========================================================================
 async function init() {
@@ -101,6 +132,8 @@ async function init() {
   }
 
   registrarEventos();
+  actualizarEstadoAutoCAD();
+  setInterval(actualizarEstadoAutoCAD, 15000);
 }
 
 function poblarOpciones() {
@@ -381,6 +414,54 @@ function scrollAbajo() {
   if (msgs) msgs.scrollTop = msgs.scrollHeight;
 }
 
+// El modelo contesta en Markdown (**negrita**, `code`, citas con "> ",
+// listas con "- "): antes se mostraba tal cual, asteriscos y todo, en vez
+// de formateado. Sin librería — es el mismo criterio del resto del
+// proyecto ("http.server viene con Python", ni una dependencia de más — y
+// esto sigue esa misma línea del lado del navegador) — y solo el subset
+// que el agente realmente usa; nada de tablas, imágenes ni encabezados.
+function escaparHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function formatearMarkdown(texto) {
+  const enlinea = (s) => s
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  const bloques = [];
+  let parrafo = [];
+  let lista = [];
+  let cita = [];
+  const cerrarParrafo = () => {
+    if (parrafo.length) { bloques.push(`<p>${parrafo.join('<br>')}</p>`); parrafo = []; }
+  };
+  const cerrarLista = () => {
+    if (lista.length) { bloques.push(`<ul>${lista.join('')}</ul>`); lista = []; }
+  };
+  const cerrarCita = () => {
+    if (cita.length) { bloques.push(`<blockquote>${cita.join('<br>')}</blockquote>`); cita = []; }
+  };
+
+  for (const linea of escaparHtml(texto).split('\n')) {
+    const l = linea.trim();
+    if (l.startsWith('&gt; ') || l === '&gt;') {
+      cerrarParrafo(); cerrarLista();
+      cita.push(enlinea(l.replace(/^&gt;\s?/, '')));
+    } else if (/^[-*]\s+/.test(l)) {
+      cerrarParrafo(); cerrarCita();
+      lista.push(`<li>${enlinea(l.replace(/^[-*]\s+/, ''))}</li>`);
+    } else if (l === '') {
+      cerrarParrafo(); cerrarLista(); cerrarCita();
+    } else {
+      cerrarLista(); cerrarCita();
+      parrafo.push(enlinea(l));
+    }
+  }
+  cerrarParrafo(); cerrarLista(); cerrarCita();
+  return bloques.join('') || '';
+}
+
 function agregarBurbuja(autor, texto, esUsuario = false, adjuntos = []) {
   limpiarVacio();
   const msgs = $('#chat-messages');
@@ -392,7 +473,13 @@ function agregarBurbuja(autor, texto, esUsuario = false, adjuntos = []) {
     <div class="message-bubble"></div>
   `;
   const burbuja = row.querySelector('.message-bubble');
-  burbuja.textContent = texto;
+  // El texto del usuario se muestra tal cual escribió (no interpretamos SU
+  // markdown); la respuesta del agente sí se formatea.
+  if (esUsuario) {
+    burbuja.textContent = texto;
+  } else {
+    burbuja.innerHTML = formatearMarkdown(texto);
+  }
   // Las imágenes enviadas quedan en el hilo: si después el agente dice
   // algo raro, se puede ver qué fue exactamente lo que miró.
   if (adjuntos.length) {
@@ -438,7 +525,10 @@ function agregarAvisoChat(texto) {
   if (!msgs) return;
   const notice = document.createElement('div');
   notice.className = 'chat-notice';
-  notice.innerHTML = `<div>${texto}</div>`;
+  // Estos avisos pueden traer texto de un error o de la respuesta cruda
+  // de una tool: se escapa antes de meterlo en innerHTML por lo mismo que
+  // el burbujeo de arriba, no porque haya markdown que mostrar acá.
+  notice.innerHTML = `<div>${escaparHtml(texto)}</div>`;
   msgs.appendChild(notice);
   scrollAbajo();
 }
@@ -601,8 +691,9 @@ async function procesarSSE(response) {
   const decoder = new TextDecoder();
   let buffer = '';
   let realizoDibujo = false;
+  let terminado = false;
 
-  while (true) {
+  while (!terminado) {
     const { done, value } = await reader.read();
     if (done) break;
 
@@ -616,12 +707,22 @@ async function procesarSSE(response) {
 
       try {
         const ev = JSON.parse(dataLine.slice(6));
+        // 'fin' es la señal real de que no viene nada más — no confiar
+        // solo en el 'done' del stream para cortar acá: si el servidor
+        // deja la conexión mal cerrada (pasó de verdad, ver web.py), el
+        // reader se queda esperando para siempre y el chat entero se
+        // traba con "Agente procesando…" y Enviar bloqueado.
+        if (ev.tipo === 'fin') {
+          terminado = true;
+          break;
+        }
         if (despacharEvento(ev)) {
           realizoDibujo = true;
         }
       } catch {}
     }
   }
+  try { await reader.cancel(); } catch {}
   return realizoDibujo;
 }
 
@@ -1067,6 +1168,22 @@ function registrarEventos() {
     };
   }
 
+  const btnApagar = $('#btn-apagar');
+  if (btnApagar) {
+    btnApagar.onclick = async () => {
+      if (!confirm('¿Apagar AutoCAD IA? Se cierra el servidor local — para volver a abrirlo, doble clic en AutoCAD-IA.bat.')) return;
+      try {
+        await fetch('/api/apagar', { method: 'POST' });
+      } catch (e) {
+        // el servidor puede cerrar la conexion antes de que la respuesta
+        // termine de llegar - no es un error real, es justo lo que se pidio.
+      }
+      document.body.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:16px system-ui;color:#888;">' +
+        'AutoCAD IA se apagó. Puedes cerrar esta pestaña.</div>';
+    };
+  }
+
   const btnSend = $('#btn-send');
   if (btnSend) btnSend.onclick = enviarMensaje;
 
@@ -1107,6 +1224,17 @@ function registrarEventos() {
         inChat.style.height = 'auto';
         inChat.style.height = Math.min(inChat.scrollHeight, 150) + 'px';
         cerrarSidebar();
+      }
+      // Cada plantilla pide tools de un dominio puntual (la zapata necesita
+      // Estructura, no Civil): sin esto quedaba lo que el usuario hubiera
+      // dejado elegido antes, el modelo pedía una tool que no estaba en
+      // ese perfil, y el pedido fallaba con un mensaje confuso en vez de
+      // dibujar. Pasó de verdad probando "Zapata Aislada Z-1" en Civil.
+      const perfil = preset.dataset.perfil;
+      const selProf = $('#select-profile');
+      if (perfil && selProf && selProf.value !== perfil) {
+        selProf.value = perfil;
+        selProf.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
   });

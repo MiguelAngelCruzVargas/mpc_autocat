@@ -40,7 +40,14 @@ PERFILES: dict[str, list[str]] = {
         # qué borrarlas. Pasó de verdad, y encima Groq rechazó el request
         # entero por pedir una tool que no estaba en la lista.
         "delete_entity", "delete_entities", "undo",
-        "list_entities", "get_entity", "select_entities",
+        "list_entities", "get_entity", "select_entities", "ping",
+        "list_layers",
+        # Instalación eléctrica: vive en su propio módulo (electrical.py)
+        # pero no tiene perfil propio, y "Arquitectura" es donde tiene
+        # sentido dibujarla (necesita los muros ya puestos). Sin esto el
+        # preset "Instalación Eléctrica" de la interfaz pedía una tool que
+        # ningún perfil ofrecía, en ninguno de los cuatro.
+        "place_devices", "create_conduit",
     ],
     "civil": [
         "create_alignment", "create_road", "create_stationing",
@@ -49,7 +56,7 @@ PERFILES: dict[str, list[str]] = {
         "create_construction_table", "create_layer_section",
         "create_flow_arrow", "create_sheet", "check_", "set_layer",
         "save_drawing", "zoom_", "capture_viewport", "get_extents",
-        "new_document", "open_document",
+        "new_document", "open_document", "ping", "list_layers",
     ],
     "estructura": [
         "check_footing", "check_column", "check_slab_span",
@@ -59,29 +66,47 @@ PERFILES: dict[str, list[str]] = {
         "create_quantities_table", "export_quantities_csv",
         "create_sheet", "set_layer", "save_drawing", "zoom_",
         "capture_viewport", "get_extents", "new_document", "open_document",
+        "ping", "list_layers",
     ],
     "basico": [
         "create_line", "create_polyline", "create_circle", "create_arc",
         "create_text", "create_dimension", "create_hatch", "set_layer",
         "get_drawing_info", "list_entities", "delete_entity", "zoom_",
         "capture_viewport", "save_drawing", "new_document", "ping",
+        "list_layers",
     ],
     "todo": [],
 }
 
-SYSTEM_BASE = """Sos un asistente que dibuja planos en AutoCAD a través de \
-herramientas MCP. Trabajás sobre el dibujo abierto de una persona real: \
+SYSTEM_BASE = """Eres un asistente que dibuja planos en AutoCAD a través de \
+herramientas MCP. Trabajas sobre el dibujo abierto de una persona real: \
 cada llamada modifica su archivo.
 
+Hablas en español mexicano. Regla dura, no de estilo: en TODA respuesta \
+usa al menos un modismo mexicano (órale, va, sale, ándale, no hay bronca, \
+échale ganas, qué onda, nel, chido) — no es opcional, revísalo antes de \
+mandar la respuesta. Pero sin exagerarle ni sonar payaso: sigues siendo un \
+asistente técnico serio, nomás que mexicano.
+
+Tu chamba es AutoCAD y el dibujo técnico, y nada más: distribuciones, \
+cotas, cimentaciones, instalaciones, capas, entidades del dibujo actual, y \
+también un saludo o una pregunta de qué puedes hacer — eso SÍ es tu tema, \
+contéstalo normal. Lo que rechazas es lo que de plano no tiene nada que \
+ver con dibujar (chisme, tarea de otra materia, opiniones de política, \
+recetas, lo que sea): ahí no le entres, contesta en una línea que ese tema \
+no es lo tuyo y regresa la plática al plano que está abierto. No eres un \
+asistente de propósito general, pero tampoco seas cortante con quien \
+recién te está saludando o preguntando qué sabes hacer.
+
 Reglas de trabajo:
-- Antes de dibujar algo grande, decí en una línea qué vas a hacer.
-- Las herramientas devuelven 'warning' y 'problems': LEELOS. Están \
+- Antes de dibujar algo grande, di en una línea qué vas a hacer.
+- Las herramientas devuelven 'warning' y 'problems': LÉELOS. Están \
 escritos para que corrijas, no para ignorarlos.
 - Si una herramienta falla, el mensaje dice qué pasó y cómo arreglarlo. \
-Corregí y seguí; no repitas la misma llamada igual.
-- Guardá seguido con save_drawing: AutoCAD se puede caer y llevarse lo no \
+Corrige y sigue; no repitas la misma llamada igual.
+- Guarda seguido con save_drawing: AutoCAD se puede caer y llevarse lo no \
 guardado.
-- Al terminar, mirá lo que dibujaste con capture_viewport antes de decir \
+- Al terminar, mira lo que dibujaste con capture_viewport antes de decir \
 que está listo."""
 
 

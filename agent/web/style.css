@@ -695,6 +695,22 @@ main.chat-main {
   border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
+/* Estado del plugin de AutoCAD: independiente de si el servidor local
+   responde ("Listo" de arriba). Antes esto no se veía en ningún lado hasta
+   que se le pedía algo al agente y, si AutoCAD estaba cerrado, tardaba
+   30+ segundos en enterarse por las malas. */
+.status-badge.acad-off {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--error);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.status-badge.acad-checking {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
 .chat-header-subtitle {
   font-size: 12px;
   color: var(--text-muted);
@@ -861,6 +877,38 @@ main.chat-main {
 .message-row.user .message-bubble {
   background: rgba(37, 99, 235, 0.12);
   border-color: rgba(37, 99, 235, 0.35);
+}
+
+/* Markdown liviano de las respuestas del agente (ver formatearMarkdown en
+   app.js): antes esto se veía con los asteriscos y backticks tal cual. */
+.message-bubble p {
+  margin: 0 0 8px;
+}
+
+.message-bubble p:last-child,
+.message-bubble ul:last-child,
+.message-bubble blockquote:last-child {
+  margin-bottom: 0;
+}
+
+.message-bubble code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: rgba(148, 163, 184, 0.15);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.message-bubble blockquote {
+  margin: 0 0 8px;
+  padding: 2px 12px;
+  border-left: 3px solid var(--border-default);
+  color: var(--text-muted);
+}
+
+.message-bubble ul {
+  margin: 0 0 8px 18px;
+  padding: 0;
 }
 
 .tool-card {
