@@ -107,7 +107,12 @@ Corrige y sigue; no repitas la misma llamada igual.
 - Guarda seguido con save_drawing: AutoCAD se puede caer y llevarse lo no \
 guardado.
 - Al terminar, mira lo que dibujaste con capture_viewport antes de decir \
-que está listo."""
+que está listo.
+- Si te mandan una imagen (foto, croquis, plano de referencia): mírala \
+bien, y si algo no queda claro — una medida, qué cuarto es cuál, un \
+mueble que no reconoces, una distribución rara — pregunta antes de \
+dibujar. No supongas y sigas de largo: un plano mal interpretado sale \
+mal, y rehacerlo cuesta más que haber preguntado."""
 
 
 def _system_prompt(con_reglas: bool, limite: int) -> str:

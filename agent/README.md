@@ -53,15 +53,18 @@ Cualquier otro endpoint compatible: `--url http://donde-sea/v1 --modelo x`.
 
 ## El perfil de tools NO es un detalle
 
-Son 128 tools. Las definiciones solas, medidas:
+Son 131 tools. Las definiciones solas, medidas (conteos reales, no la
+cantidad de patrones — un perfil se define por prefijos como `create_` o
+`check_`, así que "Civil (37 tools)" en la interfaz sale de contar contra
+el catálogo real del servidor, no de contar líneas en `PERFILES`):
 
 | Perfil | Tools | ~tokens por vuelta |
 |---|---:|---:|
-| `basico` | 23 | 6 200 |
-| `estructura` | 22 | 10 500 |
-| `civil` | 34 | 14 800 |
-| `arquitectura` (default) | 48 | 21 000 |
-| `todo` | 128 | **45 900** |
+| `basico` | 24 | 6 200 |
+| `estructura` | 24 | 10 500 |
+| `civil` | 37 | 14 800 |
+| `arquitectura` (default) | 59 | 21 000 |
+| `todo` | 131 | **45 900** |
 
 Y el system prompt con `CLAUDE.md` (las reglas de dibujo del proyecto)
 suma ~11 000 tokens más. O sea: `--perfil todo` cuesta ~57k tokens **en
@@ -115,12 +118,38 @@ Dos decisiones que valen la pena conocer si vas a tocarlo:
   se sale del muro, que mide 10"). Un modelo que lee eso corrige y sigue;
   un bucle que se cae pierde la sesión entera.
 
+## Interfaz web (sin consola)
+
+`python iniciar.py` levanta `agent/web.py` — un server HTTP local
+(`http://127.0.0.1:8770`, solo 127.0.0.1) que abre el navegador solo. Ahí
+se configura el proveedor y la API key (cifrada con DPAPI en Windows,
+0600 en Linux/macOS), se elige perfil y modelo, hay plantillas rápidas
+por dominio, un visor del plano (captura real de AutoCAD, con zoom y
+descarga PNG) y streaming del chat por Server-Sent Events — se ve cada
+tool a medida que corre, no se espera a que termine todo el plano.
+
+Para arrancarlo **sin ninguna ventana de consola** (pensado para quien no
+use Claude Code y solo quiera el copiloto con una API más barata): doble
+clic en `AutoCAD-IA.vbs` en la raíz del repo. Internamente llama a
+`tools/lanzar_silencioso.bat`, que usa `pythonw.exe` y manda toda la
+salida a `autocad-ia.log` (ya no hay pantalla donde mostrarla). Para
+apagarlo: el botón "Apagar" dentro de la interfaz — no queda ninguna
+ventana que cerrar. Si algo no arranca, `autocad-ia.log` tiene lo que
+antes se veía en la consola negra.
+
 ## Lo que todavía no hace
 
-- No hay interfaz gráfica: es consola. El núcleo (`mcp_link` + `providers`
-  + `loop`) no sabe nada de la consola, así que una GUI se monta encima sin
-  tocarlo.
-- No hay streaming: se espera la respuesta completa de cada vuelta.
 - No hay confirmación antes de dibujar. El agente modifica el DWG abierto
   directamente — trabajá sobre una copia hasta que le tengas confianza al
   modelo que estés usando.
+- Las plantillas rápidas y el chequeo de conexión con AutoCAD
+  (`/api/autocad_estado`) están probados en vivo; el flujo de "adjuntar
+  una imagen de referencia y que el agente pregunte lo ambiguo antes de
+  dibujar" (la regla ya está en `SYSTEM_BASE`, en `cli.py`) todavía NO se
+  probó de punta a punta contra AutoCAD real — hace falta AutoCAD abierto
+  y un modelo multimodal para esa prueba.
+- Casa completa de 4 recámaras / 2 baños: el prompt quedó armado, no se
+  llegó a mandar por falta de AutoCAD conectado en esa sesión. El de 3
+  recámaras (preset "Distribución Arquitectónica") sí está probado
+  extremo a extremo.
+- La rama `mcp-generacion-y-calidad` sigue sin mergear a `main`.
