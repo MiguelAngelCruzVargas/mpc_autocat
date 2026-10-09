@@ -233,11 +233,26 @@ lámina, no por dibujo): si esta lámina es otra escala, `create_sheet` antes de
 anotar, o el texto sale del tamaño de la lámina anterior. Los `warnings` que
 devuelven esas tres tools lo recuerdan.
 
-## 4. Muros: siempre `create_walls`
+## 4. Muros: una planta entera es `create_wall_network`
 
-Un muro NO es una línea. Usar `create_walls` con el eje del muro y su espesor:
-resuelve las esquinas a inglete y recorta los huecos de puertas y ventanas, que
-es lo que hace que un plano se vea como un plano y no como un esquema.
+Un muro NO es una línea. Los muros de una planta van en **UNA** llamada a
+`create_wall_network`, con el eje y el espesor de cada uno: remata cada
+encuentro como un dibujante (L con la esquina exterior cerrada, T que termina
+contra la CARA del muro que la recibe, cruces limpios, cualquier ángulo) y
+recorta los huecos de puertas y ventanas. Sale en polilíneas cerradas,
+editables, con el área de mampostería ya calculada.
+
+Varias `create_walls` sueltas NO sirven para una planta: cada una termina su
+muro en el eje sin saber de los otros, y en cada encuentro **las líneas se
+cruzan y sobran puntas**. `union_regions` borra las puntas pero deja la
+esquina exterior de cada L mordida (medio espesor por medio espesor que nadie
+cubre). Se vio en planos reales y era lo primero que delataba el dibujo.
+`create_walls` queda para un muro aislado (una barda, un pretil).
+
+Un muro que llega a otro termina en el **eje** del otro, no en su cara: el
+remate lo hace la tool. Si un extremo quedó a centímetros del muro al que
+iba, `snap` lo ajusta y lo informa en `snapped` — revisalo. Un hueco que
+cae justo donde llega otro muro sale en `warnings`: es un error de proyecto.
 
 `create_line` queda para ejes auxiliares, guías y trazos sueltos.
 
@@ -485,10 +500,11 @@ Un plano se lee por el contraste de trazos. Toda tool de creación acepta
 Si todo sale con el mismo grosor, el plano no se lee. Cuando el usuario diga
 que "se ve todo fino", revisar primero `set_display_options(lineweight_display=True)`.
 
-Al terminar los muros, `union_regions` sobre sus handles: fusiona los tramos en
-un solo contorno y los cruces quedan en T y no en cajón. Devuelve además el área
-y el perímetro de mampostería. Hacerlo AL FINAL: el resultado es una Region y ya
-no admite editar vértices.
+Los encuentros de muros los resuelve `create_wall_network` (y `draw_layout`,
+que la usa): no hace falta `union_regions` después, y no conviene — su
+resultado es una Region que ya no admite editar vértices, y deja mordida la
+esquina exterior de cada L. `union_regions` queda para contornos que no son
+muros.
 
 ## 6.bis Rotular: `place_labels`, nunca calculando la posición a mano
 

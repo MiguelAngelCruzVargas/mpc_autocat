@@ -314,6 +314,24 @@ def check_geometry(rooms: list[dict[str, Any]],
                            "los separa.",
                 "fix": "Poné el vano sobre la frontera común; si no, el recinto "
                        "queda sellado aunque la puerta figure en el grafo."})
+        elif not d.get("open"):
+            # Largo del muro que de verdad comparten. Una puerta más ancha
+            # que eso queda montada sobre los encuentros de muro de sus
+            # bordes: deja muros sueltos y la hoja barre contra el muro de
+            # al lado. Pasó con la boca de un pasillo a caballo entre dos
+            # recintos.
+            comun = dx if abs(dy) <= 0.35 else (dy if abs(dx) <= 0.35 else 0.0)
+            ancho = float(d.get("width", 0.80))
+            if 0 < comun < ancho - 1e-6:
+                problemas.append({
+                    "rule": "puerta mas ancha que el muro",
+                    "problem": f"La puerta {origen} -> {destino} mide "
+                               f"{ancho:.2f} m y los dos recintos comparten "
+                               f"solo {comun:.2f} m de muro.",
+                    "fix": "No entra: achicala, mudala a un muro que "
+                           "comparta más largo, o si es un paso sin hoja "
+                           "declaralo abierto ('open': true) para que ese "
+                           "tramo no lleve muro."})
 
     return {
         "ok": not problemas,
@@ -415,11 +433,18 @@ def suggest_layout(lot_width: float, lot_depth: float,
         # para la ventana de la sala en la fachada.
         {"from": "EXTERIOR", "to": "SALA", "width": 0.90,
          "x": xm * 0.75, "y": 0.0},
-        # Sala-comedor es un vano abierto, no una puerta con hoja.
-        {"from": "SALA", "to": "COMEDOR", "width": 1.20, "type": "pass",
-         "x": xm, "y": y_social / 2.0},
-        {"from": "COMEDOR", "to": "PASILLO", "width": 0.90,
-         "x": (xm + xc1) / 2.0, "y": y_social},
+        # Sala-comedor es UN espacio continuo: sin muro entre los dos. Con
+        # un vano de 1.20 quedaban dos muñones de 1.40, y el de arriba moría
+        # en la boca del pasillo como un muro suelto en medio de la sala.
+        {"from": "SALA", "to": "COMEDOR", "width": y_social, "type": "pass",
+         "open": True, "x": xm, "y": y_social / 2.0},
+        # La boca del pasillo cae a caballo entre sala y comedor: con el
+        # comedor comparte solo medio pasillo (0.50), y la puerta de 0.90
+        # que iba ahí quedaba montada sobre DOS encuentros de muro, con la
+        # hoja barriendo contra el muro de la cocina. Va abierta en todo su
+        # ancho y los muros del pasillo doblan en L.
+        {"from": "COMEDOR", "to": "PASILLO", "width": ANCHO_PASILLO,
+         "type": "pass", "open": True, "x": xm, "y": y_social},
         {"from": "COMEDOR", "to": "COCINA", "width": 0.80,
          "x": (xc1 + w) / 2.0, "y": y_social},
         {"from": "PASILLO", "to": "BAÑO", "width": 0.70,

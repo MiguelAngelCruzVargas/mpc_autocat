@@ -117,11 +117,12 @@ def test_tool_del_server_rotula_y_verifica() -> None:
           not any("PASILLO" in t for t in textos), str(textos))
 
 
-def test_fusiona_los_contornos() -> None:
-    """Sin fusionar, la linea de cierre de cada tramo queda ATRAVESANDO el
-    muro al que llega: el encuentro se ve como un cajon en vez de una T, y
-    el plano parece dibujado a mano sin cuidado. Es el defecto que se vio
-    en la primera casa generada."""
+def test_remata_los_encuentros() -> None:
+    """Tramo por tramo, la linea de cierre de cada muro quedaba ATRAVESANDO
+    el muro al que llega (puntas que sobran en cada encuentro) y, aun
+    fusionando con union_regions, a la esquina exterior de cada L le
+    faltaba un cuadrito de medio espesor. La red remata todo en Python:
+    sin Regions y sin depender de una booleana de AutoCAD."""
     preview.DRAWN.clear()
     space.clear()
     llamadas = []
@@ -130,9 +131,7 @@ def test_fusiona_los_contornos() -> None:
     def espia(cmd, params=None):
         llamadas.append((cmd, params or {}))
         if cmd == "union_regions":
-            # El plugin devuelve 'handle' EN SINGULAR: una sola Region.
-            return {"handle": "R1", "merged": 5, "area": 12.5,
-                    "perimeter": 88.0}
+            raise arch.acad.AutoCadError("no se tendria que llamar")
         return real(cmd, params)
 
     try:
@@ -140,49 +139,69 @@ def test_fusiona_los_contornos() -> None:
         rooms = [{"name": "A", "x0": 0, "y0": 0, "x1": 4, "y1": 4},
                  {"name": "B", "x0": 4, "y0": 0, "x1": 8, "y1": 4}]
         r = arch.draw_layout(rooms)
-        uniones = [p for c, p in llamadas if c == "union_regions"]
-        check("fusiona los contornos al terminar", len(uniones) == 1,
-              str(len(uniones)))
-        check("y borra los originales",
-              uniones and uniones[0].get("deleteSources") is True,
-              str(uniones))
-        check("devuelve los handles nuevos, no los muertos",
-              r["wallHandles"] == ["R1"], str(r["wallHandles"]))
-        check("y el area real de mamposteria",
-              r.get("masonryArea") == 12.5, str(r.get("masonryArea")))
-
-        llamadas.clear()
-        arch.draw_layout(rooms, merge=False)
-        check("merge=False no fusiona",
+        check("no pasa por union_regions",
               not [c for c, _ in llamadas if c == "union_regions"],
-              "fusiono igual")
+              "la llamo")
+        check("sin avisos", not r.get("warnings"), str(r.get("warnings")))
+        # Contorno exterior + un hueco por ambiente.
+        check("tres lazos cerrados (perimetro + 2 ambientes)",
+              len(r["wallHandles"]) == 3, str(r["wallHandles"]))
+        # 8.15 x 4.15 menos los dos interiores de 3.875 x 3.85: la esquina
+        # exterior completa, la T del divisorio sin solapes.
+        esperado = 8.15 * 4.15 - 2 * 3.875 * 3.85
+        check("el area de mamposteria es la exacta",
+              abs(r.get("masonryArea", 0) - esperado) < 1e-6,
+              f"{r.get('masonryArea')} vs {esperado}")
+        polis = [e for e in preview.DRAWN if e["cmd"] == "create_polyline"
+                 and e.get("layer") == "MUROS"]
+        check("todos los lazos son polilineas cerradas",
+              all(e.get("closed") for e in polis), str(polis))
+        esquinas = {tuple(round(c, 6) for c in p)
+                    for e in polis for p in e["points"]}
+        check("la esquina exterior llega al vertice (-0.075, -0.075)",
+              (-0.075, -0.075) in esquinas, str(sorted(esquinas)[:6]))
+
+        preview.DRAWN.clear()
+        r2 = arch.draw_layout(rooms, merge=False)
+        check("merge=False deja un contorno suelto por tramo",
+              len(r2["wallHandles"]) == r2["segments"] == 5,
+              f"{len(r2['wallHandles'])} / {r2['segments']}")
     finally:
         arch.acad.call = real
 
 
-def test_si_la_union_falla_el_dibujo_sigue() -> None:
-    """Los muros ya estan dibujados: que la union falle no puede tumbar
-    la llamada entera."""
-    preview.DRAWN.clear()
-    space.clear()
-    real = arch.acad.call
-
-    def rompe_union(cmd, params=None):
-        if cmd == "union_regions":
-            raise arch.acad.AutoCadError("eInvalidInput")
-        return real(cmd, params)
-
-    try:
-        arch.acad.call = rompe_union
-        rooms = [{"name": "A", "x0": 0, "y0": 0, "x1": 4, "y1": 4},
-                 {"name": "B", "x0": 4, "y0": 0, "x1": 8, "y1": 4}]
-        r = arch.draw_layout(rooms)
-        check("el dibujo sobrevive", len(r["wallHandles"]) > 0, str(r))
-        check("y avisa que quedo sin fusionar",
-              any("cajon" in w for w in r.get("warnings", [])),
-              str(r.get("warnings")))
-    finally:
-        arch.acad.call = real
+def test_ningun_partido_deja_muros_sueltos_ni_machones() -> None:
+    """Barrido completo de lo que suggest_layout admite. Antes: la puerta
+    COMEDOR -> PASILLO (0.90) caia sobre un muro comun de 0.50, montada
+    sobre dos encuentros -- dejaba suelto el muro sala/comedor y la hoja
+    barria contra el de la cocina; y la ventana de fachada quedaba a 0.15
+    de la puerta, un machon de 0.30 que no se levanta."""
+    malos = []
+    n = 0
+    for w in (6.4, 7.0, 8.0, 9.0, 12.0):
+        for beds in range(1, 7):
+            for baths in (1, 2):
+                preview.DRAWN.clear()
+                space.clear()
+                p = rules.suggest_layout(w, 40.0, bedrooms=beds,
+                                         bathrooms=baths)
+                r = arch.draw_layout(p["rooms"], p["doors"], p["windows"])
+                n += 1
+                chk = rules.check_walls(walls=r["axes"])
+                if (r.get("warnings") or not chk["ok"]
+                        or r["doorsPlaced"] != r["doorsTotal"]
+                        or len(r["windowsPlaced"]) != len(p["windows"])):
+                    malos.append((w, beds, baths, r.get("warnings"),
+                                  chk["problems"]))
+                xm = w / 2.0
+                tabique = [a for a in r["axes"]
+                           if all(abs(pt[0] - xm) < 1e-6 for pt in a["points"])
+                           and min(pt[1] for pt in a["points"]) < 4.0 - 1e-6]
+                if tabique:
+                    malos.append((w, beds, baths, "muro entre sala y comedor",
+                                  tabique))
+    check(f"{n} partidos sin avisos, sin muros sueltos ni machones",
+          not malos, str(malos[:3]))
 
 
 def test_acota_el_partido_solo() -> None:
@@ -270,8 +289,8 @@ def main() -> int:
                test_frontera_compartida_una_sola_vez,
                test_puerta_sin_posicion_avisa,
                test_tool_del_server_rotula_y_verifica,
-               test_fusiona_los_contornos,
-               test_si_la_union_falla_el_dibujo_sigue,
+               test_remata_los_encuentros,
+               test_ningun_partido_deja_muros_sueltos_ni_machones,
                test_acota_el_partido_solo, test_cada_lado_acota_su_propio_pano,
                test_las_cotas_no_se_enciman,
                test_funde_fronteras_muy_juntas,

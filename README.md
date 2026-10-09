@@ -117,7 +117,8 @@ Con AutoCAD abierto y el plugin cargado, ya podés pedirle a Claude cosas como
 | Categoría | Tool | Qué hace |
 |---|---|---|
 | **Lámina** | **`create_sheet`** | **Cajón (marco + márgenes) y cuadro de rotulación con los datos de la obra. Es el primer paso de todo plano: devuelve el área útil donde va el dibujo** |
-| **Arquitectura** | **`create_walls`** | **Muros con espesor real (doble línea), esquinas a inglete y huecos de puertas/ventanas ya recortados** |
+| **Arquitectura** | **`create_wall_network`** | **Todos los muros de una planta en una llamada: cada encuentro (L, T, cruce, cualquier ángulo) rematado como lo remata un dibujante, huecos recortados, área de mampostería** |
+| Arquitectura | `create_walls` | Un muro aislado con espesor real (doble línea), esquinas a inglete y huecos ya recortados |
 | | `create_axis_grid` | Ejes estructurales con globos: verticales 1,2,3 y horizontales A,B,C; el eje se estira para que el globo no caiga sobre las cotas |
 | **Validación** | `check_program` / `check_layout` / `check_geometry` / `check_walls` | Que el programa entre en el terreno, que la zonificación cumpla, que los recintos existan y que la muraria cierre — antes de dibujar |
 | | `check_annotations` | Que las cotas, las burbujas y los rótulos no se encimen — el plano como dibujo, después de dibujar |

@@ -14,6 +14,7 @@ from typing import Any, Optional
 import autocad_client as acad
 import layers
 import space
+import wall_network
 from geom import Axis, Point
 
 LAYER_WALLS = "MUROS"
@@ -148,15 +149,52 @@ def draw_layout(rooms: list[dict[str, Any]],
         _edge("h", r["y0"], r["x0"], r["x1"], patio or abs(r["y0"] - by0) < tol)
         _edge("h", r["y1"], r["x0"], r["x1"], patio or abs(r["y1"] - by1) < tol)
 
+    fusionadas = {k: _merge_intervalos(ivs) for k, ivs in lineas.items()}
+
+    # Vanos abiertos ("open": true): ese tramo de frontera NO lleva muro,
+    # no es un hueco con jambas. Es como se resuelve una sala-comedor
+    # continua o la boca de un pasillo: los muros que llegan doblan en L en
+    # el borde del vano en vez de quedar un muñón de 5 cm a cada lado.
+    avisos: list[str] = []
+    puertas_puestas = 0
+    abiertos = [d for d in (doors or [])
+                if d.get("open") and "x" in d and "y" in d]
+    for d in abiertos:
+        px, py = float(d["x"]), float(d["y"])
+        ancho = float(d.get("width", 0.80))
+        clave = None
+        for (orient, c), ivs in fusionadas.items():
+            d_perp, a = (abs(px - c), py) if orient == "v" else (abs(py - c), px)
+            if d_perp < 0.03 and any(i0 - 0.03 <= a <= i1 + 0.03
+                                     for i0, i1, _e in ivs):
+                clave = (orient, c)
+                break
+        if clave is None:
+            avisos.append(f"El vano abierto {d.get('from', '?')} -> "
+                          f"{d.get('to', '?')} en ({px:g}, {py:g}) no cae "
+                          "sobre ninguna frontera: no se abrió.")
+            continue
+        a = py if clave[0] == "v" else px
+        q0, q1 = a - ancho / 2.0, a + ancho / 2.0
+        restos = []
+        for i0, i1, ext in fusionadas[clave]:
+            if i1 <= q0 + tol or i0 >= q1 - tol:
+                restos.append([i0, i1, ext])
+                continue
+            if q0 - i0 > tol:
+                restos.append([i0, q0, ext])
+            if i1 - q1 > tol:
+                restos.append([q1, i1, ext])
+        fusionadas[clave] = restos
+        puertas_puestas += 1
+
     segs: list[dict[str, Any]] = []
-    for (orient, c), ivs in sorted(lineas.items()):
-        for a0, a1, ext in _merge_intervalos(ivs):
+    for (orient, c), ivs in sorted(fusionadas.items()):
+        for a0, a1, ext in ivs:
             segs.append({"orient": orient, "c": c, "a0": a0, "a1": a1,
                          "ext": ext, "openings": []})
 
     por_nombre = {r["name"].upper(): r for r in rects}
-    avisos: list[str] = []
-    puertas_puestas = 0
 
     def _buscar_segmento(px: float, py: float) -> Optional[tuple]:
         mejor = None
@@ -171,6 +209,8 @@ def draw_layout(rooms: list[dict[str, Any]],
         return mejor
 
     for d in (doors or []):
+        if d in abiertos:
+            continue
         etiqueta = f"{d.get('from', '?')} -> {d.get('to', '?')}"
         if "x" not in d or "y" not in d:
             avisos.append(f"La puerta {etiqueta} no trae posición (x, y): "
@@ -227,11 +267,13 @@ def draw_layout(rooms: list[dict[str, Any]],
             continue
         _, s, _a = hallado
         # El hueco libre más grande dentro del paño del recinto, dejando
-        # 0.30 a cada esquina y 0.15 a cada puerta ya colocada.
-        lim0, lim1 = i0 + 0.30, i1 - 0.30
+        # El macizo que queda a cada lado (contra la esquina o contra una
+        # puerta) tiene que poder levantarse: MIN_TRAMO. Con 0.15 a la
+        # puerta quedaba un machon de 0.30 que en obra no se construye.
+        lim0, lim1 = i0 + MIN_TRAMO, i1 - MIN_TRAMO
         cortes = sorted(
-            (s["a0"] + o["distance"] - o["width"] / 2.0 - 0.15,
-             s["a0"] + o["distance"] + o["width"] / 2.0 + 0.15)
+            (s["a0"] + o["distance"] - o["width"] / 2.0 - MIN_TRAMO,
+             s["a0"] + o["distance"] + o["width"] / 2.0 + MIN_TRAMO)
             for o in s["openings"])
         mejor_gap = None
         g0 = lim0
@@ -257,29 +299,22 @@ def draw_layout(rooms: list[dict[str, Any]],
                                             else centro, 3)})
 
     axes: list[dict[str, Any]] = []
-    handles: list[str] = []
-    tramos = 0
+    muros: list[dict[str, Any]] = []
     for s in segs:
         if s["orient"] == "v":
             points = [[s["c"], s["a0"]], [s["c"], s["a1"]]]
         else:
             points = [[s["a0"], s["c"]], [s["a1"], s["c"]]]
-        th = exterior_thickness if s["ext"] else interior_thickness
-        r = create_walls(points=points, thickness=th,
-                         openings=sorted(s["openings"],
-                                         key=lambda o: o["distance"]),
-                         layer=layer, lineweight=lineweight)
-        tramos += 1
-        handles.extend(r["wallHandles"])
+        muros.append({
+            "points": points,
+            "thickness": exterior_thickness if s["ext"] else interior_thickness,
+            "openings": sorted(s["openings"], key=lambda o: o["distance"])})
         axes.append({"points": points,
                      "name": f"muro {s['orient']}={s['c']:g} "
                              f"({s['a0']:g}..{s['a1']:g})"})
-        if r.get("warning"):
-            avisos.append(f"{axes[-1]['name']}: {r['warning']}")
 
     resultado: dict[str, Any] = {
-        "wallHandles": handles,
-        "segments": tramos,
+        "segments": len(muros),
         "axes": axes,
         "doorsPlaced": puertas_puestas,
         "doorsTotal": len(doors or []),
@@ -288,40 +323,35 @@ def draw_layout(rooms: list[dict[str, Any]],
                         "interior": interior_thickness},
     }
 
-    # Fusion de los contornos. SIN esto el plano se ve mal de verdad, y es
-    # lo primero que nota alguien que dibuja: cada tramo es una polilinea
-    # CERRADA, asi que donde un divisorio llega al muro del pasillo su
-    # linea de cierre queda dibujada ATRAVESANDO el otro muro. El encuentro
-    # se ve como un cajon en vez de la T limpia que corresponde -- parece
-    # dibujado a mano y sin cuidado. La union booleana borra esas lineas
-    # interiores y deja el perimetro real de la mamposteria.
-    #
-    # Va al final a proposito: el resultado es una Region y ya no admite
-    # editar vertices (ver CLAUDE.md 5).
-    if merge and len(handles) > 1:
-        try:
-            union = acad.call("union_regions", {
-                "handles": handles, "deleteSources": True})
-            resultado["merged"] = union
-            # union_regions devuelve 'handle' EN SINGULAR (una Region con
-            # todo adentro). Leer 'handles' devolvia None y dejaba en
-            # wallHandles los 29 handles ORIGINALES, que deleteSources ya
-            # borro: cualquiera que los usara despues se comia un
-            # eUnknownHandle, y el conteo mentia sobre lo que se fusiono.
-            nuevo = union.get("handle")
-            if nuevo:
-                resultado["wallHandles"] = [nuevo]
-            resultado["mergedCount"] = union.get("merged", len(handles))
-            if union.get("area"):
-                resultado["masonryArea"] = union["area"]
-            if union.get("perimeter"):
-                resultado["masonryPerimeter"] = union["perimeter"]
-        except acad.AutoCadError as exc:
-            # Que la union falle no invalida el dibujo: los muros ya estan.
-            avisos.append(
-                "No se pudieron fusionar los contornos de muro (%s). Los "
-                "encuentros van a verse como cajon en vez de T: proba "
-                "union_regions a mano sobre 'wallHandles'." % exc)
+    if merge:
+        # La red entera de una vez. Dibujando tramo por tramo, cada uno
+        # terminaba en el eje: la linea de cierre de un divisorio quedaba
+        # ATRAVESANDO el muro al que llega (puntas que sobran) y, aun
+        # fusionando con union_regions, a la esquina exterior de cada L le
+        # faltaba un cuadrito de medio espesor. La red remata cada encuentro
+        # y devuelve polilineas cerradas, editables, sin pasar por Regions.
+        # snap=0: las coordenadas de los recintos son exactas, no hay nada
+        # que ajustar.
+        red = create_wall_network(muros, layer=layer, lineweight=lineweight,
+                                  snap=0)
+        resultado["wallHandles"] = red["wallHandles"]
+        resultado["masonryArea"] = red["masonryArea"]
+        resultado["masonryPerimeter"] = red["masonryPerimeter"]
+        for info, eje in zip(red["walls"], axes):
+            if info.get("warning"):
+                avisos.append(f"{eje['name']}: {info['warning']}")
+    else:
+        # Contornos sueltos, uno por tramo: los encuentros quedan sin
+        # rematar. Solo para quien los quiera fusionar o editar a mano.
+        handles: list[str] = []
+        for m, eje in zip(muros, axes):
+            r = create_walls(points=m["points"], thickness=m["thickness"],
+                             openings=m["openings"], layer=layer,
+                             lineweight=lineweight)
+            handles.extend(r["wallHandles"])
+            if r.get("warning"):
+                avisos.append(f"{eje['name']}: {r['warning']}")
+        resultado["wallHandles"] = handles
 
     if avisos:
         resultado["warnings"] = avisos
@@ -557,30 +587,7 @@ def create_walls(
 
     _ensure_layer(layer, 7, lineweight)
 
-    holes = []
-    for o in (openings or []):
-        width = float(o["width"])
-        distance = _resolver_distancia(axis, o)
-        if width <= 0:
-            raise ValueError("El ancho de un hueco tiene que ser > 0.")
-        start = distance - width / 2.0 if o.get("centered", True) else distance
-        end = start + width
-        if start < -1e-9 or end > total + 1e-9:
-            raise ValueError(
-                f"El hueco en {distance} (ancho {width}) se sale del muro, "
-                f"que mide {total:g}. Recordá que 'distance' se mide a lo largo "
-                f"del eje desde el arranque."
-            )
-        holes.append({**o, "start": max(0.0, start), "end": min(total, end)})
-    holes.sort(key=lambda h: h["start"])
-
-    for a, b in zip(holes, holes[1:]):
-        if b["start"] < a["end"] - 1e-9:
-            raise ValueError(
-                f"Dos huecos se pisan: uno termina en {a['end']:g} y el "
-                f"siguiente arranca en {b['start']:g}."
-            )
-
+    holes = _resolver_huecos(axis, openings)
     wall_handles: list[str] = []
 
     if not holes:
@@ -621,19 +628,49 @@ def create_walls(
             if handle:
                 wall_handles.append(handle)
 
-    # Tramos que quedaron demasiado cortos para construirse.
-    machones = []
-    if holes:
-        limites = [(0.0, holes[0]["start"])]
-        for a, b in zip(holes, holes[1:]):
-            limites.append((a["end"], b["start"]))
-        limites.append((holes[-1]["end"], total))
-        for d0, d1 in limites:
-            largo = d1 - d0
-            if 1e-6 < largo < min_segment:
-                machones.append({"from": round(d0, 3), "to": round(d1, 3),
-                                 "length": round(largo, 3)})
+    resultado: dict[str, Any] = {
+        "wallHandles": wall_handles,
+        "openings": _dibujar_huecos(axis, holes, thickness, draw_symbols),
+        "axisLength": total,
+        "thickness": thickness,
+    }
+    _informar_huecos(resultado, holes, total, min_segment)
+    return resultado
 
+
+def _resolver_huecos(axis: Axis,
+                     openings: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Los huecos ubicados sobre el eje, ordenados y validados."""
+    total = axis.total_length
+    holes = []
+    for o in (openings or []):
+        width = float(o["width"])
+        distance = _resolver_distancia(axis, o)
+        if width <= 0:
+            raise ValueError("El ancho de un hueco tiene que ser > 0.")
+        start = distance - width / 2.0 if o.get("centered", True) else distance
+        end = start + width
+        if start < -1e-9 or end > total + 1e-9:
+            raise ValueError(
+                f"El hueco en {distance} (ancho {width}) se sale del muro, "
+                f"que mide {total:g}. Recordá que 'distance' se mide a lo largo "
+                f"del eje desde el arranque."
+            )
+        holes.append({**o, "start": max(0.0, start), "end": min(total, end)})
+    holes.sort(key=lambda h: h["start"])
+
+    for a, b in zip(holes, holes[1:]):
+        if b["start"] < a["end"] - 1e-9:
+            raise ValueError(
+                f"Dos huecos se pisan: uno termina en {a['end']:g} y el "
+                f"siguiente arranca en {b['start']:g}."
+            )
+    return holes
+
+
+def _dibujar_huecos(axis: Axis, holes: list[dict[str, Any]], thickness: float,
+                    draw_symbols: bool) -> list[dict[str, Any]]:
+    """Hoja + abatimiento de cada puerta, vidrio de cada ventana."""
     opening_handles: list[dict[str, Any]] = []
     if draw_symbols and holes:
         # Solo si algun hueco dibuja algo. Un vano 'pass' no tiene simbolo, y
@@ -647,13 +684,25 @@ def create_walls(
             _ensure_layer(LAYER_OPENINGS, 7, LW_OPENING)
         for hole in holes:
             opening_handles.append(_draw_opening(axis, hole, thickness))
+    return opening_handles
 
-    resultado = {
-        "wallHandles": wall_handles,
-        "openings": opening_handles,
-        "axisLength": total,
-        "thickness": thickness,
-    }
+
+def _informar_huecos(resultado: dict[str, Any], holes: list[dict[str, Any]],
+                     total: float, min_segment: float) -> None:
+    """Distancias resueltas de los huecos y machones demasiado cortos."""
+    # Tramos que quedaron demasiado cortos para construirse.
+    machones = []
+    if holes:
+        limites = [(0.0, holes[0]["start"])]
+        for a, b in zip(holes, holes[1:]):
+            limites.append((a["end"], b["start"]))
+        limites.append((holes[-1]["end"], total))
+        for d0, d1 in limites:
+            largo = d1 - d0
+            if 1e-6 < largo < min_segment - 1e-9:
+                machones.append({"from": round(d0, 3), "to": round(d1, 3),
+                                 "length": round(largo, 3)})
+
     if holes:
         # La distancia resuelta de cada hueco (centro, a lo largo del eje):
         # con la forma declarativa el llamador no la calculó, y la necesita
@@ -670,6 +719,138 @@ def create_walls(
             + ", ".join(f"{m['length']:.2f} m entre {m['from']:.2f} y {m['to']:.2f}"
                         for m in machones)
             + ". Corre el hueco o llevalo hasta la esquina.")
+
+
+# ------------------------------------------------- red de muros, una vez
+
+def create_wall_network(
+    walls: list[dict[str, Any]],
+    layer: str = LAYER_WALLS,
+    lineweight: int = LW_WALL,
+    draw_symbols: bool = True,
+    min_segment: float = MIN_TRAMO,
+    snap: Optional[float] = None,
+) -> dict[str, Any]:
+    """Todos los muros de una planta en UNA llamada, con los encuentros
+    resueltos: esquinas en L cerradas, T rematadas contra la cara del muro
+    que las recibe, cruces limpios. Ver wall_network.py.
+
+    walls: [{"points": [[x,y],...], "thickness": t, "closed": bool,
+             "openings": [...]}] — cada muro con el mismo vocabulario de
+    create_walls (huecos por 'distance' o por 'segment' + 'offset').
+    snap: hasta qué distancia un extremo "quiso llegar" a otro muro; por
+    default medio espesor del muro más fino. 0 lo apaga.
+    """
+    if not walls:
+        raise ValueError("create_wall_network necesita al menos un muro.")
+    for i, w in enumerate(walls):
+        if "points" not in w or len(w["points"]) < 2:
+            raise ValueError(f"El muro #{i + 1} necesita 'points' con al "
+                             "menos 2 puntos (el eje del muro).")
+        if float(w.get("thickness", 0.15)) <= 0:
+            raise ValueError(f"El muro #{i + 1}: thickness tiene que ser > 0.")
+
+    norm = [{"points": w["points"], "closed": bool(w.get("closed")),
+             "thickness": float(w.get("thickness", 0.15))} for w in walls]
+    medio = min(w["thickness"] for w in norm) / 2.0
+    tol = medio * 1e-5
+    if snap is None:
+        snap = medio
+    ejes, ajustes = (wall_network.snap_axes(norm, snap) if snap > 0
+                     else ([[(float(p[0]), float(p[1])) for p in w["points"]]
+                            for w in norm], []))
+
+    # Los huecos se ubican sobre el eje YA ajustado. El polígono del vano
+    # sobresale apenas de las caras para que corte limpio la mampostería.
+    por_muro = []
+    for i, w in enumerate(walls):
+        axis = Axis(ejes[i], closed=norm[i]["closed"])
+        holes = _resolver_huecos(axis, w.get("openings"))
+        borde = norm[i]["thickness"] / 2.0 + medio * 1e-2
+        cortes = [axis.vertices_between(h["start"], h["end"], borde)
+                  + list(reversed(axis.vertices_between(h["start"], h["end"],
+                                                        -borde)))
+                  for h in holes]
+        por_muro.append((axis, holes, cortes))
+
+    red = wall_network.resolve(
+        [{"points": ejes[i], "closed": norm[i]["closed"],
+          "thickness": norm[i]["thickness"], "cuts": por_muro[i][2]}
+         for i in range(len(norm))], tol=tol, snap=0)
+
+    _ensure_layer(layer, 7, lineweight)
+    handles = [_polyline(lazo, layer, lineweight, closed=True)
+               for lazo in red["loops"]]
+    # Una cadena que no cerró se dibuja ABIERTA: cerrarla inventaría una
+    # línea que atraviesa la mampostería.
+    handles += [_polyline(c, layer, lineweight, closed=False)
+                for c in red["openChains"]]
+    # La huella va por TRAMO, no por lazo: la caja de un anillo perimetral
+    # es la casa entera, y place_labels la tomaría como un muro que cruza
+    # todos los ambientes.
+    for quad in red["quads"]:
+        xs = [p[0] for p in quad]
+        ys = [p[1] for p in quad]
+        space.track(min(xs), min(ys), max(xs), max(ys), f"muro {layer}")
+
+    avisos: list[str] = []
+    detalle: list[dict[str, Any]] = []
+    for i, (axis, holes, _c) in enumerate(por_muro):
+        info: dict[str, Any] = {
+            "openings": _dibujar_huecos(axis, holes, norm[i]["thickness"],
+                                        draw_symbols)}
+        _informar_huecos(info, holes, axis.total_length, min_segment)
+        if info.get("warning"):
+            avisos.append(f"muro #{i + 1}: {info['warning']}")
+        detalle.append(info)
+
+    # Un vano justo donde llega otro muro: el muro que llega se queda sin
+    # nada contra que rematar. Es un problema de proyecto, no de dibujo.
+    for i, (axis, holes, cortes) in enumerate(por_muro):
+        for h, corte in zip(holes, cortes):
+            for j, eje in enumerate(ejes):
+                if j == i:
+                    continue
+                for p in (eje[0], eje[-1]):
+                    if wall_network._inside(p[0], p[1], corte):
+                        avisos.append(
+                            f"muro #{i + 1}: el hueco centrado a "
+                            f"{(h['start'] + h['end']) / 2.0:g} cae justo "
+                            f"donde llega el muro #{j + 1} ({p[0]:g}, "
+                            f"{p[1]:g}). Corre el hueco o el muro.")
+
+    if red["openChains"]:
+        avisos.append(
+            f"{len(red['openChains'])} contorno(s) de muro no cerraron y se "
+            "dibujaron abiertos (empiezan en "
+            + ", ".join(f"({c[0][0]:g}, {c[0][1]:g})" for c in red["openChains"])
+            + "). Mirá ese encuentro de cerca: suele ser un extremo casi "
+            "tocando otro muro con snap=0.")
+
+    if ajustes:
+        avisos.append(
+            f"{len(ajustes)} extremo(s) de eje ajustados para que cierren "
+            "contra el muro al que llegaban: "
+            + "; ".join(f"muro #{a['wall'] + 1} ({a['from'][0]:g}, "
+                        f"{a['from'][1]:g}) -> ({a['to'][0]:.4g}, "
+                        f"{a['to'][1]:.4g})" for a in ajustes)
+            + ". Si alguno era a propósito, pasá snap=0.")
+
+    resultado: dict[str, Any] = {
+        "wallHandles": handles,
+        "walls": detalle,
+        # Un muro cerrado vuelve con el primer punto repetido: check_walls
+        # no sabe de 'closed' y lo leeria como dos extremos al aire.
+        "axes": [{"points": [[p[0], p[1]] for p in
+                             (eje + [eje[0]] if norm[i]["closed"] else eje)],
+                  "name": f"muro #{i + 1}"} for i, eje in enumerate(ejes)],
+        "masonryArea": round(red["area"], 6),
+        "masonryPerimeter": round(red["perimeter"], 6),
+    }
+    if ajustes:
+        resultado["snapped"] = ajustes
+    if avisos:
+        resultado["warnings"] = avisos
     return resultado
 
 

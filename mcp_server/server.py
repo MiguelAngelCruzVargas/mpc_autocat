@@ -167,7 +167,7 @@ def check_walls(walls: list[dict[str, Any]], tolerance: float = 0.05,
 
     Un muro que muere en el aire —el espolón en "L" que estrangula un paso— es
     válido como geometría y no se construye. No lo ve el grafo de ambientes ni
-    lo arregla union_regions, que solo limpia los cruces.
+    lo arregla create_wall_network, que solo remata los encuentros.
 
     walls: [{"points": [[x,y], ...], "name": "divisorio cocina"}] con los EJES
     de cada muro, los mismos que le pasás a create_walls.
@@ -1057,6 +1057,50 @@ def create_walls(
         openings=openings, layer=layer, lineweight=lineweight,
         min_segment=min_segment,
     )
+
+
+@mcp.tool()
+def create_wall_network(
+    walls: list[dict[str, Any]],
+    layer: str = "MUROS",
+    lineweight: int = 50,
+    draw_symbols: bool = True,
+    min_segment: float = 0.40,
+    snap: Optional[float] = None,
+) -> dict[str, Any]:
+    """TODOS los muros de una planta en UNA llamada, con cada encuentro
+    rematado como lo remata un dibujante: esquina en L cerrada (sin la
+    mordida en la arista exterior), T que termina contra la CARA del muro
+    que la recibe, cruces limpios, cualquier ángulo. Es la forma correcta
+    de dibujar una planta que no salió de suggest_layout.
+
+    Por qué no varias create_walls: cada llamada dibuja su muro terminando
+    en el eje, sin saber de los otros. Donde se encuentran, las líneas de
+    uno atraviesan al otro y sobran puntas; fusionando con union_regions
+    desaparecen las puntas pero a la esquina exterior de cada L le falta un
+    cuadrito de medio espesor. Acá se resuelve la red entera en geometría
+    y salen polilíneas cerradas (editables, no Regions).
+
+    walls: [{"points": [[x,y], ...], "thickness": 0.15, "closed": false,
+             "openings": [...]}]
+      - points / thickness / closed / openings: lo mismo que create_walls,
+        un dict por muro (el eje del CENTRO, huecos por 'distance' o por
+        'segment' + 'offset' / at='center').
+      - Un muro que llega a otro termina en el EJE de ese otro (no en su
+        cara): la tool remata el encuentro. Para una T, el extremo va sobre
+        el eje del muro que la recibe, en cualquier punto de su largo.
+
+    snap: si un extremo cae a menos de esto de otro extremo o del eje de
+    otro muro, se ajusta para que cierre (una coordenada 2 cm corta deja un
+    escalón). Default: medio espesor del muro más fino; 0 lo apaga. Lo que
+    se ajustó vuelve en 'snapped' y en 'warnings' — nada se mueve callado.
+
+    Devuelve wallHandles (los contornos), 'axes' (listos para check_walls),
+    masonryArea / masonryPerimeter calculados de la geometría, y por muro
+    sus huecos y avisos de machones cortos."""
+    return arch_mod.create_wall_network(
+        walls=walls, layer=layer, lineweight=lineweight,
+        draw_symbols=draw_symbols, min_segment=min_segment, snap=snap)
 
 
 @mcp.tool()
@@ -4053,11 +4097,11 @@ def union_regions(handles: list[str],
                    delete_sources: bool = True) -> dict[str, Any]:
     """Fusiona contornos cerrados en uno solo (unión booleana).
 
-    Es lo que limpia los encuentros de muros. Cada tramo se dibuja como un
-    contorno cerrado propio, así que donde dos muros se cruzan quedan las
-    líneas de ambos atravesando la unión: se ve un cajón en el cruce en vez de
-    una T o una esquina limpia. Uniendo las regiones, esas líneas interiores
-    desaparecen y queda el perímetro real de la mampostería.
+    Para MUROS no: create_wall_network los dibuja con cada encuentro ya
+    rematado, en polilíneas editables. Unir tramos sueltos de create_walls
+    borra las líneas que se cruzan pero deja mordida la esquina exterior de
+    cada L (medio espesor por medio espesor que ningún tramo cubre).
+    Esto queda para otros contornos cerrados que haya que fundir.
 
     handles: polilíneas CERRADAS (las que devuelve create_walls en
     'wallHandles'). Los contornos que no se tocan quedan separados sin error.

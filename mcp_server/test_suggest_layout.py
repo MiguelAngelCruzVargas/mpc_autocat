@@ -104,13 +104,33 @@ def test_avisa_recamaras_interiores() -> None:
           str(r.get("warnings")))
 
 
+def test_puerta_mas_ancha_que_el_muro_comun() -> None:
+    """La boca del pasillo comparte con el comedor solo medio pasillo: una
+    puerta de 0.90 ahi quedaba montada sobre dos encuentros de muro."""
+    rooms = [{"name": "COMEDOR", "x0": 4, "y0": 0, "x1": 8, "y1": 4},
+             {"name": "PASILLO", "x0": 3.5, "y0": 4, "x1": 4.5, "y1": 12}]
+    mala = [{"from": "COMEDOR", "to": "PASILLO", "width": 0.90,
+             "x": 4.25, "y": 4.0}]
+    r = rules.check_geometry(rooms, mala)
+    check("detecta la puerta que no entra en 0.50 de muro",
+          any(p["rule"] == "puerta mas ancha que el muro"
+              for p in r["problems"]), str(r["problems"]))
+    abierta = [dict(mala[0], open=True, type="pass", width=1.0, x=4.0)]
+    r = rules.check_geometry(rooms, abierta)
+    check("un vano abierto no se mide contra el muro comun", r["ok"],
+          str(r["problems"]))
+    p = rules.suggest_layout(8.0, 20.0, bedrooms=3, bathrooms=2)
+    check("suggest_layout ya no la genera", p["ok"], str(p["problems"]))
+
+
 def main() -> int:
     for fn in [test_toda_la_grilla_sale_valida, test_partido_tipico,
                test_bano_principal_en_suite,
                test_frente_chico_no_fuerza_minimos,
                test_fondo_corto_dice_cuanto_falta,
                test_una_recamara_no_deja_hueco_muerto,
-               test_avisa_recamaras_interiores]:
+               test_avisa_recamaras_interiores,
+               test_puerta_mas_ancha_que_el_muro_comun]:
         print(fn.__name__)
         fn()
 

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -74,33 +75,49 @@ namespace AutoCadMcpPlugin.Commands
 
                 var resultado = (Region)regiones[0];
                 int unidas = 1;
+                var sueltas = new System.Collections.Generic.List<Region>();
                 for (int i = 1; i < regiones.Count; i++)
                 {
                     var otra = (Region)regiones[i];
+                    bool unida = false;
                     try
                     {
                         resultado.BooleanOperation(BooleanOperationType.BoolUnite, otra);
+                        unida = true;
                         unidas++;
                     }
                     catch (System.Exception)
                     {
-                        // Dos contornos que no se tocan no se pueden unir: no es
-                        // un error, simplemente quedan separados.
+                        // Esa región NO quedó dentro del resultado. Antes se
+                        // descartaba y el contorno original se borraba igual:
+                        // el tramo de muro desaparecía del dibujo sin aviso.
+                        // Tampoco sirve conservar los originales: lo que SÍ se
+                        // unió quedaría dos veces (Region + polilínea encima),
+                        // y CreateFromCurves no mapea curva -> región 1 a 1
+                        // como para conservar solo los que fallaron. Va al
+                        // dibujo como región suelta.
+                        sueltas.Add(otra);
                     }
                     finally
                     {
-                        otra.Dispose();
+                        if (unida)
+                            otra.Dispose();
                     }
                 }
 
                 var btr = SpaceHelper.Current(db, tr);
 
-                if (capa != null)
-                    resultado.Layer = capa;
-                resultado.LineWeight = EntityHelper.ParseLineWeight(grosor);
-
-                btr.AppendEntity(resultado);
-                tr.AddNewlyCreatedDBObject(resultado, true);
+                var salidaSueltas = new JsonArray();
+                foreach (var r in new[] { resultado }.Concat(sueltas))
+                {
+                    if (capa != null)
+                        r.Layer = capa;
+                    r.LineWeight = EntityHelper.ParseLineWeight(grosor);
+                    btr.AppendEntity(r);
+                    tr.AddNewlyCreatedDBObject(r, true);
+                    if (r != resultado)
+                        salidaSueltas.Add(r.Handle.ToString());
+                }
 
                 if (borrarOrigen)
                     foreach (var e in originales)
@@ -114,6 +131,15 @@ namespace AutoCadMcpPlugin.Commands
                     ["perimeter"] = resultado.Perimeter,
                     ["sourcesDeleted"] = borrarOrigen
                 };
+                if (sueltas.Count > 0)
+                {
+                    salida["failed"] = sueltas.Count;
+                    salida["looseHandles"] = salidaSueltas;
+                    salida["warning"] =
+                        $"{sueltas.Count} región(es) no se pudieron unir: quedaron " +
+                        "como regiones sueltas (en 'looseHandles') para no perder " +
+                        "ningún tramo. Revisá ese encuentro.";
+                }
                 tr.Commit();
                 return salida;
             }
