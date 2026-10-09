@@ -88,30 +88,19 @@ def _merge_intervalos(ivs: list[list[float]],
     return out
 
 
-def draw_layout(rooms: list[dict[str, Any]],
-                doors: Optional[list[dict[str, Any]]] = None,
-                windows: Optional[list[dict[str, Any]]] = None,
-                exterior_thickness: float = 0.15,
-                interior_thickness: float = 0.10,
-                window_width: float = 1.20,
-                merge: bool = True,
-                layer: str = LAYER_WALLS,
-                lineweight: int = LW_WALL) -> dict[str, Any]:
-    """Dibuja la muraria completa de una distribución de recintos.
+def plan_walls(rooms: list[dict[str, Any]],
+               doors: Optional[list[dict[str, Any]]] = None,
+               windows: Optional[list[dict[str, Any]]] = None,
+               exterior_thickness: float = 0.15,
+               interior_thickness: float = 0.10,
+               window_width: float = 1.20) -> dict[str, Any]:
+    """La muraria de una distribución, calculada SIN dibujar nada.
 
-    Toma el vocabulario de suggest_layout/check_layout (rooms como
-    rectángulos, doors con su posición) y lo convierte en muros de verdad:
-    cada frontera se dibuja UNA vez (dos recintos vecinos no duplican el
-    muro), el perímetro y el frente al patio salen con espesor exterior, lo
-    demás interior, y las puertas caen en el muro que les toca con la hoja
-    abriendo hacia su recinto destino. Las ventanas se ubican solas en el
-    hueco libre más grande del paño de su ambiente.
-
-    Solo entiende recintos ortogonales (rectángulos alineados a los ejes),
-    que es exactamente lo que produce suggest_layout.
-
-    Devuelve los handles, los EJES dibujados (listos para check_walls) y
-    los avisos de lo que no se pudo ubicar."""
+    Es lo que draw_layout dibuja en planta y create_3d_model levanta en 3D:
+    las dos parten de acá, así el modelo 3D tiene exactamente los mismos
+    muros, puertas y ventanas que la planta. Devuelve 'walls' (eje, espesor
+    y huecos de cada muro, el vocabulario de create_wall_network), 'axes'
+    para check_walls, lo que se pudo ubicar y los avisos."""
     tol = 1e-4
     rects: list[dict[str, Any]] = []
     for i, r in enumerate(rooms or []):
@@ -321,7 +310,44 @@ def draw_layout(rooms: list[dict[str, Any]],
         "windowsPlaced": ventanas_puestas,
         "thicknesses": {"exterior": exterior_thickness,
                         "interior": interior_thickness},
+        "walls": muros,
+        "warnings": avisos,
     }
+    return resultado
+
+
+
+def draw_layout(rooms: list[dict[str, Any]],
+                doors: Optional[list[dict[str, Any]]] = None,
+                windows: Optional[list[dict[str, Any]]] = None,
+                exterior_thickness: float = 0.15,
+                interior_thickness: float = 0.10,
+                window_width: float = 1.20,
+                merge: bool = True,
+                layer: str = LAYER_WALLS,
+                lineweight: int = LW_WALL) -> dict[str, Any]:
+    """Dibuja la muraria completa de una distribución de recintos.
+
+    Toma el vocabulario de suggest_layout/check_layout (rooms como
+    rectángulos, doors con su posición) y lo convierte en muros de verdad:
+    cada frontera se dibuja UNA vez (dos recintos vecinos no duplican el
+    muro), el perímetro y el frente al patio salen con espesor exterior, lo
+    demás interior, y las puertas caen en el muro que les toca con la hoja
+    abriendo hacia su recinto destino. Las ventanas se ubican solas en el
+    hueco libre más grande del paño de su ambiente.
+
+    Solo entiende recintos ortogonales (rectángulos alineados a los ejes),
+    que es exactamente lo que produce suggest_layout.
+
+    Devuelve los handles, los EJES dibujados (listos para check_walls) y
+    los avisos de lo que no se pudo ubicar."""
+    resultado = plan_walls(rooms, doors, windows,
+                           exterior_thickness=exterior_thickness,
+                           interior_thickness=interior_thickness,
+                           window_width=window_width)
+    muros = resultado.pop("walls")
+    avisos = resultado.pop("warnings")
+    axes = resultado["axes"]
 
     if merge:
         # La red entera de una vez. Dibujando tramo por tramo, cada uno
