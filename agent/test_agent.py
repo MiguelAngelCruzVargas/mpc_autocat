@@ -268,10 +268,40 @@ def test_tope_de_vueltas() -> None:
     check("y lo dice", any("tope" in a for a in avisos), str(avisos))
 
 
+def test_la_web_rechaza_paginas_ajenas() -> None:
+    """Una pagina cualquiera abierta en el navegador podia mandarle
+    instrucciones al agente con un fetch a 127.0.0.1:8770."""
+    from .web import pedido_confiable
+    propio = {"Host": "127.0.0.1:8770", "Origin": "http://127.0.0.1:8770",
+              "Sec-Fetch-Site": "same-origin"}
+    check("la interfaz propia pasa", pedido_confiable(propio, 8770, True))
+    check("localhost tambien",
+          pedido_confiable({"Host": "localhost:8770",
+                            "Origin": "http://localhost:8770"}, 8770, True))
+    check("curl sin Origin pasa (ya corre como el usuario)",
+          pedido_confiable({"Host": "127.0.0.1:8770"}, 8770, True))
+    check("POST desde otra pagina: rechazado",
+          not pedido_confiable({"Host": "127.0.0.1:8770",
+                                "Origin": "https://pagina-cualquiera.com"},
+                               8770, True))
+    check("Origin null (iframe sandbox): rechazado",
+          not pedido_confiable({"Host": "127.0.0.1:8770", "Origin": "null"},
+                               8770, True))
+    check("cross-site sin Origin: rechazado",
+          not pedido_confiable({"Host": "127.0.0.1:8770",
+                                "Sec-Fetch-Site": "cross-site"}, 8770, True))
+    check("DNS rebinding (Host ajeno): rechazado, aun en GET",
+          not pedido_confiable({"Host": "malo.example:8770"}, 8770, False))
+    check("otro puerto en Origin: rechazado",
+          not pedido_confiable({"Host": "127.0.0.1:8770",
+                                "Origin": "http://127.0.0.1:3000"}, 8770, True))
+
+
 def main() -> int:
     for fn in (test_aplanar_schema, test_recortar, test_bucle_openai,
                test_bucle_anthropic, test_un_error_de_tool_no_corta_la_sesion,
-               test_json_invalido_no_revienta, test_tope_de_vueltas):
+               test_json_invalido_no_revienta, test_tope_de_vueltas,
+               test_la_web_rechaza_paginas_ajenas):
         print(fn.__name__)
         fn()
     print("_con_conexion")

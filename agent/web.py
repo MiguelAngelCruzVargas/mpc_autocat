@@ -276,6 +276,36 @@ class CapturaUnica:
 CAPTURA_UNICA = CapturaUnica()
 
 
+def pedido_confiable(headers: Any, puerto: int, escribe: bool) -> bool:
+    """¿El pedido viene de la propia interfaz y no de otra página?
+
+    Escuchar solo en 127.0.0.1 no alcanza: cualquier página que el usuario
+    tenga abierta en el navegador puede hacer un fetch a 127.0.0.1:8770, y
+    un POST con text/plain ni siquiera pasa por el preflight de CORS. Sin
+    esto, una página ajena le mandaba instrucciones al agente: gastaba la
+    API key del usuario y dibujaba —o borraba— en su AutoCAD.
+
+    - Host: tiene que ser el nuestro. Un dominio ajeno que resuelve a
+      127.0.0.1 (DNS rebinding) llega con SU nombre en Host.
+    - Origin / Sec-Fetch-Site: el navegador los pone solo y una página no
+      los puede falsificar. Si vienen, tienen que ser de acá. Si no vienen
+      es un cliente sin navegador (curl, un test): ese ya corre como el
+      usuario, no hay nada que proteger de él.
+    """
+    propios = {f"127.0.0.1:{puerto}", f"localhost:{puerto}"}
+    if str(headers.get("Host") or "").lower() not in propios:
+        return False
+    if not escribe:
+        return True
+    origen = headers.get("Origin")
+    if origen is not None and str(origen).lower() not in {
+            f"http://{h}" for h in propios}:
+        return False
+    if str(headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
+        return False
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AutoCadMcpUI"
 
@@ -304,7 +334,19 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------ GET
 
+    def _rechazar_ajeno(self, escribe: bool) -> bool:
+        if pedido_confiable(self.headers, self.server.server_address[1],
+                            escribe):
+            return False
+        self._json({"error": "Pedido rechazado: no viene de la interfaz "
+                             "de AutoCAD-IA."}, 403)
+        return True
+
     def do_GET(self) -> None:                          # noqa: N802
+        # Los GET no cambian nada, pero /api/estado y la captura del plano
+        # tampoco son para que los lea otra página: alcanza con el Host.
+        if self._rechazar_ajeno(escribe=False):
+            return
         # Rutas de la API y capturas
         if self.path.startswith("/vista.png"):
             ruta = os.path.join(CAPTURAS, "vista.png")
@@ -387,6 +429,8 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------ POST
 
     def do_POST(self) -> None:                         # noqa: N802
+        if self._rechazar_ajeno(escribe=True):
+            return
         datos = self._leer_json()
 
         if self.path == "/api/clave":
