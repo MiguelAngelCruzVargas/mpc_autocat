@@ -15,11 +15,17 @@ import math
 from typing import Any, Optional
 
 import autocad_client as acad
+import layers
 import space
 
 LAYER = "MOBILIARIO"
 LW = 18
 LW_SOFT = 13  # colchones, cojines: aún más liviano que el contorno
+
+# Alto del texto de superficie relativo al del nombre del ambiente. Medido
+# contra un rótulo real: separado para no repetir el mismo 0.72 sin nombre
+# en label_rooms(), text_block_size() y label().
+AREA_HEIGHT_RATIO = 0.72
 
 # Huella de todo lo dibujado, para que los rótulos de ambiente no caigan
 # encima de un mueble. Cada entrada es un bounding box (x0, y0, x1, y1).
@@ -50,8 +56,7 @@ def _track_points(points: list[tuple[float, float]]) -> None:
 
 
 def ensure_layer() -> None:
-    acad.call("set_layer", {"name": LAYER, "colorIndex": 8,
-                            "linetype": None, "lineweightHundredthsMm": LW})
+    layers.ensure(LAYER, 8, LW)
 
 
 def _rot(p: tuple[float, float], base: tuple[float, float],
@@ -776,10 +781,9 @@ def label_rooms(rooms: list[dict[str, Any]], height: float,
     Cada room es {"name":..., "x0":..., "y0":..., "x1":..., "y1":...}. Usa las
     huellas registradas por place() para no poner el texto encima de una cama.
     """
-    acad.call("set_layer", {"name": layer, "colorIndex": 7, "linetype": None,
-                            "lineweightHundredthsMm": 25})
+    layers.ensure(layer, 7, 25)
     out = []
-    ah = area_height or height * 0.72
+    ah = area_height or height * AREA_HEIGHT_RATIO
 
     for i, room in enumerate(rooms):
         try:
@@ -847,7 +851,7 @@ def text_block_size(text: str, height: float, area: Optional[float] = None,
     w = measure(text, height)
     h = height
     if area is not None:
-        ah = area_height or height * 0.72
+        ah = area_height or height * AREA_HEIGHT_RATIO
         w = max(w, measure(f"{area:.2f} m2", ah))
         h += ah * 1.5
     return w, h
@@ -874,7 +878,7 @@ def label(text: str, cx: float, cy: float, height: float,
         "lineweight": lineweight, "colorIndex": None,
     })
     if area is not None:
-        ah = area_height or height * 0.72
+        ah = area_height or height * AREA_HEIGHT_RATIO
         txt = f"{area:.2f} m2"
         acad.call("create_text", {
             "text": txt,

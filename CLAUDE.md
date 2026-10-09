@@ -408,6 +408,67 @@ en el cuadro de cuantificación.
 Devuelve el número REAL de estribos y el largo REAL de varilla, para que
 `calculate_quantities` mida lo dibujado en vez de recordarlo.
 
+## 4.septies Detalles constructivos: se COMPONEN con materiales, piedras, tierra y varillas
+
+Un detalle constructivo (cimentación, muro de contención, corte de
+banqueta, pila, registro) no se dibuja con rectángulos y un patrón
+adivinado. Se compone con cuatro primitivas que saben de oficio, no de
+proyecto — y por eso sirven para cualquier detalle, incluido el que todavía
+no tiene tool propia:
+
+- **`create_material_section`** — un polígono CUALQUIERA (trapecio con
+  talud, losa con pendiente) + un material del catálogo (`concreto`,
+  `concreto_pobre`, `block`, `tabique`, `tierra`, `relleno`, `grava`,
+  `arena`, `acero`, `piedra_bola`, `mamposteria`, `ciclopeo`...). Pone el
+  contorno al grosor que le toca y la textura a una escala **calibrada con
+  la lámina**. Eso último es la clave: los patrones de `acad.pat` están en
+  pulgadas nominales, y ANSI31 a `scale=1` dibujando en metros raya cada
+  12.5 cm — en una plantilla de 10 cm no entra ni una línea y el corte sale
+  "sin textura". El módulo se pide EN PAPEL (1.2–3 mm) y la tool hace la
+  cuenta. `create_hatch` acepta lo mismo con `paper_mm` / `real_size`.
+  **Y hay dos archivos de patrones con los mismos nombres**: `acad.pat`
+  (pulgadas) y `acadiso.pat` (milímetros, 25.4 veces más grande a la misma
+  escala). Cuál usa el dibujo lo decide su plantilla; `materials.py` lo
+  detecta por las unidades de `get_drawing_info` y se cachea por dibujo. Se
+  descubrió en AutoCAD real: con la escala "de pulgadas" en un dibujo
+  métrico, AR-CONC salía como relleno sólido y EARTH como tres rayas
+  sueltas, y `get_entity` decía que todo estaba bien.
+  Si el patrón no carga cae al de respaldo y lo dice en `warnings`; **nunca
+  devuelve `None` en silencio** — así se perdió el achurado de un corte
+  entero sin que nadie se enterara.
+- **`create_stone_fill`** — piedras irregulares que caen y se apoyan unas
+  en otras dentro de cualquier contorno, con junta de mortero. AutoCAD no
+  trae textura de piedra suelta, y unos círculos tirados en una caja se leen
+  como círculos: pasó, y era la diferencia entre el dibujo del MCP y el de
+  referencia. `redonda` (canto rodado) o `angulosa` (piedra braza).
+- **`create_soil_section`** — la masa de terreno alrededor de lo enterrado,
+  con las piezas como islas, la línea de terreno natural cortada donde algo
+  SALE del suelo (el muro) y **sin caja exterior**: el contorno auxiliar se
+  borra después de achurar. Una caja cerrada alrededor se lee como otra
+  pieza de concreto, que es exactamente lo que pasaba.
+- **`create_rebar`** — UNA varilla por su trayectoria, con dobleces a radio
+  (6db, 4db en estribos) y ganchos normalizados (90°: 12db, 135°: 6db,
+  180°: 4db, ACI 318 25.3). Devuelve la longitud DESARROLLADA real para
+  cuantificar. `closed=True` es un estribo con sus dos ganchos a 135°.
+  `create_rebar_dots` para las barras vistas de punta. Una varilla no es
+  una línea: la transversal de una zapata se dobla en las puntas, el
+  arranque se ancla en L, y eso se ve en el corte.
+
+`create_footing_section` es la composición de ejemplo: zapata con talud +
+dado + cadena + muro, piedra bola o concreto armado, con tierra, acero,
+rótulos con especificación (`specs`) y título con globo. Lo que no entre
+ahí se arma con las cuatro primitivas directamente — **no** con
+`create_polyline` + `create_hatch` a mano.
+
+Un corte de cimentación es TRANSVERSAL: las barras que cruzan el muro se
+ven como líneas con gancho, las que corren a lo largo se ven de punta. Al
+revés no es un corte.
+
+**Mirar de cerca es parte del trabajo.** Los `check_*` no ven que las
+piedras no llenan la zanja ni que la textura no cayó. `capture_viewport`
+acotado al detalle, y sin AutoCAD `python mcp_server/preview_footing.py`
+renderiza los dos cortes con sus achurados (el preview ahora los dibuja).
+
 ## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta
@@ -703,9 +764,23 @@ volumen YA calculado en otro item de `concrete_volume` que ocupa el mismo
 hueco — no se recalcula aparte, se pasa el número real.
 
 `create_quantities_table` dibuja el resultado tal cual — no vuelve a
-calcular nada — con una columna que muestra CÓMO se llegó a cada número
-(área medida, módulo, fórmula), para que se pueda verificar la cuenta sin
-abrir el DWG.
+calcular nada — como el **cuadro de volúmenes** de un plano: No. |
+CONCEPTO | UNIDAD | CANTIDAD, bandas de partida, cantidades a la derecha
+con dos decimales (piezas y bolsas enteras), encabezado sombreado, marco
+grueso y totales por material al pie. **Ponele `group` a cada item**
+("Preliminares", "Cimentación", "Estructura", "Albañilería", "Acabados"):
+así salen numerados 1.1, 1.2... bajo su partida, que es como se presenta
+un presupuesto. Los conceptos largos se parten en dos líneas solos; el
+tamaño sale de la escala de la lámina (2 mm de papel), no de un número
+fijo en metros — la versión anterior era una lista de dos columnas de 22 m
+de ancho con la fórmula en texto corrido, y eso no es un cuadro. La
+operación completa (área medida, módulo, kg/m) sigue disponible con
+`show_calc=True` para revisar, y siempre en `export_quantities_csv`.
+`python mcp_server/preview_quantities.py` lo renderiza sin AutoCAD.
+
+`create_table` genérica tiene lo mismo: `align` por columna, `wrap`,
+`group_rows`, `total_rows`, `header_fill`, y con `text_height=0` toma 2 mm
+de papel a la escala registrada.
 
 **Es obligatorio, no opcional.** Todo plano que salga de esta biblioteca —no
 solo el que lo pida explícitamente— lleva su cuadro de cuantificación igual

@@ -18,12 +18,14 @@ import autocad_client
 import furniture
 import isometric
 import layers
+import materials
 import quantities
 import rebar
 import roof
 import sections
 import sheet
 import space
+import symbols
 
 DRAWN: list[dict[str, Any]] = []
 _next_handle = [0x100]
@@ -43,6 +45,11 @@ LAYER_COLORS = {
     "FACHADAS": "#356fb5",
     "CUBIERTA": "#111111",
     "ESTRUCTURA-TECHO": "#5b6b7a",
+    "DETALLES": "#111111",
+    "TERRENO-CORTE": "#6b5b45",
+    "ARMADO": "#8a1b1b",
+    "CIMENTACION-MURO": "#111111",
+    "TITULOS": "#2b5c8a",
 }
 DEFAULT_COLOR = "#444444"
 
@@ -64,19 +71,39 @@ def fake_call(cmd: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
                 "height": h, "charWidthRatio": CHAR_W_RATIO}
     if cmd in ("create_polyline", "create_line", "create_text",
                "create_circle", "create_arc"):
-        DRAWN.append({"cmd": cmd, **params})
+        DRAWN.append({"cmd": cmd, "handle": handle, **params})
     elif cmd == "create_mtext":
-        DRAWN.append({"cmd": "create_text", **params})
+        DRAWN.append({"cmd": "create_text", "handle": handle, **params})
     elif cmd == "create_hatch":
-        # No se dibuja (habria que resolver el contorno), pero queda anotado:
-        # sin esto un test no puede verificar que un simbolo salio relleno.
-        DRAWN.append({"cmd": cmd, **params})
+        # Se guarda con su handle de contorno: to_svg lo rellena resolviendo
+        # el contorno (y las islas) entre lo ya dibujado, asi el achurado se
+        # ve en el preview igual que en el DWG -- antes se descartaba y un
+        # detalle "sin textura" solo se descubria abriendo AutoCAD.
+        # El contorno se resuelve AHORA y se guarda adentro: en AutoCAD un
+        # hatch no asociativo sobrevive a que se borre su contorno (es lo
+        # que hace soil_section a proposito), y el preview tiene que
+        # sobrevivir igual.
+        por_handle = {e.get("handle"): e for e in DRAWN if e.get("handle")}
+        entry = {"cmd": cmd, "handle": handle, **params}
+        entry["_boundary"] = por_handle.get(params.get("boundaryHandle"))
+        entry["_islands"] = [por_handle[h] for h in (params.get("islandHandles") or [])
+                             if h in por_handle]
+        DRAWN.append(entry)
+    elif cmd == "delete_entity":
+        _borrar([params.get("handle")])
+    elif cmd == "delete_entities":
+        _borrar(list(params.get("handles") or []))
     elif cmd in ("create_dimension", "create_dimension_rotated"):
         # Las cotas se descomponen en las lineas y el numero que se ven en el
         # papel. Sin esto el preview las tiraba en silencio, que es justo por
         # lo que una cota encimada solo aparecia al abrir el DWG.
         DRAWN.extend(_expand_dimension(params, rotated=cmd.endswith("rotated")))
     return {"handle": handle, "status": "ok", "area": 0.0}
+
+
+def _borrar(handles: list) -> None:
+    quitar = {h for h in handles if h}
+    DRAWN[:] = [e for e in DRAWN if e.get("handle") not in quitar]
 
 
 # Altura del numero de cota: DIMTXT por DIMSCALE. El estilo base son 2.5 mm
@@ -148,7 +175,8 @@ def install() -> None:
     """Desvía todas las llamadas al plugin hacia el mock."""
     DRAWN.clear()
     autocad_client.call = fake_call
-    for modulo in (sheet, arch, furniture, annotation, sections, roof, rebar, isometric):
+    for modulo in (sheet, arch, furniture, annotation, sections, roof, rebar,
+                   isometric, materials, symbols):
         modulo.acad.call = fake_call
     # El preview arranca de cero: sin esto, dos corridas seguidas en el mismo
     # proceso apilan las cotas sobre franjas del plano anterior.
@@ -156,6 +184,9 @@ def install() -> None:
     layers.reset()
     # El mock no tiene estilos: se da por chequeado.
     layers._TEXT_CHECKED[0] = True
+    # Y no tiene get_drawing_info: los patrones se toman en pulgadas
+    # (acad.pat), que es la base de NATIVE_MODULE.
+    materials.set_pattern_units("inch")
     furniture.reset_footprints()
 
 
@@ -200,6 +231,14 @@ def to_svg(entities: list[dict[str, Any]], width_px: int = 1200,
         f'height="{h + 2 * pad}" fill="#faf9f7"/>',
         f'<g transform="translate(0,{2 * y0 + h}) scale(1,-1)">',
     ]
+    por_handle = {e.get("handle"): e for e in entities if e.get("handle")}
+    defs: list[str] = []
+    # Los achurados van primero, debajo de las lineas.
+    for e in entities:
+        if e["cmd"] == "create_hatch":
+            out.append(_hatch_svg(e, por_handle, defs, span))
+    if defs:
+        out.insert(3, "<defs>" + "".join(defs) + "</defs>")
 
     def stroke(e: dict[str, Any]) -> float:
         # centesimas de mm -> algo proporcional, solo para ver la jerarquia.
@@ -210,6 +249,11 @@ def to_svg(entities: list[dict[str, Any]], width_px: int = 1200,
         col = _color(e)
         sw = stroke(e)
         if e["cmd"] == "create_polyline":
+            if any(abs(b) > 1e-9 for b in (e.get("bulges") or [])):
+                out.append(f'<path d="{_contorno_path(e)}" fill="none" '
+                           f'stroke="{col}" stroke-width="{sw}" '
+                           f'stroke-linejoin="round"/>')
+                continue
             pts = " ".join(f"{p[0]},{p[1]}" for p in e["points"])
             tag = "polygon" if e.get("closed") else "polyline"
             out.append(f'<{tag} points="{pts}" fill="none" stroke="{col}" '
@@ -232,6 +276,110 @@ def to_svg(entities: list[dict[str, Any]], width_px: int = 1200,
 
     out.append("</g></svg>")
     return "\n".join(out)
+
+
+def _contorno_path(e: dict[str, Any]) -> str:
+    """Un contorno cerrado (polilinea o circulo) como subpath SVG. Los
+    bulges se aproximan con un arco SVG por tramo."""
+    if e["cmd"] == "create_circle":
+        cx, cy, r = e["x"], e["y"], e["radius"]
+        return (f"M {cx - r},{cy} A {r},{r} 0 1,0 {cx + r},{cy} "
+                f"A {r},{r} 0 1,0 {cx - r},{cy} Z")
+    if e["cmd"] != "create_polyline":
+        return ""
+    pts = e["points"]
+    bulges = e.get("bulges") or [0.0] * len(pts)
+    d = [f"M {pts[0][0]},{pts[0][1]}"]
+    n = len(pts)
+    for i in range(n):
+        j = (i + 1) % n
+        if j == 0 and not e.get("closed"):
+            break
+        b = bulges[i] if i < len(bulges) else 0.0
+        p, q = pts[i], pts[j]
+        if abs(b) < 1e-9:
+            d.append(f"L {q[0]},{q[1]}")
+        else:
+            c = math.dist(p, q)
+            theta = 4.0 * math.atan(abs(b))
+            r = c / (2.0 * math.sin(theta / 2.0)) if theta > 1e-9 else c
+            large = 1 if theta > math.pi else 0
+            sweep = 1 if b > 0 else 0
+            d.append(f"A {r},{r} 0 {large},{sweep} {q[0]},{q[1]}")
+    if e.get("closed"):
+        d.append("Z")
+    return " ".join(d)
+
+
+def _hatch_svg(e: dict[str, Any], por_handle: dict[str, Any],
+               defs: list[str], span: float) -> str:
+    """El achurado como relleno del contorno con un patron SVG del mismo
+    modulo que tendria en AutoCAD (scale x modulo nativo del patron)."""
+    borde = e.get("_boundary") or por_handle.get(e.get("boundaryHandle"))
+    if not borde:
+        return ""
+    path = _contorno_path(borde)
+    islas = e.get("_islands") or [por_handle[h] for h in (e.get("islandHandles") or [])
+                                  if h in por_handle]
+    for isla in islas:
+        path += " " + _contorno_path(isla)
+    patron = str(e.get("pattern") or "SOLID").upper()
+    col = _color(borde)
+    if patron == "SOLID":
+        ci = e.get("colorIndex")
+        if isinstance(ci, int) and 250 <= ci <= 255:
+            col = "#%02x%02x%02x" % ((51 + (ci - 250) * 40,) * 3)
+        elif ci == 8:
+            col = "#888888"
+        return f'<path d="{path}" fill="{col}" fill-rule="evenodd" stroke="none"/>'
+    esc = float(e.get("scale") or 1.0)
+    modulo = esc * materials.NATIVE_MODULE.get(patron, 1.0)
+    ang = float(e.get("angleDeg") or 0.0)
+    pid = f"p{len(defs)}"
+    sw = max(span / 2500.0, modulo / 40.0)
+    m = modulo
+    if patron.startswith("ANSI3") or patron == "LINE":
+        base = 0.0 if patron == "ANSI37" else 45.0
+        cuerpo = (f'<line x1="0" y1="0" x2="0" y2="{m}" stroke="{col}" '
+                  f'stroke-width="{sw}"/>')
+        if patron == "ANSI37":
+            cuerpo += (f'<line x1="0" y1="0" x2="{m}" y2="0" stroke="{col}" '
+                       f'stroke-width="{sw}"/>')
+        rot = base + ang
+    elif patron == "EARTH":
+        # Rayas cortas en dos direcciones alternadas: el simbolo de tierra.
+        cuerpo = (f'<line x1="0" y1="{m * 0.5}" x2="{m * 0.7}" y2="{m * 0.5}" '
+                  f'stroke="{col}" stroke-width="{sw}"/>'
+                  f'<line x1="{m * 0.5}" y1="{m}" x2="{m * 0.5}" y2="{m * 1.7}" '
+                  f'stroke="{col}" stroke-width="{sw}"/>')
+        m = m * 2.0
+        rot = ang
+    elif patron in ("AR-CONC", "AR-SAND", "DOTS", "GRAVEL"):
+        rnd = [(0.15, 0.2, 0.09), (0.55, 0.7, 0.06), (0.8, 0.25, 0.05),
+               (0.35, 0.85, 0.07), (0.62, 0.42, 0.04)]
+        k = 1.0 if patron == "AR-CONC" else 0.6
+        cuerpo = "".join(
+            f'<circle cx="{m * a}" cy="{m * b}" r="{m * c * k}" fill="{col}"/>'
+            for a, b, c in rnd)
+        rot = ang
+    elif patron.startswith("AR-B"):
+        alto = m / 2.0
+        cuerpo = (f'<rect x="0" y="0" width="{m}" height="{alto}" fill="none" '
+                  f'stroke="{col}" stroke-width="{sw}"/>'
+                  f'<rect x="{-m / 2}" y="{alto}" width="{m}" height="{alto}" '
+                  f'fill="none" stroke="{col}" stroke-width="{sw}"/>'
+                  f'<rect x="{m / 2}" y="{alto}" width="{m}" height="{alto}" '
+                  f'fill="none" stroke="{col}" stroke-width="{sw}"/>')
+        rot = ang
+    else:
+        cuerpo = (f'<line x1="0" y1="0" x2="0" y2="{m}" stroke="{col}" '
+                  f'stroke-width="{sw}"/>')
+        rot = 45.0 + ang
+    defs.append(
+        f'<pattern id="{pid}" patternUnits="userSpaceOnUse" width="{m}" '
+        f'height="{m}" patternTransform="rotate({rot})">{cuerpo}</pattern>')
+    return (f'<path d="{path}" fill="url(#{pid})" fill-rule="evenodd" '
+            f'stroke="none" opacity="0.85"/>')
 
 
 def _arc_path(e: dict[str, Any], color: str, stroke_width: float) -> str:

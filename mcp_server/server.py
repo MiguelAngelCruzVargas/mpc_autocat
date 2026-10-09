@@ -26,6 +26,7 @@ import rules as rules_mod
 import furniture as fur_mod
 import geom as geom_mod
 import layers as layers_mod
+import materials as mat_mod
 import placement as placement_mod
 import sections as sect_mod
 import session as session_mod
@@ -136,6 +137,7 @@ def _reset_drawing_state(dibujo: str) -> list[str]:
     layers_mod.reset()
     session_mod.reset()
     ann_mod.reset_dim_style()
+    mat_mod.reset()
 
     if olvidadas:
         avisos.append(
@@ -1682,33 +1684,51 @@ def create_conduit(points: list[list[float]], sag: float = 0.0,
 
 @mcp.tool()
 def create_table(x: float, y: float, rows: list[list[str]],
-                  col_widths: list[float], row_height: float,
-                  text_height: float, title: str = "",
-                  header: bool = True, layer: str = "TABLAS",
-                  avoid: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
-    """Tabla con grilla y texto: resumen de obra, cuadro de acabados,
-    cuantificación, cuadro de construcción.
+                 col_widths: list[float], row_height: float = 0.0,
+                 text_height: float = 0.0, title: str = "",
+                 header: bool = True, layer: str = "TABLAS",
+                 avoid: Optional[list[dict[str, Any]]] = None,
+                 align: Optional[list[str]] = None,
+                 wrap: bool = True,
+                 header_fill: bool = True,
+                 group_rows: Optional[list[int]] = None,
+                 total_rows: Optional[list[int]] = None,
+                 scale: float = 0.0) -> dict[str, Any]:
+    """Tabla con grilla y texto, con la convención de un cuadro de plano:
+    resumen de obra, cuadro de acabados, cuantificación, cuadro de
+    construcción. (x, y) es la esquina SUPERIOR izquierda; crece hacia abajo.
 
-    (x, y) es la esquina SUPERIOR izquierda; la tabla crece hacia abajo.
-    rows: las filas, con las celdas ya como texto. Con header=True la primera
-    fila va centrada y separada por una línea más gruesa.
-    col_widths: ancho de cada columna en unidades del modelo — define cuántas
-    columnas tiene la tabla.
-    row_height / text_height: en unidades del modelo. A 1:50 en metros, un
-    texto de 2.5mm de papel es 0.125 y una fila cómoda es 0.35.
+    rows: las filas, con las celdas ya como texto. Con header=True la
+    primera va centrada, sombreada (header_fill) y con la línea de abajo
+    gruesa; el marco exterior es más grueso que la grilla.
+    col_widths: ancho de cada columna en unidades del modelo — define
+    cuántas columnas tiene la tabla.
+    text_height: 0 = 2 mm de papel a la escala de la lámina (scale =
+    unidades por mm; 0 toma la registrada). row_height: 0 = 2.4 veces el
+    texto. A mano: a 1:50 en metros, 2.5 mm de papel es 0.125.
+    align: por columna, 'left' / 'center' / 'right'. Los NÚMEROS van a la
+    derecha: una columna de cantidades alineada a la izquierda no se puede
+    leer de arriba abajo.
+    wrap: un texto que no entra en su celda se parte en varias líneas y la
+    fila crece, en vez de encimarse con la de al lado o cortar la tabla.
+    group_rows: índices de filas que son banda de partida ('CIMENTACIÓN'):
+    la primera celda cruza toda la fila, sombreada, y las verticales no la
+    atraviesan. total_rows: filas de total (línea gruesa arriba, texto
+    fuerte).
 
     Esta tool NO sabe qué más hay dibujado: (x, y) es una posición fija, así
-    que si al lado va una ilustración (un detalle constructivo, una planta)
-    puede terminar tapándola sin ningún aviso. Si ya sabés dónde está esa
-    ilustración, pasala en avoid ([{"x0":.., "y0":.., "x1":.., "y1":..,
-    "what":".."}]) y si la tabla cae encima vas a ver 'warning' en la
-    respuesta en vez de descubrirlo al mirar el dibujo.
+    que si al lado va una ilustración puede terminar tapándola sin aviso.
+    Pasá su caja en avoid ([{"x0":.., "y0":.., "x1":.., "y1":.., "what":..}])
+    y si la tabla cae encima sale 'warning'.
 
-    Devuelve 'bottom' y 'right' para poder encadenar otra cosa debajo o al lado."""
+    Devuelve 'bottom' y 'right' para encadenar otra cosa debajo o al lado,
+    y 'rowHeights' (con wrap las filas no miden todas lo mismo)."""
     return ann_mod.create_table(x=x, y=y, rows=rows, col_widths=col_widths,
                                 row_height=row_height, text_height=text_height,
                                 title=title, header=header, layer=layer,
-                                avoid=avoid)
+                                avoid=avoid, align=align, wrap=wrap,
+                                header_fill=header_fill, group_rows=group_rows,
+                                total_rows=total_rows, scale=scale)
 
 
 @mcp.tool()
@@ -1986,7 +2006,7 @@ def create_column_section(x: float, y: float, width: float, depth: float,
                           cover: float = 0.03,
                           stirrup_diameter: float = 0.0095,
                           hatch_pattern: str = rebar_mod.DEFAULT_CONCRETE_HATCH,
-                          hatch_scale: float = 1.0,
+                          hatch_scale: float = 0.0,
                           layer: Optional[str] = None) -> dict[str, Any]:
     """Sección de una columna/castillo de concreto en corte, con estribo y
     varillas longitudinales -- el detalle que "30x30, típico" no dibuja y
@@ -2114,6 +2134,282 @@ def create_footing_plan(x: float, y: float, width: float, length: float,
         bar_diameter=bar_diameter, cover=cover,
         support_width=support_width, support_length=support_length,
         corner_bar_leg=corner_bar_leg, layer=layer)
+
+
+@mcp.tool()
+def create_footing_section(x: float, y: float,
+                           foundation_type: str,
+                           wall_thickness: float,
+                           footing_width: float,
+                           footing_thickness: float,
+                           text_height: float,
+                           lean_concrete_thickness: float = 0.10,
+                           footing_edge_thickness: float = 0.0,
+                           pedestal_height: float = 0.0,
+                           pedestal_width: float = 0.0,
+                           grade_beam_height: float = 0.0,
+                           grade_beam_width: Optional[float] = None,
+                           grade_beam_bars: int = 0,
+                           wall_height: float = 0.6,
+                           dowel_count: int = 0,
+                           dowel_leg: float = 0.0,
+                           bar_diameter: float = 0.0127,
+                           stirrup_diameter: float = 0.0095,
+                           stirrup_spacing: float = 0.0,
+                           cover: float = 0.05,
+                           beam_cover: Optional[float] = None,
+                           footing_bar_count: int = 0,
+                           footing_hook: str = "90",
+                           ground_level: Optional[float] = None,
+                           excavation_margin: float = 0.30,
+                           soil_depth_below: float = 0.15,
+                           wall_material: str = "block",
+                           stone_size: Optional[list[float]] = None,
+                           specs: Optional[dict[str, str]] = None,
+                           dimension: bool = True,
+                           labels: bool = True,
+                           title: str = "",
+                           mark: str = "",
+                           scale: float = 0.0,
+                           layer: Optional[str] = None) -> dict[str, Any]:
+    """Corte TRANSVERSAL de la cimentación de un muro corrido (barda, muro
+    de carga liviano), de la excavación hacia arriba. Es una COMPOSICIÓN de
+    las primitivas de detalle -- create_material_section, create_stone_fill,
+    create_soil_section, create_rebar -- así que cualquier cimentación que
+    no entre en estos parámetros se arma con esas mismas tools directamente.
+
+    foundation_type: 'zapata_concreto' (concreto ARMADO), 'piedra_bola'
+    (relleno de piedra junteada), 'mamposteria' (piedra braza) o 'ciclopeo'.
+    (x, y): x es el EJE del muro, y el nivel de desplante (base de la
+    plantilla). lean_concrete_thickness NO tiene default en 0: una
+    cimentación real siempre lleva plantilla.
+
+    footing_edge_thickness: espesor en el BORDE de la zapata; menor que
+    footing_thickness dibuja el talud real de una zapata corrida. 0 =
+    rectangular. pedestal_height/width: el dado. grade_beam_*: la cadena de
+    desplante; grade_beam_bars>0 dibuja su estribo cerrado con ganchos a
+    135° y las varillas de punta. dowel_count: arranques anclados en L en la
+    zapata. stirrup_spacing: estribos del dado/cadena vistos de canto (un
+    MÁXIMO de obra; pide dowels). footing_bar_count: varillas
+    longitudinales de la zapata (de punta) + la transversal con gancho
+    (footing_hook) en las dos puntas. beam_cover: recubrimiento de cadena y
+    dado si difiere de 'cover' (2.5-3 cm es lo usual, 5 en la zapata).
+
+    ground_level: cota absoluta del terreno natural (default: tope de la
+    cadena/dado). excavation_margin / soil_depth_below: cuánta tierra se
+    muestra a los lados y debajo -- con 0 y 0 se omite. La tierra se achura
+    hasta el borde de cada pieza, con la línea de terreno natural cortada
+    donde sale el muro, y SIN caja exterior (se lee "esto sigue").
+
+    specs: especificación por pieza, se agrega al rótulo -- {"plantilla":
+    "f'c=100 kg/cm²", "footing": "f'c=200 kg/cm²", "stones": "JUNTEADA CON
+    MORTERO 1:5", "grade_beam": "...", "dowels": "...", "bars": "...",
+    "wall": "...", "pedestal": "..."}. Un rótulo sin especificación es un
+    nombre, no un dato de obra.
+    title/mark: título de vista (letras sin separar) con la letra en globo
+    ('A') a la izquierda. scale: unidades del modelo por mm de papel del
+    DETALLE (1:20 en metros = 0.02); 0 toma la de la lámina -- las texturas
+    y las cotas se calibran con eso.
+
+    Devuelve los handles de cada pieza (calculate_quantities), los largos
+    reales de acero, 'levels', 'soil' y 'warnings' (leelos: ahí avisa si un
+    patrón no cargó, si el hueco no dio para las piedras o si un espesor
+    parece estar en otra unidad)."""
+    return rebar_mod.create_footing_section(
+        x=x, y=y, foundation_type=foundation_type,
+        wall_thickness=wall_thickness, footing_width=footing_width,
+        footing_thickness=footing_thickness, text_height=text_height,
+        lean_concrete_thickness=lean_concrete_thickness,
+        footing_edge_thickness=footing_edge_thickness,
+        pedestal_height=pedestal_height, pedestal_width=pedestal_width,
+        grade_beam_height=grade_beam_height,
+        grade_beam_width=grade_beam_width, grade_beam_bars=grade_beam_bars,
+        wall_height=wall_height, dowel_count=dowel_count,
+        dowel_leg=dowel_leg, bar_diameter=bar_diameter,
+        stirrup_diameter=stirrup_diameter, stirrup_spacing=stirrup_spacing,
+        cover=cover, beam_cover=beam_cover,
+        footing_bar_count=footing_bar_count, footing_hook=footing_hook,
+        ground_level=ground_level, excavation_margin=excavation_margin,
+        soil_depth_below=soil_depth_below, wall_material=wall_material,
+        stone_size=stone_size, specs=specs, dimension=dimension,
+        labels=labels, title=title, mark=mark, scale=scale, layer=layer)
+
+
+# ------------------------------------------- primitivas de detalle
+
+@mcp.tool()
+def create_material_section(points: list[list[float]], material: str,
+                            bulges: Optional[list[float]] = None,
+                            layer: Optional[str] = None,
+                            lineweight: int = 0,
+                            outline: bool = True,
+                            hatch: bool = True,
+                            scale: float = 0.0,
+                            stone_size: Optional[list[float]] = None,
+                            seed: int = 4241,
+                            island_handles: Optional[list[str]] = None,
+                            color_index: Optional[int] = None) -> dict[str, Any]:
+    """Un polígono de material CORTADO: contorno al grosor que le toca y la
+    textura del material a una escala calibrada con la lámina. Es la pieza
+    básica de cualquier detalle constructivo -- zapata, dado, losa, muro de
+    contención, capa de pavimento, pila -- y NO tiene que ser un rectángulo:
+    points son los vértices que sean (una zapata con talud, una banqueta
+    con pendiente), bulges opcional uno por vértice.
+
+    material, del catálogo: concreto, concreto_pobre (plantilla), block y
+    tabique (cortados: rayado abierto), block_visto / tabique_visto (la
+    junta a tamaño real, para paños vistos), tierra, relleno, grava, arena,
+    acero, aislante, piedra_bola y mamposteria (piedras de verdad empacadas
+    con create_stone_fill, no un patrón), ciclopeo (concreto + piedras al
+    35%). Acepta alias en inglés y castellano (concrete, soil, plantilla,
+    ladrillo...). Un material que no está se pasa como JSON inline en el
+    mismo string NO: usá create_hatch con paper_mm para ese caso.
+
+    Por qué la escala no es una constante: los patrones de acad.pat están
+    en pulgadas nominales (ANSI31 raya cada 0.125); dibujando en metros con
+    scale=1 raya cada 12.5 cm y en una plantilla de 10 cm no entra ni una
+    línea. Acá el módulo se pide EN PAPEL (1.2-3 mm según material) y se
+    convierte con la escala de la lámina ('scale' = unidades por mm de
+    papel, 0 toma la registrada por create_sheet). Si el patrón no existe
+    en esta instalación cae al de respaldo, y si ninguno carga lo dice en
+    'warnings' -- nunca deja un contorno vacío en silencio.
+
+    Devuelve 'handle' (calculate_area lo mide para cuantificar), 'area' por
+    shoelace, 'points' tal como quedó (create_soil_section lo necesita como
+    isla) y 'stoneHandles' si el material es de piedra."""
+    return mat_mod.draw_material(
+        points=points, material=material, bulges=bulges, layer=layer,
+        lineweight=lineweight, outline=outline, hatch=hatch, scale=scale,
+        stone_size=stone_size, seed=seed, island_handles=island_handles,
+        color_index=color_index)
+
+
+@mcp.tool()
+def create_stone_fill(points: list[list[float]],
+                      stone_size: Optional[list[float]] = None,
+                      shape: str = "redonda",
+                      coverage: float = 0.0,
+                      gap: Optional[float] = None,
+                      seed: int = 4241,
+                      layer: Optional[str] = None,
+                      lineweight: int = 25,
+                      max_count: int = 400,
+                      color_index: Optional[int] = None) -> dict[str, Any]:
+    """Empaca piedras irregulares que NO se pisan dentro de cualquier
+    contorno cerrado: relleno de piedra bola, mampostería de piedra braza,
+    enrocamiento, gaviones. AutoCAD no trae una textura de piedra suelta y
+    unos círculos tirados en una caja se leen como círculos, nunca como el
+    bolsón de piedra de un detalle real.
+
+    Cada piedra CAE por una columna al azar hasta apoyar sobre el fondo o
+    sobre otra (como un bolsón real), y al final las chicas rellenan los
+    huecos. points: el contorno (zanja rectangular, trapecio, muro
+    inclinado, lo que sea; se recorta a él). stone_size: [min, max] de
+    diámetro en unidades del modelo; sin dato, la mayor es ~40% de la
+    dimensión menor del hueco (piedras de 15-25 cm en una zanja de 60).
+    shape: 'redonda' (canto rodado, lados curvos) o 'angulosa' (piedra
+    braza, caras planas y junta fina). coverage: fracción del área a
+    cubrir (0 = 0.68 redonda / 0.80 angulosa). gap: junta de mortero.
+
+    Determinista con la misma semilla. Devuelve los handles, cuántas
+    entraron y la cobertura REAL -- si quedó lejos de la pedida lo avisa,
+    en vez de dejar el hueco medio vacío sin decir nada."""
+    return mat_mod.fill_stones(
+        points=points, stone_size=stone_size, shape=shape,
+        coverage=coverage if coverage > 0 else None, gap=gap, seed=seed,
+        layer=layer, lineweight=lineweight, max_count=max_count,
+        color_index=color_index)
+
+
+@mcp.tool()
+def create_soil_section(x0: float, x1: float, ground_level: float,
+                        bottom: float,
+                        islands: Optional[list[dict[str, Any]]] = None,
+                        material: str = "tierra",
+                        ground_extension: Optional[float] = None,
+                        ground_line: bool = True,
+                        scale: float = 0.0,
+                        layer: Optional[str] = None,
+                        lineweight: int = 35,
+                        color_index: Optional[int] = None) -> dict[str, Any]:
+    """La masa de terreno alrededor de lo que esté enterrado: cimentación,
+    zanja de tubería, muro de contención, registro, cualquier cosa.
+
+    Sin esto un corte se lee como piezas de concreto flotando; pero como
+    una CAJA cerrada alrededor tampoco sirve, porque la caja se lee como
+    otra pieza. Lo que hace un corte de obra: achura el terreno hasta el
+    borde de cada pieza (islas), traza la línea del terreno natural que
+    sigue hacia los dos lados, y NO dibuja el borde exterior de la masa (el
+    contorno auxiliar se borra después de achurar).
+
+    x0..x1 y bottom..ground_level: la zona de terreno que se muestra.
+    islands: lo que desplaza tierra -- pasá los dicts que devuelve
+    create_material_section tal cual (usa 'handle' y 'points'). La línea de
+    terreno se corta donde una pieza SALE del suelo (el muro) y pasa de
+    largo sobre lo que termina justo en el nivel (la cadena).
+    material: 'tierra' (rayado EARTH a 45°) o 'relleno' (compactado, a
+    135°, para distinguirlo del natural). ground_extension: cuánto sigue
+    la línea de terreno más allá de la zona achurada, a cada lado."""
+    return mat_mod.soil_section(
+        x0=x0, x1=x1, ground_level=ground_level, bottom=bottom,
+        islands=islands, material=material,
+        ground_extension=ground_extension, ground_line=ground_line,
+        scale=scale, layer=layer, lineweight=lineweight,
+        color_index=color_index)
+
+
+@mcp.tool()
+def create_rebar(points: list[list[float]], diameter: float,
+                 start_hook: Optional[str] = None,
+                 end_hook: Optional[str] = None,
+                 hook_side: str = "left",
+                 closed: bool = False,
+                 bend_diameter_factor: float = 6.0,
+                 hook_extension: float = 0.0,
+                 layer: Optional[str] = None,
+                 lineweight: int = 35,
+                 color_index: Optional[int] = None) -> dict[str, Any]:
+    """UNA varilla dibujada por su trayectoria, con los dobleces a radio y
+    los ganchos normalizados. Es lo que separa 'una línea' de 'una
+    varilla', y sirve para cualquier armado: la transversal de una zapata
+    con gancho en las puntas, un arranque en L, un bastón, un estribo.
+
+    points: por dónde pasa el EJE de la barra, tramo recto a tramo recto:
+    [[0,0],[1.2,0]] es una barra recta; [[0,0.6],[0,0.05],[0.25,0.05]] un
+    arranque en L. Cada quiebre sale doblado con radio (diámetro interior
+    de doblez = bend_diameter_factor x diámetro; 6db ACI 318 tabla 25.3.1,
+    4db para estribos -- closed=True lo pone solo).
+    diameter: en unidades del modelo (0.0127 = #4, 0.0095 = #3).
+    start_hook / end_hook: '90', '135', '180' o None. La extensión sale de
+    la convención (12db / 6db / 4db, ACI 25.3.1-2) salvo hook_extension.
+    hook_side: 'left' o 'right' respecto del sentido de avance -- para una
+    barra que va de izquierda a derecha, 'left' es gancho hacia ARRIBA.
+    closed=True: estribo -- vuelve al primer punto y las dos puntas llevan
+    gancho a 135° hacia adentro. Recorré los vértices antihorario.
+
+    Devuelve el handle, la longitud DESARROLLADA real (rectas + arcos +
+    ganchos, para calculate_quantities tipo steel_weight), y los vértices
+    con sus bulges. Avisa si un tramo era más corto que el doblez."""
+    return rebar_mod.create_rebar(
+        points=points, diameter=diameter, start_hook=start_hook,
+        end_hook=end_hook, hook_side=hook_side, closed=closed,
+        bend_diameter_factor=bend_diameter_factor,
+        hook_extension=hook_extension, layer=layer, lineweight=lineweight,
+        color_index=color_index)
+
+
+@mcp.tool()
+def create_rebar_dots(points: list[list[float]], diameter: float,
+                      layer: Optional[str] = None,
+                      lineweight: int = 18,
+                      color_index: Optional[int] = None) -> dict[str, Any]:
+    """Varillas vistas de PUNTA (perpendiculares al plano del corte): un
+    punto macizo por barra, del diámetro real. Es lo que muestra un corte
+    transversal de las longitudinales de una trabe, una cadena, una zapata
+    corrida o una losa. points: los centros."""
+    return rebar_mod.create_rebar_dots(
+        points=points, diameter=diameter, layer=layer,
+        lineweight=lineweight, color_index=color_index)
 
 
 @mcp.tool()
@@ -2316,9 +2612,10 @@ def create_level_mark(x: float, y: float, elevation: float,
 def create_view_title(x: float, y: float, title: str,
                        scale_text: Optional[str] = None,
                        height: float = 0.0,
-                       spaced: bool = True,
+                       spaced: Optional[bool] = None,
                        underline: bool = True,
                        align: str = "left",
+                       mark: str = "",
                        layer: str = "TITULOS",
                        color_index: Optional[int] = 152,
                        lineweight: int = 35,
@@ -2331,16 +2628,20 @@ def create_view_title(x: float, y: float, title: str,
 
     title: 'PLANTA ESTRUCTURAL DE CUBIERTA'.
     scale_text: 'ESC. 1:100', va abajo y más chico. None lo omite.
-    spaced: separa las letras ('P L A N T A'), como se rotula en la mayoría
-    de las oficinas. False lo deja tal cual.
+    spaced: separa las letras ('P L A N T A'). None (default) decide solo:
+    se separa un título corto (hasta 12 letras), que es donde esa
+    tipografía funciona; uno largo va seguido -- separado se vuelve
+    ilegible y ocupa media lámina. True/False lo fuerzan.
+    mark: letra en globo a la izquierda del título ('A'), la referencia con
+    la que la planta llama a este detalle. Vacío lo omite.
     align: 'left' (x es el borde izquierdo) o 'center' (x es el centro).
 
     Devuelve la caja total — pasásela a create_table en 'avoid' para que un
     cuadro no le caiga encima."""
     return sym_mod.create_view_title(
         x=x, y=y, title=title, scale_text=scale_text, height=height,
-        spaced=spaced, underline=underline, align=align, layer=layer,
-        color_index=color_index, lineweight=lineweight,
+        spaced=spaced, underline=underline, align=align, mark=mark,
+        layer=layer, color_index=color_index, lineweight=lineweight,
         rule_lineweight=rule_lineweight)
 
 
@@ -2807,7 +3108,8 @@ def create_hatch(
     boundary_handle: str, pattern: str = "SOLID", scale: float = 1.0,
     angle_deg: float = 0.0, layer: Optional[str] = None,
     lineweight: Optional[int] = None, color_index: Optional[int] = None,
-    island_handles: Optional[list[str]] = None) -> dict[str, Any]:
+    island_handles: Optional[list[str]] = None,
+    paper_mm: float = 0.0, real_size: float = 0.0) -> dict[str, Any]:
     """Rellena una entidad cerrada (Polyline cerrada o Circle, identificada por su
     handle) con un patrón de achurado. 'SOLID' para relleno sólido (p.ej. los
     cuadraditos de una leyenda); nombres de acad.pat como 'ANSI31' o 'AR-CONC'
@@ -2818,8 +3120,19 @@ def create_hatch(
     Todo caso donde el material rodea algo que no lo lleva. Sin esto el
     achurado tapaba la isla entera.
 
+    paper_mm / real_size: en vez de adivinar 'scale', pedí el módulo del
+    patrón EN PAPEL (rayas cada 2 mm) o a tamaño REAL del modelo (un block
+    de 0.40) y la escala se calcula sola con la de la lámina. Los patrones
+    de acad.pat están en pulgadas nominales: ANSI31 a scale=1 raya cada
+    12.5 cm dibujando en metros, y en una pieza de 10 cm no se ve nada.
+    Para materiales de corte preferí create_material_section, que ya trae
+    patrón, módulo y respaldo por material.
+
     lineweight: grosor de las líneas del patrón en centésimas de mm (los rellenos
     van finos, 5-13, para que no tapen el dibujo). color_index: color ACI."""
+    if paper_mm > 0 or real_size > 0:
+        scale = mat_mod.hatch_scale(pattern, paper_mm or None,
+                                    real_size or None)
     r = acad.call("create_hatch", {
         "boundaryHandle": boundary_handle,
         "islandHandles": island_handles, "pattern": pattern,
@@ -2841,6 +3154,7 @@ def create_hatch(
                 "AutoCAD; 'ping' te dice que version esta cargada."
                 % (len(island_handles), aplicadas if aplicadas is not None
                    else "ninguna (ni siquiera lo reporta)"))
+    r["scale"] = scale
     return r
 
 
@@ -3294,24 +3608,37 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 @mcp.tool()
 def create_quantities_table(x: float, y: float, result: dict[str, Any],
-                            text_height: float,
-                            title: str = "CUANTIFICACIÓN DE OBRA (MEDIDA DEL PLANO)",
+                            text_height: float = 0.0,
+                            title: str = "CUADRO DE VOLÚMENES DE OBRA",
                             layer: str = "TABLAS",
-                            col_widths: Optional[list[float]] = None) -> dict[str, Any]:
-    """Dibuja el resultado de calculate_quantities como tabla.
+                            col_widths: Optional[list[float]] = None,
+                            show_calc: bool = False,
+                            scale: float = 0.0) -> dict[str, Any]:
+    """Dibuja el resultado de calculate_quantities como el CUADRO DE
+    VOLÚMENES de un plano: No. | CONCEPTO | UNIDAD | CANTIDAD, agrupado por
+    partida, cantidades a la derecha con dos decimales (piezas y bolsas
+    enteras), encabezado sombreado, marco grueso y totales por material al
+    pie -- la convención de cualquier juego de planos, no una lista.
 
-    No recalcula nada: toma 'result' tal cual lo devolvió calculate_quantities
-    y lo tabula, con una columna que muestra CÓMO se llegó a cada número
-    (área medida, módulo, fórmula) y no solo el resultado final — así quien
-    lee la lámina puede verificar la cuenta sin abrir el DWG.
+    No recalcula nada: toma 'result' tal cual lo devolvió
+    calculate_quantities. Si los items llevan 'group' ("Preliminares",
+    "Cimentación", "Estructura"...) salen bajo su banda de partida y
+    numerados 1.1, 1.2...; sin grupo, numerados corrido. Ponele partida a
+    los items: un cuadro sin partidas no es como se presenta un presupuesto.
 
-    col_widths: [concepto, medición], en unidades del modelo. Por defecto
-    [5.5, 17.0] — la columna de medición trae la operación completa (cada
-    área sumada, el módulo desglosado, el kg/m usado), así que sale ancha.
-    Si algún texto no entra, el resultado avisa en 'warning' cuánto necesita."""
+    show_calc: agrega la columna MEDICIÓN con la operación completa (cada
+    área medida, el módulo, el kg/m) — sirve para verificar el número sin
+    abrir el DWG, pero ensancha el cuadro; en lámina va casi siempre sin
+    ella y la operación queda en export_quantities_csv.
+    text_height: 0 = 2 mm de papel. col_widths en unidades del modelo;
+    default 8/70/14/22 mm de papel (+55 con MEDICIÓN) a la escala de la
+    lámina (scale = unidades por mm de papel, 0 toma la registrada). Los
+    conceptos largos se parten en dos líneas solos.
+
+    Devuelve 'bottom'/'right' para encadenar, y 'warning' si algo no entró."""
     return qty_mod.create_quantities_table(
         x=x, y=y, result=result, text_height=text_height, title=title,
-        layer=layer, col_widths=col_widths)
+        layer=layer, col_widths=col_widths, show_calc=show_calc, scale=scale)
 
 
 @mcp.tool()

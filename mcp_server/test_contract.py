@@ -24,7 +24,7 @@ def main() -> int:
     # sheet.py compone tools basicas, asi que tambien invoca comandos.
     composed = "".join(
         io.open(os.path.join(HERE, name), encoding="utf-8").read()
-        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py")
+        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py")
     )
 
     called = set(re.findall(r'acad\.call\(\s*"([a-z_]+)"', server_src + composed))
@@ -60,7 +60,7 @@ def main() -> int:
                  "civil_mod.", "elec_mod.", "profile_mod.", "rules_mod.",
                  "sect_mod.", "qty_mod.", "roof_mod.", "rebar_mod.",
                  "iso_mod.", "sym_mod.", "compose_mod.", "geom_mod.",
-                 "layers_mod.", "space_mod.", "session_mod.")
+                 "layers_mod.", "space_mod.", "session_mod.", "mat_mod.")
     patron = "|".join(re.escape(d) for d in delegados)
     silent = sorted(t for t in exposed if not re.search(
         r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|" + patron + ")",

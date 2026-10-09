@@ -500,6 +500,77 @@ def test_create_quantities_table_no_recalcula() -> None:
         quantities.acad.call = real
 
 
+def _ok(name: str, cond, detalle=None) -> None:
+    """Booleano contra True, con detalle opcional en la falla."""
+    if not cond:
+        FAILED.append(f"{name}: {detalle}")
+    print(("  ok  " if cond else " FALLA ") + name)
+
+
+def test_cuadro_de_volumenes_con_partidas() -> None:
+    """El cuadro sale como en un plano: No. | CONCEPTO | UNIDAD | CANTIDAD,
+    bandas de partida, cantidades a la derecha, concepto largo partido en
+    dos lineas, y totales sin nombres repetidos."""
+    real = quantities.acad.call
+    try:
+        _mock_areas({"K1": 0.0225, "MURO": 7.2})
+        import space
+        space.set_scale(0.1)
+        r = quantities.calculate_quantities([
+            {"type": "concrete_volume", "group": "Estructura",
+             "label": "Castillos K-1 de concreto f'c=200 kg/cm2 de 15x15 cm (12 piezas)",
+             "handles": ["K1"] * 12, "depth": 2.5},
+            {"type": "brick_count", "group": "Albanileria",
+             "label": "Muro de tabique", "handles": ["MURO"]},
+            {"type": "area_finish", "group": "Acabados", "material": "aplanado",
+             "label": "Aplanado", "handles": ["MURO"], "thickness": 0.015},
+        ])
+        _ok("la partida viaja en la fila", r["items"][0].get("group") == "Estructura",
+              r["items"][0])
+        preview.DRAWN.clear()
+        t = quantities.create_quantities_table(0.0, 0.0, r)
+        textos = [e for e in preview.DRAWN if e["cmd"] == "create_text"]
+        por_texto = {e["text"]: e for e in textos}
+        _ok("encabezado de cuadro", all(k in por_texto for k in
+                                          ("No.", "CONCEPTO", "UNIDAD", "CANTIDAD")),
+              list(por_texto)[:8])
+        _ok("bandas de partida en mayusculas",
+              "ESTRUCTURA" in por_texto and "ACABADOS" in por_texto)
+        _ok("numeracion por partida (1.1, 2.1, 3.1)",
+              all(k in por_texto for k in ("1.1", "2.1", "3.1")), list(por_texto))
+        _ok("el concepto largo se partio en 2 lineas",
+              any(e["text"].startswith("Castillos K-1") for e in textos)
+              and not any("(12 piezas)" in e["text"] and e["text"].startswith("Castillos")
+                          for e in textos))
+        _ok("las filas no miden todas lo mismo (wrap)",
+              len(set(round(h, 4) for h in t["rowHeights"])) > 1, t["rowHeights"])
+        cant = por_texto.get("302")
+        uni = por_texto.get("pza")
+        _ok("piezas enteras y unidad 'pza'", cant is not None and uni is not None)
+        # Alineacion: la cantidad termina cerca del borde derecho de su columna.
+        ancho_total = t["width"]
+        if cant:
+            fin = cant["x"] + len("302") * cant["height"] * 0.87
+            _ok("cantidad alineada a la derecha",
+                  abs(fin - (ancho_total - cant["height"] * 0.5)) < 1e-6,
+                  (fin, ancho_total))
+        totales = [e["text"] for e in textos if e["text"].startswith("TOTAL APLANADO")]
+        _ok("los totales por area y por volumen se distinguen",
+              sorted(totales) == ["TOTAL APLANADO", "TOTAL APLANADO (VOLUMEN)"], totales)
+        sombreados = [e for e in preview.DRAWN if e["cmd"] == "create_hatch"
+                      and e.get("pattern") == "SOLID" and e.get("colorIndex") == 254]
+        _ok("encabezado + 3 partidas + totales sombreados (5)",
+              len(sombreados) == 5, len(sombreados))
+        _ok("no hay aviso de desborde", not t.get("warning"), t.get("warning"))
+        preview.DRAWN.clear()
+        t2 = quantities.create_quantities_table(0.0, 0.0, r, show_calc=True)
+        _ok("con show_calc hay columna MEDICION y es mas ancho",
+              any(e["text"] == "MEDICIÓN" for e in preview.DRAWN
+                  if e["cmd"] == "create_text") and t2["width"] > t["width"])
+    finally:
+        quantities.acad.call = real
+
+
 def test_export_quantities_csv_no_recalcula() -> None:
     import csv
     import os
@@ -562,6 +633,7 @@ def main() -> int:
                test_type_invalido_falla,
                test_muchos_handles_iguales_colapsa_la_formula,
                test_create_quantities_table_no_recalcula,
+               test_cuadro_de_volumenes_con_partidas,
                test_export_quantities_csv_no_recalcula]:
         print(fn.__name__)
         fn()

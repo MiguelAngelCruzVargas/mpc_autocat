@@ -20,6 +20,7 @@ from typing import Any, Optional
 import autocad_client as acad
 import geom
 import furniture as fur
+import layers
 import space
 
 # Formatos ISO 216 en mm (ancho, alto), apaisados.
@@ -188,10 +189,8 @@ def create_sheet(
     fur.reset_footprints()
 
     # Capas propias, para poder apagar el formato y ver solo el dibujo.
-    acad.call("set_layer", {"name": LAYER_FRAME, "colorIndex": 7,
-                            "linetype": None, "lineweightHundredthsMm": LW_FRAME})
-    acad.call("set_layer", {"name": LAYER_TITLE, "colorIndex": 7,
-                            "linetype": None, "lineweightHundredthsMm": LW_BOX})
+    layers.ensure(LAYER_FRAME, 7, LW_FRAME)
+    layers.ensure(LAYER_TITLE, 7, LW_BOX)
 
     ox, oy = origin_x, origin_y
 

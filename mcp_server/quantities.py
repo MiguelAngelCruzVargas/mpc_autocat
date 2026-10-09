@@ -546,6 +546,13 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
             if volumen is not None:
                 _sumar(f"{slug}_m3", volumen)
 
+    # La partida ('group') pasa tal cual a la fila: es como se agrupa el
+    # cuadro de volumenes (CIMENTACION, ESTRUCTURA...), no algo que la
+    # cuantificacion pueda deducir.
+    for fila, item in zip(filas, items):
+        if item.get("group"):
+            fila["group"] = str(item["group"])
+
     return {
         "items": filas,
         "totals": {k: (round(v, 3) if isinstance(v, float) else v)
@@ -693,7 +700,10 @@ def _etiqueta_unidad_total(clave: str) -> tuple[str, str]:
     if clave.endswith("_m2"):
         return "TOTAL " + clave[:-3].upper().replace("_", " "), "m²"
     if clave.endswith("_m3"):
-        return "TOTAL " + clave[:-3].upper().replace("_", " "), "m³"
+        # Un acabado con espesor totaliza por area Y por volumen: sin el
+        # sufijo las dos filas se llamaban igual ("TOTAL APLANADO" 7.56 y
+        # "TOTAL APLANADO" 0.11) y no habia forma de saber cual era cual.
+        return "TOTAL " + clave[:-3].upper().replace("_", " ") + " (VOLUMEN)", "m³"
     return clave.upper(), ""
 
 
@@ -710,36 +720,98 @@ _CAMPO_CANTIDAD = {
 }
 
 
+_UNIDAD_TEXTO = {"m3": "m³", "m2": "m²", "kg": "kg", "pzas": "pza",
+                 "bolsas": "bolsa", "m": "m"}
+
+
+def _fmt_cantidad(valor: Any, unidad: str) -> str:
+    """Cantidad como se escribe en un cuadro: piezas y bolsas enteras, lo
+    demas con dos decimales y separador de miles."""
+    if unidad in ("pzas", "bolsas"):
+        return f"{int(round(float(valor))):,}"
+    return f"{float(valor):,.2f}"
+
+
 def create_quantities_table(x: float, y: float, result: dict[str, Any],
-                            text_height: float,
-                            title: str = "CUANTIFICACIÓN DE OBRA (MEDIDA DEL PLANO)",
+                            text_height: float = 0.0,
+                            title: str = "CUADRO DE VOLÚMENES DE OBRA",
                             layer: str = "TABLAS",
-                            col_widths: Optional[list[float]] = None) -> dict[str, Any]:
-    """Dibuja el resultado de calculate_quantities como tabla.
+                            col_widths: Optional[list[float]] = None,
+                            show_calc: bool = False,
+                            scale: float = 0.0) -> dict[str, Any]:
+    """Dibuja el resultado de calculate_quantities como el cuadro de
+    volúmenes de un plano: No. | CONCEPTO | UNIDAD | CANTIDAD, agrupado por
+    partida, cantidades alineadas a la derecha, encabezado sombreado y
+    totales por material al pie.
 
     No repite el cálculo: toma 'items'/'totals' tal como los devolvió
-    calculate_quantities y solo los tabula, con una columna que muestra CÓMO
-    se midió cada número (área real, módulo, etc.), no solo el resultado.
+    calculate_quantities. Los items con 'group' ("CIMENTACIÓN",
+    "ESTRUCTURA") salen bajo una banda de partida y numerados 1.1, 1.2...;
+    sin grupo, numerados corrido.
 
-    col_widths: [concepto, medición]. La columna de medición trae la fórmula
-    completa (p.ej. "11.97 m² / módulo 0.0251 m² = 502 pzas"), así que por
-    defecto sale ancha (8.5 m); si algún texto no entra, create_table avisa
-    en 'warning' cuánto necesita — agrandá col_widths o acortá el label."""
+    show_calc: agrega la columna MEDICIÓN con la operación completa (área
+    medida, módulo, kg/m) -- es lo que permite verificar el número sin
+    abrir el DWG, pero ensancha el cuadro; en una lámina va casi siempre
+    sin ella y la operación queda en export_quantities_csv.
+    text_height: 0 = 2 mm de papel (scale = unidades por mm, 0 toma la
+    registrada). col_widths en unidades del modelo; default 8/70/14/22 mm
+    de papel (+55 para MEDICIÓN) proporcionales al texto."""
     import annotation as ann_mod
+    import space as space_mod
+
+    upm = scale if scale > 0 else space_mod.units_per_paper_mm()
+    th = text_height if text_height > 0 else space_mod.paper(2.0, upm)
     if col_widths is None:
-        col_widths = [5.5, 17.0]
+        # Proporcionales al TEXTO (8/70/14/22 mm de papel para un texto de
+        # 2 mm), no a la escala de la lamina: si alguien pasa text_height a
+        # mano, las columnas tienen que crecer con el o el texto no entra.
+        mm = [8.0, 70.0, 14.0, 22.0] + ([55.0] if show_calc else [])
+        col_widths = [v / 2.0 * th for v in mm]
 
-    rows = [["CONCEPTO", "MEDICIÓN Y CÁLCULO"]]
+    encabezado = ["No.", "CONCEPTO", "UNIDAD", "CANTIDAD"]
+    if show_calc:
+        encabezado.append("MEDICIÓN")
+    rows: list[list[str]] = [encabezado]
+    grupos: list[int] = []
+    totales_idx: list[int] = []
+
+    grupo_actual: Optional[str] = None
+    n_grupo = 0
+    n_item = 0
+    con_grupos = any(it.get("group") for it in result["items"])
     for item in result["items"]:
-        rows.append([item["label"], _fmt_item(item)])
+        g = item.get("group")
+        if con_grupos and g != grupo_actual:
+            grupo_actual = g
+            n_grupo += 1
+            n_item = 0
+            grupos.append(len(rows))
+            rows.append([str(g or "SIN PARTIDA").upper()])
+        n_item += 1
+        numero = f"{n_grupo}.{n_item}" if con_grupos else str(n_item)
+        campo, unidad = _CAMPO_CANTIDAD[item["type"]]
+        fila = [numero, item["label"], _UNIDAD_TEXTO.get(unidad, unidad),
+                _fmt_cantidad(item[campo], unidad)]
+        if show_calc:
+            fila.append(_fmt_item(item))
+        rows.append(fila)
 
-    for clave, valor in result["totals"].items():
-        etiqueta, unidad = _etiqueta_unidad_total(clave)
-        rows.append([etiqueta, f"{valor:g} {unidad}".strip()])
+    if result.get("totals"):
+        grupos.append(len(rows))
+        rows.append(["TOTALES POR MATERIAL"])
+        for clave, valor in result["totals"].items():
+            etiqueta, unidad = _etiqueta_unidad_total(clave)
+            u_key = {"m³": "m3", "m²": "m2"}.get(unidad, unidad)
+            totales_idx.append(len(rows))
+            rows.append(["", etiqueta, _UNIDAD_TEXTO.get(u_key, unidad),
+                         _fmt_cantidad(valor, u_key)])
 
+    align = ["center", "left", "center", "right"] + (["left"] if show_calc else [])
     return ann_mod.create_table(
-        x=x, y=y, rows=rows, col_widths=col_widths, row_height=0.4,
-        text_height=text_height, title=title, header=True, layer=layer)
+        x=x, y=y, rows=rows, col_widths=col_widths, row_height=0.0,
+        text_height=th, title=title, header=True, layer=layer,
+        align=align, wrap=True, header_fill=True,
+        group_rows=grupos, total_rows=totales_idx, scale=upm)
 
 
 def export_quantities_csv(result: dict[str, Any], path: str) -> dict[str, Any]:

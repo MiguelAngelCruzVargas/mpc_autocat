@@ -136,113 +136,225 @@ def _hatch(handle: str, pattern: str, scale: float, layer: str,
 
 # ------------------------------------------------------------------ tabla
 
+LW_FRAME = 35        # marco exterior y linea bajo el encabezado
+LW_TEXT_STRONG = 25  # encabezado, bandas de grupo, totales
+COLOR_FILL = 254     # gris muy claro: sombreado de encabezado y grupos
+ALIGNS = ("left", "center", "right")
+
+
+def _hatch_solid(handle: str, layer: str, color: int) -> Optional[str]:
+    try:
+        return acad.call("create_hatch", {
+            "boundaryHandle": handle, "pattern": "SOLID", "scale": 1.0,
+            "angleDeg": 0.0, "layer": layer, "lineweight": 5,
+            "colorIndex": color})["handle"]
+    except acad.AutoCadError:
+        return None
+
+
+def _wrap(text: str, max_width: float, text_height: float) -> list[str]:
+    """Parte un texto en lineas que entren en max_width (ancho estimado por
+    caracter, mismo criterio que server._track_text). Una palabra mas larga
+    que la celda queda entera en su linea: se avisa afuera, no se corta."""
+    por_char = text_height * 0.87
+    limite = max(1, int(max_width / por_char))
+    palabras = text.split()
+    lineas: list[str] = []
+    actual = ""
+    for p in palabras:
+        cand = (actual + " " + p).strip()
+        if len(cand) <= limite or not actual:
+            actual = cand
+        else:
+            lineas.append(actual)
+            actual = p
+    if actual:
+        lineas.append(actual)
+    return lineas or [""]
+
+
 def create_table(x: float, y: float, rows: list[list[str]],
-                 col_widths: list[float], row_height: float,
-                 text_height: float, title: str = "",
+                 col_widths: list[float], row_height: float = 0.0,
+                 text_height: float = 0.0, title: str = "",
                  header: bool = True, layer: str = LAYER_TABLE,
-                 avoid: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
-    """Tabla con grilla y texto. (x, y) es la esquina SUPERIOR izquierda.
+                 avoid: Optional[list[dict[str, Any]]] = None,
+                 align: Optional[list[str]] = None,
+                 wrap: bool = True,
+                 header_fill: bool = True,
+                 group_rows: Optional[list[int]] = None,
+                 total_rows: Optional[list[int]] = None,
+                 scale: float = 0.0) -> dict[str, Any]:
+    """Tabla con grilla y texto, con la convencion de un cuadro de plano.
+    (x, y) es la esquina SUPERIOR izquierda.
 
-    rows: filas de celdas ya como texto. Si header=True la primera va con la
-    línea de abajo más gruesa y el texto centrado.
-    col_widths: ancho de cada columna; define cuántas columnas hay.
+    rows: filas de celdas ya como texto. Si header=True la primera es el
+    encabezado: centrado, sombreado (header_fill) y con la linea de abajo
+    gruesa. col_widths: ancho de cada columna; define cuantas columnas hay.
+    text_height: 0 toma 2 mm de papel a la escala de la lamina (scale =
+    unidades por mm; 0 toma la registrada). row_height: 0 = 2.4 veces el
+    texto, que es la proporcion de un cuadro legible.
+    align: por columna, 'left' / 'center' / 'right' (los numeros van a la
+    derecha; sin esto una columna de cantidades no se puede leer de arriba
+    abajo). Default: todo a la izquierda.
+    wrap: un texto que no entra en su celda se parte en varias lineas y la
+    fila crece, en vez de encimarse con la de al lado o cortar la tabla.
+    group_rows: indices de filas que son BANDA DE GRUPO (una partida:
+    'CIMENTACION'): el texto de la primera celda cruza toda la fila,
+    sombreada. total_rows: filas de total: linea gruesa arriba y texto
+    fuerte.
 
-    (x, y) es una posición fija: esta tool NO sabe qué más hay dibujado, así
-    que si al lado hay una ilustración (un detalle de castillo, una planta),
-    puede quedar encima sin que nada lo avise -- ese fue justamente el bug
-    reportado: una tabla de especificaciones tapando el detalle y sus
-    nombres encimados. Pasar 'avoid' con la caja de lo que ya está dibujado
-    ([{"x0":.., "y0":.., "x1":.., "y1":.., "what":".."}]) hace que, si la
-    tabla cae encima, se avise en 'warning' en vez de dibujarse en silencio.
+    (x, y) es una posicion fija: esta tool NO sabe que mas hay dibujado, asi
+    que si al lado hay una ilustracion puede quedar encima sin aviso -- ese
+    fue un bug real. Pasar 'avoid' con la caja de lo ya dibujado
+    ([{"x0":.., "y0":.., "x1":.., "y1":.., "what":".."}]) hace que se
+    avise en 'warning' si la tabla cae encima.
 
-    Un texto que no entra en su celda se mide ANTES de dibujar nada. Si el
-    desborde es grande (más de %d%% del ancho disponible) la tabla no se
-    dibuja: se corta con un ValueError, porque dibujarla encimada y avisarlo
-    recién en 'warning' es el mismo bug -- el aviso queda en un campo que
-    hay que acordarse de leer, en vez de frenar la llamada. Un desborde
-    chico (el texto se pasa un poco) sí se dibuja, con el aviso en
-    'warning', porque cortar por un margen mínimo es más molesto que útil.
+    Con wrap=False, un texto que desborda mas del %d%% del ancho de su
+    columna corta con ValueError (dibujarlo encimado y avisarlo despues es
+    el mismo bug); uno que se pasa poco se dibuja con aviso.
     """ % round((OVERFLOW_HARD_RATIO - 1.0) * 100)
     if not rows:
         raise ValueError("La tabla necesita al menos una fila.")
     if not col_widths:
         raise ValueError("Hay que pasar col_widths.")
+    ncols = len(col_widths)
+    aligns = list(align or [])
+    for a in aligns:
+        if a not in ALIGNS:
+            raise ValueError(f"align tiene que ser uno de {ALIGNS}, no {a!r}.")
+    aligns += ["left"] * (ncols - len(aligns))
+    grupos = set(group_rows or [])
+    totales = set(total_rows or [])
 
+    upm = scale if scale > 0 else space.units_per_paper_mm()
+    th = text_height if text_height > 0 else space.paper(2.0, upm)
+    rh = row_height if row_height > 0 else th * 2.4
+    interlinea = th * 1.5
+    pad = th * 0.5
     total_w = sum(col_widths)
-    n = len(rows)
-    top = y
-    bottom = top - (n + (1 if title else 0)) * row_height
-    pad = text_height * 0.5
 
-    # Pre-pasada: medir cada celda contra su columna ANTES de dibujar nada
-    # (ni la grilla ni el texto). 'celdas' guarda lo ya calculado para no
-    # tener que volver a medir (ni a llamar measure_text por RPC) al dibujar.
-    celdas = []
-    desbordes_leves = []
-    desbordes_graves = []
+    # Pre-pasada: partir/medir cada celda ANTES de dibujar nada.
+    # celdas: (fila, col, [lineas], align)
+    celdas: list[tuple[int, int, list[str], str]] = []
+    alturas: list[float] = []
+    desbordes_leves: list[str] = []
+    desbordes_graves: list[str] = []
     for i, row in enumerate(rows):
-        cx = x
+        lineas_fila = 1
+        es_grupo = i in grupos
         for j, w in enumerate(col_widths):
             cell = str(row[j]) if j < len(row) else ""
-            if cell:
-                centrar = header and i == 0
-                # _w() le pregunta el ancho a AutoCAD (RPC); solo hace falta
-                # para centrar el texto. Para el resto alcanza con el ancho de
-                # columna, así que no vale la pena una llamada por celda.
-                if centrar:
-                    ancho_celda = _w(cell, text_height)
-                    disponible = w
-                    tx = cx + w / 2.0 - ancho_celda / 2.0
+            if not cell:
+                continue
+            centrar = header and i == 0
+            al = "center" if centrar else ("left" if es_grupo else aligns[j])
+            disponible = (total_w if es_grupo else w) - 2 * pad
+            ancho = len(cell) * th * 0.87
+            lineas = [cell]
+            if ancho > disponible:
+                if wrap and not centrar:
+                    lineas = _wrap(cell, disponible, th)
+                    peor = max(len(ln) for ln in lineas) * th * 0.87
+                    if peor > disponible * OVERFLOW_HARD_RATIO:
+                        desbordes_graves.append(
+                            f"fila {i + 1} col {j + 1}: la palabra mas larga "
+                            f"necesita {peor:.2f} y la columna tiene {disponible:.2f}")
                 else:
-                    ancho_celda = len(cell) * text_height * 0.87
-                    disponible = w - pad
-                    tx = cx + pad
-                celdas.append((i, j, cell, tx))
-                if ancho_celda > disponible:
                     msg = (f"fila {i + 1} col {j + 1} ({cell!r}): necesita "
-                           f"{ancho_celda:.2f} y la columna tiene {disponible:.2f}")
-                    if ancho_celda > disponible * OVERFLOW_HARD_RATIO:
+                           f"{ancho:.2f} y la columna tiene {disponible:.2f}")
+                    if ancho > disponible * OVERFLOW_HARD_RATIO:
                         desbordes_graves.append(msg)
                     else:
-                        desbordes_leves.append(
-                            msg + " -- se va a encimar con la de al lado")
-            cx += w
+                        desbordes_leves.append(msg + " -- se va a encimar con la de al lado")
+            lineas_fila = max(lineas_fila, len(lineas))
+            celdas.append((i, j, lineas, al))
+            if es_grupo:
+                break     # la banda de grupo solo usa la primera celda
+        alturas.append(max(rh, (lineas_fila - 1) * interlinea + th + 2 * pad))
 
     if desbordes_graves:
         raise ValueError(
             "La tabla no se dibuja: el texto no entra ni de cerca en su "
-            "columna (agrandá col_widths, acortá el texto o bajá "
+            "columna (agranda col_widths, acorta el texto o baja "
             "text_height). " + "; ".join(desbordes_graves))
 
     _layer(layer)
+    handles: list[str] = []
 
+    top = y
     if title:
-        _rect(x, top - row_height, x + total_w, y, layer, LW_BOX)
-        _text(title.upper(), x + total_w / 2.0 - _w(title.upper(), text_height) / 2.0,
-              y - row_height / 2.0 - text_height / 2.0, text_height, layer, LW_TEXT)
-        top = y - row_height
+        h_tit = rh * 1.2
+        handles.append(_rect(x, top - h_tit, x + total_w, top, layer, LW_FRAME))
+        t_up = title.upper()
+        handles.append(_text(t_up, x + total_w / 2.0 - _w(t_up, th * 1.15) / 2.0,
+                             top - h_tit / 2.0 - th * 1.15 / 2.0, th * 1.15,
+                             layer, LW_TEXT_STRONG) or "")
+        top -= h_tit
 
-    _rect(x, bottom, x + total_w, top, layer, LW_BOX)
+    # Tope de cada fila.
+    tops = [top]
+    for h in alturas:
+        tops.append(tops[-1] - h)
+    bottom = tops[-1]
 
-    # Líneas horizontales entre filas.
-    for i in range(1, n):
-        yy = top - i * row_height
-        _line((x, yy), (x + total_w, yy), layer,
-              LW_BOX if (header and i == 1) else LW_GRID)
+    # Sombreados (antes de las lineas, para que queden debajo).
+    for i in range(len(rows)):
+        if (header and i == 0 and header_fill) or i in grupos:
+            r = _rect(x, tops[i + 1], x + total_w, tops[i], layer, LW_GRID)
+            hs = _hatch_solid(r, layer, COLOR_FILL)
+            handles.append(r)
+            if hs:
+                handles.append(hs)
 
-    # Verticales entre columnas.
+    handles.append(_rect(x, bottom, x + total_w, top, layer, LW_FRAME))
+
+    for i in range(1, len(rows)):
+        yy = tops[i]
+        grueso = (header and i == 1) or i in totales or i in grupos or (i - 1) in grupos
+        handles.append(_line((x, yy), (x + total_w, yy), layer,
+                             LW_FRAME if grueso else LW_GRID))
+
     cx = x
     for w in col_widths[:-1]:
         cx += w
-        _line((cx, bottom), (cx, top), layer, LW_GRID)
+        # Las verticales no cruzan las bandas de grupo.
+        tramo_ini = None
+        for i in range(len(rows)):
+            if i in grupos:
+                if tramo_ini is not None:
+                    handles.append(_line((cx, tops[i]), (cx, tramo_ini), layer, LW_GRID))
+                    tramo_ini = None
+                continue
+            if tramo_ini is None:
+                tramo_ini = tops[i]
+        if tramo_ini is not None:
+            handles.append(_line((cx, bottom), (cx, tramo_ini), layer, LW_GRID))
 
-    for i, j, cell, tx in celdas:
-        cy = top - i * row_height - row_height / 2.0 - text_height / 2.0
-        _text(cell, tx, cy, text_height, layer, LW_TEXT)
+    for i, j, lineas, al in celdas:
+        x0 = x + sum(col_widths[:j])
+        w = total_w if i in grupos else col_widths[j]
+        fuerte = (header and i == 0) or i in grupos or i in totales
+        lw = LW_TEXT_STRONG if fuerte else LW_TEXT
+        alto_bloque = (len(lineas) - 1) * interlinea + th
+        y_linea = tops[i] - (alturas[i] - alto_bloque) / 2.0 - th
+        for ln in lineas:
+            if al == "left":
+                tx = x0 + pad
+            else:
+                ancho = _w(ln, th) if al == "center" else len(ln) * th * 0.87
+                tx = (x0 + w / 2.0 - ancho / 2.0) if al == "center" else (x0 + w - pad - ancho)
+            t = _text(ln, tx, y_linea, th, layer, lw)
+            if t:
+                handles.append(t)
+            y_linea -= interlinea
+
+    space.track(x, bottom, x + total_w, y, f"{space.PREFIJO_TEXTO}tabla {title[:30]}")
 
     resultado = {"x": x, "y": y, "width": total_w,
-                 "height": (y - bottom), "rows": n,
-                 "bottom": bottom, "right": x + total_w}
+                 "height": (y - bottom), "rows": len(rows),
+                 "bottom": bottom, "right": x + total_w,
+                 "rowHeights": [round(h, 4) for h in alturas],
+                 "textHeight": th, "handles": [h for h in handles if h]}
     avisos = list(desbordes_leves)
     if avoid:
         propia = (x, bottom, x + total_w, y)
@@ -263,7 +375,7 @@ def create_table(x: float, y: float, rows: list[list[str]],
                               f"{dx:.2f} x {dy:.2f}")
     if avisos:
         # No se corta ni se achica el texto solo: achicar la letra sin avisar
-        # es tan malo como dejarla encimada, así que se avisa y quien pidió
+        # es tan malo como dejarla encimada, asi que se avisa y quien pidio
         # la tabla decide si agranda la columna, baja text_height o mueve x/y.
         resultado["warning"] = "; ".join(avisos)
     return resultado
@@ -665,6 +777,13 @@ def create_dimension_chain(
     upm = float(scale) if scale else space.units_per_paper_mm()
     banda = space.paper(BAND_MM, upm)
     aire = space.paper(GAP_MM, upm)
+
+    # Sin estilo explicito, el de la biblioteca (punto decimal, dos
+    # decimales). Con style=None la cota tomaba el 'Standard' del DWG y en
+    # una maquina en espanol salia "0,65" -- se vio en un corte de
+    # cimentacion entero acotado con coma.
+    if style is None:
+        style = ensure_dim_style()
 
     if offset:
         # A mano: se respeta lo pedido, pero la franja se reserva igual para

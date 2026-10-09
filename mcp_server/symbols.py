@@ -210,12 +210,20 @@ def create_level_mark(x: float, y: float, elevation: float,
 
 # ------------------------------------------------------- titulo de vista
 
+# Hasta cuantas letras se separa el titulo por defecto. Separar letras es
+# tipografia de palabra corta ('P L A N T A'): en un titulo largo se vuelve
+# ilegible y ocupa media lamina -- se vio en 'C I M E N T A C I O N   C O N
+# P I E D R A   B O L A'. Un plano de referencia real lo escribe seguido.
+SPACED_MAX_CHARS = 12
+
+
 def create_view_title(x: float, y: float, title: str,
                       scale_text: Optional[str] = None,
                       height: float = 0.0,
-                      spaced: bool = True,
+                      spaced: Optional[bool] = None,
                       underline: bool = True,
                       align: str = "left",
+                      mark: str = "",
                       layer: str = LAYER_TITLE,
                       color_index: Optional[int] = COLOR_TITLE,
                       lineweight: int = LW_TITLE_TEXT,
@@ -228,8 +236,11 @@ def create_view_title(x: float, y: float, title: str,
 
     title: 'PLANTA ESTRUCTURAL DE CUBIERTA'.
     scale_text: 'ESC. 1:100'. Va debajo, mas chico. None lo omite.
-    spaced: separa las letras ('P L A N T A'), que es como se rotula una
-    vista en la mayoria de las oficinas. False deja el texto tal cual.
+    spaced: separa las letras ('P L A N T A'). None decide solo: se separa
+    un titulo corto (hasta SPACED_MAX_CHARS letras), que es donde esa
+    tipografia funciona; uno largo va seguido.
+    mark: letra en globo a la izquierda del titulo ('A'), la referencia
+    con la que la planta llama a este detalle. Vacio lo omite.
     align: 'left' (x es el borde izquierdo) o 'center' (x es el centro).
 
     Devuelve la caja total, util para pasarsela a create_table en 'avoid'.
@@ -244,19 +255,35 @@ def create_view_title(x: float, y: float, title: str,
     _layer(layer, COLOR_TITLE if color_index is None else color_index,
            rule_lineweight)
 
+    if spaced is None:
+        spaced = len(title) <= SPACED_MAX_CHARS
     texto = " ".join(title) if spaced else title
-    ancho = _w(texto, h)
+    ancho_txt = _w(texto, h)
+    r = h * 0.9 if mark else 0.0
+    globo = (2.0 * r + h * 0.5) if mark else 0.0     # globo + aire
+    ancho = ancho_txt + globo
     x0 = x if align == "left" else x - ancho / 2.0
+    x_txt = x0 + globo
 
     handles: list[str] = []
-    t = _text(texto, x0, y, h, layer, lineweight, color_index)
+    if mark:
+        cx, cy = x0 + r, y + h * 0.5
+        handles.append(acad.call("create_circle", {
+            "x": cx, "y": cy, "z": 0.0, "radius": r, "layer": layer,
+            "lineweight": rule_lineweight, "colorIndex": color_index})["handle"])
+        ancho_m = _w(mark, h)
+        m = _text(mark, cx - ancho_m / 2.0, cy - h * 0.5, h, layer,
+                  lineweight, color_index)
+        if m:
+            handles.append(m)
+    t = _text(texto, x_txt, y, h, layer, lineweight, color_index)
     if t:
         handles.append(t)
 
     y_min = y
     if underline:
         y_regla = y - h * 0.45
-        handles.append(_line(x0, y_regla, x0 + ancho, y_regla, layer,
+        handles.append(_line(x_txt, y_regla, x_txt + ancho_txt, y_regla, layer,
                              rule_lineweight, color_index))
         y_min = y_regla
 
@@ -264,7 +291,7 @@ def create_view_title(x: float, y: float, title: str,
         ancho_esc = _w(scale_text, h_esc)
         # La escala se centra bajo el titulo, no se alinea a la izquierda:
         # asi el bloque entero lee como una unidad.
-        x_esc = x0 + (ancho - ancho_esc) / 2.0
+        x_esc = x_txt + (ancho_txt - ancho_esc) / 2.0
         y_esc = y_min - h_esc * 1.4
         e = _text(scale_text, x_esc, y_esc, h_esc, layer, lineweight,
                   color_index)
@@ -272,11 +299,12 @@ def create_view_title(x: float, y: float, title: str,
             handles.append(e)
         y_min = y_esc
 
-    caja = (x0, y_min, x0 + ancho, y + h)
+    caja = (x0, min(y_min, y + h * 0.5 - r), x0 + ancho, max(y + h, y + h * 0.5 + r))
     space.track(caja[0], caja[1], caja[2], caja[3],
                 "%s%s" % (space.PREFIJO_TEXTO, title[:40]))
 
     return {"handles": handles, "width": ancho, "height": h,
+            "spaced": spaced, "mark": mark or None,
             "box": [caja[0], caja[1], caja[2], caja[3]]}
 
 
