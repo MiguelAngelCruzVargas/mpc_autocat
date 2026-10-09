@@ -53,28 +53,31 @@ Cualquier otro endpoint compatible: `--url http://donde-sea/v1 --modelo x`.
 
 ## El perfil de tools NO es un detalle
 
-Son 131 tools. Las definiciones solas, medidas (conteos reales, no la
+Son 138 tools. Las definiciones solas, medidas (conteos reales, no la
 cantidad de patrones — un perfil se define por prefijos como `create_` o
 `check_`, así que "Civil (37 tools)" en la interfaz sale de contar contra
 el catálogo real del servidor, no de contar líneas en `PERFILES`):
 
 | Perfil | Tools | ~tokens por vuelta |
 |---|---:|---:|
-| `basico` | 24 | 6 200 |
-| `estructura` | 24 | 10 500 |
-| `civil` | 37 | 14 800 |
-| `arquitectura` (default) | 59 | 21 000 |
-| `todo` | 131 | **45 900** |
+| `basico` | 24 | 6 700 |
+| `estructura` | 24 | 10 700 |
+| `civil` | 37 | 15 700 |
+| `arquitectura` (default) | 59 | 24 100 |
+| `todo` | 138 | **53 000** |
 
-Y el system prompt con `CLAUDE.md` (las reglas de dibujo del proyecto)
-suma ~11 000 tokens más. O sea: `--perfil todo` cuesta ~57k tokens **en
-cada vuelta del bucle**, y una casa entera son decenas de vueltas.
+Los tokens salen del JSON del catálogo a ~4,1 caracteres por token, la
+relación que dio la primera medición con `usage` real; si cambian las
+tools, se vuelven a medir, no se suman a ojo. Y el system prompt con
+`CLAUDE.md` (las reglas de dibujo del proyecto) suma ~13 000 tokens más.
+O sea: `--perfil todo` cuesta ~66k tokens **en cada vuelta del bucle**, y
+una casa entera son decenas de vueltas.
 
 Por eso el default es `arquitectura`. Para un modelo de ventana corta o
 para abaratar:
 
 ```bash
---limite-descripcion 200   # ~21k -> ~10k tokens de tools
+--limite-descripcion 200   # ~24k -> ~12k tokens de tools
 --sin-reglas               # saca CLAUDE.md (el modelo dibuja peor)
 --limite-reglas 12000      # o solo la primera parte
 ```

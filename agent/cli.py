@@ -20,7 +20,7 @@ from .loop import conversar
 from .mcp_link import ConexionMcp, SERVIDOR_DEFECTO
 from . import credenciales, providers
 
-# Perfiles de tools. Con las 128 tools del servidor, las definiciones solas
+# Perfiles de tools. Con las más de cien tools del servidor, las definiciones solas
 # son miles de tokens EN CADA VUELTA: en un modelo de ventana corta no
 # entran, y en uno caro se paga en cada llamada. Estos grupos son los que
 # de verdad se usan juntos.

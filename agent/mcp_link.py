@@ -65,7 +65,7 @@ def _recortar(texto: str, limite: int) -> str:
     """Docstring recortado al primer párrafo si hace falta.
 
     Las tools de este repo tienen documentación larga a propósito — es lo
-    que hace que el agente dibuje bien. Pero 128 tools por 800 caracteres
+    que hace que el agente dibuje bien. Pero más de cien tools por 800 caracteres
     son ~25k tokens SOLO de definiciones, y en un modelo de ventana corta
     eso no entra ni deja lugar para trabajar. El primer párrafo dice qué
     hace la tool; el detalle se pierde, y por eso el recorte es opcional.
@@ -131,7 +131,7 @@ class ConexionMcp:
         """Las tools en el formato de function calling de OpenAI.
 
         incluir: nombres exactos o prefijos ('create_', 'check_'). None son
-        todas. Filtrar no es un lujo: con las 128 tools de este repo las
+        todas. Filtrar no es un lujo: con las más de cien tools de este repo las
         definiciones solas ocupan miles de tokens en CADA vuelta del bucle.
         """
         salida = []
