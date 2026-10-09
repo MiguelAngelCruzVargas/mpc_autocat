@@ -24,6 +24,12 @@ from . import credenciales, providers
 # son miles de tokens EN CADA VUELTA: en un modelo de ventana corta no
 # entran, y en uno caro se paga en cada llamada. Estos grupos son los que
 # de verdad se usan juntos.
+#
+# El acceso total a la API (engine.py) va en TODOS los perfiles: es lo que
+# cubre lo que ninguna tool de oficio hace. Ofrecerlo no lo prende: run_code
+# sigue apagado hasta que el usuario lo active con su contraseña.
+_ACCESO_API = ["run_code", "describe_api", "api_guide"]
+
 PERFILES: dict[str, list[str]] = {
     "arquitectura": [
         "suggest_layout", "draw_layout", "dimension_layout",
@@ -48,6 +54,7 @@ PERFILES: dict[str, list[str]] = {
         # preset "Instalación Eléctrica" de la interfaz pedía una tool que
         # ningún perfil ofrecía, en ninguno de los cuatro.
         "place_devices", "create_conduit",
+        *_ACCESO_API,
     ],
     "civil": [
         "create_alignment", "create_road", "create_stationing",
@@ -57,6 +64,7 @@ PERFILES: dict[str, list[str]] = {
         "create_flow_arrow", "create_sheet", "check_", "set_layer",
         "save_drawing", "zoom_", "capture_viewport", "get_extents",
         "new_document", "open_document", "ping", "list_layers",
+        *_ACCESO_API,
     ],
     "estructura": [
         "check_footing", "check_column", "check_slab_span",
@@ -67,6 +75,7 @@ PERFILES: dict[str, list[str]] = {
         "create_sheet", "set_layer", "save_drawing", "zoom_",
         "capture_viewport", "get_extents", "new_document", "open_document",
         "ping", "list_layers",
+        *_ACCESO_API,
     ],
     "basico": [
         "create_line", "create_polyline", "create_circle", "create_arc",
@@ -74,7 +83,10 @@ PERFILES: dict[str, list[str]] = {
         "get_drawing_info", "list_entities", "delete_entity", "zoom_",
         "capture_viewport", "save_drawing", "new_document", "ping",
         "list_layers",
+        *_ACCESO_API,
     ],
+    # Lista vacía = TODAS las tools (ver mcp_link.catalogo): ya incluye las
+    # de acceso a la API, y agregarlas acá la convertiría en "solo esas".
     "todo": [],
 }
 

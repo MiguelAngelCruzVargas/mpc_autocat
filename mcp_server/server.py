@@ -17,6 +17,8 @@ import autocad_client as acad
 import civil as civil_mod
 import compose as compose_mod
 import electrical as elec_mod
+import engine as engine_mod
+import model3d as model3d_mod
 import profile as profile_mod
 import isometric as iso_mod
 import quantities as qty_mod
@@ -4332,6 +4334,121 @@ def undo(steps: int = 1) -> dict[str, Any]:
     if steps < 1:
         raise ValueError("steps tiene que ser >= 1.")
     return acad.call("undo", {"steps": steps})
+
+
+# ------------------------------------------------- Acceso total a la API
+#
+# Para lo que ninguna tool de oficio cubre (3D, por ejemplo). La lógica —
+# contraseña, red de seguridad, integración con session/space, armado de
+# describe_api— vive en engine.py; acá solo la puerta y lo que lee la IA.
+
+@mcp.tool()
+def run_code(code: str, description: str = "", compile_only: bool = False,
+             force: bool = False) -> dict[str, Any]:
+    """Ejecuta C# contra la API .NET de AutoCAD (incluido 3D). Es el último
+    recurso: usala solo cuando NINGUNA tool de oficio hace lo que hace falta.
+    Antes, api_guide(tema) y describe_api(tipo, filtro) para no adivinar
+    firmas.
+
+    ESTÁ APAGADA salvo que el USUARIO la haya activado él mismo con
+    `python tools/run_code_acceso.py activar`. Si responde que está apagada,
+    decíselo al usuario y seguí con las tools de oficio. Nunca intentes
+    activarla, ni pedir, buscar o adivinar la contraseña, ni tocar sus
+    archivos de configuración.
+
+    code: el CUERPO de `object Run()` (sin firma ni usings; usá nombres
+    completos o los namespaces de AutoCAD que ya trae la plantilla). Tiene
+    listas: doc, db, ed (documento, base de datos, editor), tr (transacción
+    abierta), space (BlockTableRecord del espacio activo, ForWrite),
+    H("2A3") -> ObjectId desde un handle, Add(entity) -> agrega al espacio y
+    a la transacción y devuelve el handle, Print(obj) -> texto en 'output'.
+    Terminá con `return algo;` (o `return null;`).
+    description: qué intenta el código, en una línea (queda en el log).
+    compile_only: solo compila y devuelve los errores; no ejecuta nada.
+    force: ejecutar aunque el dibujo tenga cambios sin guardar y no tenga
+    archivo (por defecto se niega: ver abajo).
+
+    Atómico: todo corre en UNA transacción con marca de undo. Si el código
+    tira una excepción se aborta entera y el dibujo queda como estaba; un
+    undo después de un run_code exitoso lo deshace entero.
+
+    Red de seguridad: antes de ejecutar, si hay cambios sin guardar, guarda
+    solo (como save_drawing()); si el dibujo nunca se guardó, no ejecuta
+    salvo force=True — una caída de AutoCAD no se puede atajar. Un bucle
+    infinito deja AutoCAD ocupado hasta que termine: no lo repitas.
+
+    El filtro del plugin bloquea lo que no es AutoCAD (archivos, red,
+    procesos, registro, Editor.Command/SendStringToExecute, Type.GetType,
+    Assembly.Load...). Todo lo ejecutado queda registrado.
+
+    Devuelve: compiled, result, output, created [{handle,type,layer,bbox}],
+    errors [{line,column,message}], blocked [{line,column,symbol,reason}],
+    exception, aborted, elapsedMs, y 'message' legible si algo falló. Las
+    líneas de los errores son las de TU código. Unidades: las del dibujo
+    (en este proyecto, metros)."""
+    return engine_mod.run_code(code=code, description=description,
+                               compile_only=compile_only, force=force)
+
+
+@mcp.tool()
+def describe_api(type_name: str, filter: str = "") -> dict[str, Any]:
+    """Lista los miembros REALES de un tipo de la API de AutoCAD instalada:
+    constructores, propiedades (tipo, get/set), métodos con su firma y, si
+    es un enum, sus valores. Sirve para no escribir run_code con firmas de
+    memoria. Solo lee: no modifica el dibujo.
+
+    type_name: nombre corto ('Solid3d', 'BooleanOperationType') o completo
+    ('Autodesk.AutoCAD.DatabaseServices.Solid3d'). Si hay varios tipos con
+    ese nombre, devuelve la lista para que repitas con el completo.
+    filter: pedazo del nombre del miembro, sin distinguir mayúsculas
+    ('Extrude'). Sin filtro devuelve hasta 150 miembros, primero los propios
+    del tipo y después los heredados.
+
+    Corre por dentro con run_code, así que necesita que el usuario lo haya
+    activado; si está apagado lo dice."""
+    return engine_mod.describe_api(type_name=type_name, filter=filter)
+
+
+@mcp.tool()
+def api_guide(topic: str = "") -> str:
+    """Guías cortas y prácticas para escribir run_code, con snippets que
+    compilan: '3d', 'seleccion', 'capas-y-estilos', 'errores-comunes'.
+    Sin topic devuelve el índice. Leé la guía del tema ANTES de escribir el
+    código: ahí están las trampas que hacen fallar la primera vez
+    (eLockViolation, ForWrite, colores de la paleta, unidades)."""
+    return engine_mod.api_guide(topic=topic)
+
+
+@mcp.tool()
+def create_3d_model(rooms: list[dict[str, Any]],
+                    doors: Optional[list[dict[str, Any]]] = None,
+                    windows: Optional[list[dict[str, Any]]] = None,
+                    wall_height: float = 2.50, door_height: float = 2.10,
+                    sill_height: float = 0.90, window_head: float = 2.10,
+                    slab_thickness: float = 0.12, base_z: float = 0.0,
+                    slab: bool = True, offset: Optional[float] = None,
+                    exterior_thickness: float = 0.15,
+                    interior_thickness: float = 0.10,
+                    window_width: float = 1.20,
+                    view: bool = True) -> dict[str, Any]:
+    """La planta en 3D: los MISMOS rooms/doors/windows de draw_layout (o de
+    suggest_layout) levantados como sólidos — muros extruidos a wall_height
+    con los encuentros ya rematados, vanos de puerta y ventana restados y
+    losa encima. Va corrido en X ('offset', default 1.5 × el ancho), en
+    capas 3D-MUROS y 3D-LOSA, y deja una vista isométrica lista para
+    capture_viewport.
+
+    Devuelve los volúmenes medidos (masonryVolume, slabVolume) y avisa si
+    difieren de lo que da la planta: un vano que no se restó se nota ahí.
+    Corre con run_code, así que necesita que el usuario lo haya activado;
+    si está apagado lo dice y no dibuja nada."""
+    return model3d_mod.create_3d_model(
+        rooms, doors, windows, wall_height=wall_height, door_height=door_height,
+        sill_height=sill_height, window_head=window_head,
+        slab_thickness=slab_thickness, base_z=base_z, slab=slab, offset=offset,
+        exterior_thickness=exterior_thickness,
+        interior_thickness=interior_thickness, window_width=window_width,
+        view=view)
 
 
 if __name__ == "__main__":

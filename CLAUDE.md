@@ -2,6 +2,18 @@
 
 Reglas de trabajo cuando alguien pide dibujar algo en AutoCAD con estas tools.
 
+## Si no hay tool para lo que necesitás: `api_guide` → `describe_api` → `run_code`
+
+Las tools de oficio van primero. Para lo que ninguna cubre (3D, por ejemplo),
+`run_code` ejecuta C# contra la API de AutoCAD: antes leé la guía del tema
+(`api_guide()` da el índice) y confirmá firmas con `describe_api(tipo, filtro)`
+en vez de escribirlas de memoria. **Está apagado** salvo que el usuario lo
+active él mismo (`python tools/run_code_acceso.py activar`, con contraseña):
+si responde apagado, decíselo y seguí con las tools; nunca intentes activarlo
+ni pedir la contraseña. Red de seguridad: corre en una transacción (si falla,
+el dibujo queda intacto) y antes guarda solo; sin archivo no ejecuta salvo
+`force=True`.
+
 ## 0. Antes de dibujar: validar
 
 **Para una vivienda entre medianeras, el partido no se inventa: `suggest_layout`.**

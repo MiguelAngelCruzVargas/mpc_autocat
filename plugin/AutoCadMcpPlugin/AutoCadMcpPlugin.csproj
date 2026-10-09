@@ -13,6 +13,22 @@
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
+  <!-- Roslyn, para run_code: compila en memoria el código de la IA y da el
+       modelo semántico que usa el filtro de seguridad. 4.8 todavía apunta a
+       netstandard2.0, así que sirve para los dos targets. Sus dependencias
+       (System.Collections.Immutable, System.Reflection.Metadata) se copian al
+       lado del DLL y las encuentra ResolvePluginDependency. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+  </ItemGroup>
+  <!-- En net8 una librería NO copia sus dependencias NuGet a la salida (solo
+       las anota en deps.json), y AutoCAD carga el plugin desde la carpeta del
+       bundle: sin esto, Roslyn no estaría ahí y run_code fallaría en 2025+.
+       Las DLL de AutoCAD no se copian igual: van con ExcludeAssets=runtime. -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
   <!-- AutoCAD ~2019-2024 (.NET Framework 4.8) -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <!-- AcCoreMgd.dll, AcDbMgd.dll, AcMgd.dll de AutoCAD 2022, CopyLocal=false

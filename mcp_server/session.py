@@ -48,6 +48,13 @@ _LIFECYCLE = frozenset({
     "set_active_document",
 })
 
+# Comandos que se cuentan DESDE QUIEN LOS LLAMA y no acá. run_code no se
+# puede clasificar por su nombre: el mismo comando es una consulta de solo
+# lectura (describe_api, compile_only) o un dibujo entero, y si falla la
+# transacción se aborta y no ensució nada. engine.py sabe cuál de los casos
+# fue y llama a note_mutation() solo cuando corresponde.
+_COUNTED_BY_CALLER = frozenset({"run_code"})
+
 _OPS_SINCE_SAVE = [0]
 _SAVE_PATH: list[Optional[str]] = [None]
 _DIRTY_SINCE_CHECK = [False]
@@ -66,7 +73,12 @@ def retry_safe(cmd: str) -> bool:
     solo cuesta un par de segundos. Los que dibujan NO: un create_line
     reintentado tras un timeout puede haber llegado la primera vez, y quedan
     dos líneas superpuestas — de esas que check_drawing_hygiene después
-    reporta como duplicados."""
+    reporta como duplicados.
+
+    run_code nunca: no se sabe si el código dibuja, y uno que tardó más que
+    el timeout probablemente SIGUE corriendo dentro de AutoCAD."""
+    if cmd in _COUNTED_BY_CALLER:
+        return False
     return not _is_mutation(cmd) and cmd not in _LIFECYCLE
 
 
@@ -80,9 +92,15 @@ def after_call(cmd: str, params: dict[str, Any],
     if cmd == "save_drawing":
         note_saved(params.get("path") or _SAVE_PATH[0])
         return result
-    if not _is_mutation(cmd):
+    if cmd in _COUNTED_BY_CALLER or not _is_mutation(cmd):
         return result
+    return note_mutation(result)
 
+
+def note_mutation(result: Any = None) -> Any:
+    """Cuenta UNA operación de dibujo y, si cruza el umbral, mete el aviso
+    en el resultado. Es lo mismo que after_call hace solo para cada comando
+    que dibuja; existe aparte para los que cuenta quien los llama."""
     _OPS_SINCE_SAVE[0] += 1
     _DIRTY_SINCE_CHECK[0] = True
 
