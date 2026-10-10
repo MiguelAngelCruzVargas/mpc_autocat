@@ -284,8 +284,35 @@ def test_lista_repetida_no_se_dibuja_dos_veces() -> None:
           distintas["count"] == 2 and "warning" not in distintas, distintas)
 
 
+def test_rotulo_no_se_sale_del_recinto() -> None:
+    """Pasó de verdad: "RECÁMARA PRINCIPAL", "BAÑO PRINCIPAL" y "ÁREA DE
+    LAVADO" salían cruzando los muros de cuartos angostos. Cada texto tiene
+    que quedar adentro de la cara interior (el eje menos medio muro)."""
+    limpiar()
+    altura, inset = 0.25, 0.075
+    cuartos = [{"name": "RECÁMARA PRINCIPAL", "x0": 0.0, "y0": 0.0, "x1": 2.35, "y1": 4.0},
+               {"name": "ÁREA DE LAVADO", "x0": 2.35, "y0": 0.0, "x1": 4.10, "y1": 1.6},
+               {"name": "BAÑO PRINCIPAL", "x0": 4.10, "y0": 0.0, "x1": 5.60, "y1": 2.4}]
+    r = fur.label_rooms(cuartos, height=altura, inset=inset)
+    textos = [d for d in preview.DRAWN if d["cmd"] == "create_text"]
+    for c in cuartos:
+        adentro = [t for t in textos
+                   if c["x0"] <= t["x"] + 1e-9 and t["x"] < c["x1"]
+                   and c["y0"] <= t["y"] + 1e-9 and t["y"] < c["y1"]]
+        fuera = [t["text"] for t in adentro
+                 if t["x"] < c["x0"] + inset - 1e-6
+                 or t["x"] + fur.measure(t["text"], t["height"]) > c["x1"] - inset + 1e-6]
+        check(f"'{c['name']}' queda adentro de su recinto", not fuera, f"se salen: {fuera}")
+    check("ningún rótulo tuvo que avisar que no entraba",
+          "warnings" not in r, r.get("warnings"))
+    partidos = [l for l in r["labeled"] if l["lines"] == 2]
+    check("el nombre largo se partió en dos líneas en vez de desbordar",
+          any(l["name"] == "RECÁMARA PRINCIPAL" for l in partidos), r["labeled"])
+
+
 def main() -> int:
-    for fn in [test_colocacion_contra_los_cuatro_muros,
+    for fn in [test_rotulo_no_se_sale_del_recinto,
+               test_colocacion_contra_los_cuatro_muros,
                test_no_amuebla_el_muro_de_la_puerta,
                test_cama_matrimonial_o_individual_segun_quepa,
                test_lo_que_no_entra_no_se_dibuja,

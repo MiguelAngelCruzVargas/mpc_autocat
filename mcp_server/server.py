@@ -1350,6 +1350,8 @@ def place_furniture(items: list[dict[str, Any]]) -> dict[str, Any]:
       stove             width, depth       estufa con quemadores
       kitchen_sink      width, depth       fregadero
       fridge            width, depth       refrigerador
+      laundry_sink      width, depth       tarja de lavado (pileta + lavadero)
+      washer            width, depth       lavadora
       wc                -                  inodoro
       lavatory          width, depth       lavabo
       shower            width, depth       regadera

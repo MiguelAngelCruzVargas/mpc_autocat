@@ -88,6 +88,23 @@ def _merge_intervalos(ivs: list[list[float]],
     return out
 
 
+def _ancho_ventana(pedido: Optional[float], defecto: float, hueco: float) -> float:
+    """Con ancho PEDIDO no se achica: una ventana de 1.80 que el cliente
+    pidió no puede salir de 1.10 sin que nadie se entere. Sin pedido, el
+    ancho por defecto o el paño entero si es más chico (mínimo 0.90)."""
+    if pedido is not None:
+        return pedido if hueco >= pedido else 0.0
+    return defecto if hueco >= defecto else (hueco if hueco >= 0.90 else 0.0)
+
+
+def _aviso_ventana(nombre: str, pedido: Optional[float], hueco: float) -> str:
+    if pedido is not None:
+        return (f"Ventana de '{nombre}': pediste {pedido:.2f} m y el paño libre "
+                f"mide {hueco:.2f} m. No se dibujó: decidí si achicarla o moverla.")
+    return (f"Ventana de '{nombre}': el paño libre mide {hueco:.2f} m y no "
+            "entra ni una de 0.90.")
+
+
 def plan_walls(rooms: list[dict[str, Any]],
                doors: Optional[list[dict[str, Any]]] = None,
                windows: Optional[list[dict[str, Any]]] = None,
@@ -231,25 +248,107 @@ def plan_walls(rooms: list[dict[str, Any]],
 
     # Ventanas: {"room": .., "wall": "fachada"|"patio"} (lo que devuelve
     # suggest_layout). Se ubican en el hueco libre más grande del paño.
+    # Cada una puede traer su propio 'width', y 'sill'/'height' (antepecho y
+    # alto, los usa el 3D). Con 'x','y' va exactamente ahí, como una puerta.
+    # Un programa real pide medidas distintas por ambiente (1.80 en la sala,
+    # 0.60 alta en el baño): con un ancho único para todas no se podía
+    # dibujar ninguna casa de verdad.
     ventanas_puestas: list[dict[str, Any]] = []
-    patio_room = next((r for r in rects if _es_patio(r["name"])), None)
+    patios = [r for r in rects if _es_patio(r["name"])]
+
+    def _lado_hacia_patio(r: dict[str, Any], cual: str
+                          ) -> Optional[tuple[str, float, float, float]]:
+        """El borde de r que comparte con un patio, por CUALQUIER lado: un
+        patio de luz interior no está siempre "atrás" del recinto."""
+        for p in patios:
+            if cual and p["name"].upper() != cual.upper():
+                continue
+            for orient, c_r, c_p, a0, a1, b0, b1 in (
+                    ("h", r["y1"], p["y0"], r["x0"], r["x1"], p["x0"], p["x1"]),
+                    ("h", r["y0"], p["y1"], r["x0"], r["x1"], p["x0"], p["x1"]),
+                    ("v", r["x1"], p["x0"], r["y0"], r["y1"], p["y0"], p["y1"]),
+                    ("v", r["x0"], p["x1"], r["y0"], r["y1"], p["y0"], p["y1"])):
+                lo, hi = max(a0, b0), min(a1, b1)
+                if abs(c_r - c_p) < tol and hi - lo > tol:
+                    return orient, c_r, lo, hi
+        return None
+
     for wdef in (windows or []):
         nombre = str(wdef.get("room", ""))
         r = por_nombre.get(nombre.upper())
         muro = str(wdef.get("wall", "")).lower()
+        extra = {k: float(wdef[k]) for k in ("sill", "height") if k in wdef}
+        pedido = float(wdef["width"]) if "width" in wdef else None
         if not r:
             avisos.append(f"Ventana de '{nombre}': el recinto no está en "
                           "'rooms'.")
             continue
+
+        if "x" in wdef and "y" in wdef:
+            px, py = float(wdef["x"]), float(wdef["y"])
+            hallado = _buscar_segmento(px, py)
+            if not hallado:
+                avisos.append(f"Ventana de '{nombre}' en ({px:g}, {py:g}): no "
+                              "cae sobre ningún muro. No se dibujó.")
+                continue
+            _, s, a = hallado
+            ancho = pedido if pedido is not None else window_width
+            dist = a - s["a0"]
+            if dist - ancho / 2.0 < -tol or dist + ancho / 2.0 > s["a1"] - s["a0"] + tol:
+                avisos.append(f"Ventana de '{nombre}' ({ancho:.2f} m) en "
+                              f"({px:g}, {py:g}): se sale del muro. No se dibujó.")
+                continue
+            choque = next((o for o in s["openings"]
+                           if abs(o["distance"] - dist) < (o["width"] + ancho) / 2.0 - tol), None)
+            if choque:
+                avisos.append(f"Ventana de '{nombre}' en ({px:g}, {py:g}): se "
+                              f"pisa con otro vano del mismo muro. No se dibujó.")
+                continue
+            s["openings"].append({"distance": dist, "width": ancho,
+                                  "type": "window", **extra})
+            ventanas_puestas.append({"room": nombre, "width": round(ancho, 2),
+                                     "x": round(px, 3), "y": round(py, 3), **extra})
+            continue
+
+        orient_v = "h"
         if muro in ("fachada", "frente", "front") and abs(r["y0"] - by0) < tol:
             c, i0, i1 = r["y0"], r["x0"], r["x1"]
-        elif (muro == "patio" and patio_room is not None
-              and abs(r["y1"] - patio_room["y0"]) < tol):
-            c, i0, i1 = r["y1"], r["x0"], r["x1"]
+        elif muro == "patio" and _lado_hacia_patio(r, str(wdef.get("patio", ""))):
+            orient_v, c, i0, i1 = _lado_hacia_patio(r, str(wdef.get("patio", "")))
         else:
             avisos.append(f"Ventana de '{nombre}' en muro '{muro}': no se "
                           "resuelve sola (colindancia o sin patio vecino). "
-                          "Si va, dibujala a mano.")
+                          "Pasale 'x','y' para ubicarla a mano.")
+            continue
+        if orient_v == "v":
+            hallado = _buscar_segmento(c, (i0 + i1) / 2.0)
+            if not hallado:
+                continue
+            _, s, _a = hallado
+            # Mismo algoritmo de abajo, con el muro vertical.
+            lim0, lim1 = i0 + MIN_TRAMO, i1 - MIN_TRAMO
+            cortes = sorted(
+                (s["a0"] + o["distance"] - o["width"] / 2.0 - MIN_TRAMO,
+                 s["a0"] + o["distance"] + o["width"] / 2.0 + MIN_TRAMO)
+                for o in s["openings"])
+            mejor_gap = None
+            g0 = lim0
+            for c0, c1 in cortes + [(lim1, lim1)]:
+                g1 = min(c0, lim1)
+                if g1 - g0 > (mejor_gap[1] - mejor_gap[0] if mejor_gap else 0):
+                    mejor_gap = (g0, g1)
+                g0 = max(g0, c1)
+            hueco = (mejor_gap[1] - mejor_gap[0]) if mejor_gap else 0.0
+            ancho_v = _ancho_ventana(pedido, window_width, hueco)
+            if ancho_v <= 0:
+                avisos.append(_aviso_ventana(nombre, pedido, hueco))
+                continue
+            centro = (mejor_gap[0] + mejor_gap[1]) / 2.0
+            s["openings"].append({"distance": centro - s["a0"],
+                                  "width": ancho_v, "type": "window", **extra})
+            ventanas_puestas.append({"room": nombre, "width": round(ancho_v, 2),
+                                     "x": round(s["c"], 3), "y": round(centro, 3),
+                                     **extra})
             continue
         hallado = _buscar_segmento((i0 + i1) / 2.0, c)
         if not hallado:
@@ -272,20 +371,18 @@ def plan_walls(rooms: list[dict[str, Any]],
                 mejor_gap = (g0, g1)
             g0 = max(g0, c1)
         hueco = (mejor_gap[1] - mejor_gap[0]) if mejor_gap else 0.0
-        ancho_v = window_width if hueco >= window_width else (
-            hueco if hueco >= 0.90 else 0.0)
+        ancho_v = _ancho_ventana(pedido, window_width, hueco)
         if ancho_v <= 0:
-            avisos.append(f"Ventana de '{nombre}': el paño libre mide "
-                          f"{hueco:.2f} m y no entra ni una de 0.90.")
+            avisos.append(_aviso_ventana(nombre, pedido, hueco))
             continue
         centro = (mejor_gap[0] + mejor_gap[1]) / 2.0
         s["openings"].append({"distance": centro - s["a0"],
-                              "width": ancho_v, "type": "window"})
+                              "width": ancho_v, "type": "window", **extra})
         ventanas_puestas.append({"room": nombre, "width": round(ancho_v, 2),
                                  "x": round(centro if s["orient"] == "h"
                                             else s["c"], 3),
                                  "y": round(s["c"] if s["orient"] == "h"
-                                            else centro, 3)})
+                                            else centro, 3), **extra})
 
     axes: list[dict[str, Any]] = []
     muros: list[dict[str, Any]] = []
@@ -930,6 +1027,14 @@ def _draw_opening(axis: Axis, hole: dict[str, Any],
         start_deg, end_deg = leaf_angle, along
     arc = _arc(hinge, width, start_deg % 360.0, end_deg % 360.0,
                LAYER_OPENINGS, LW_OPENING)
+
+    # El barrido de la hoja ocupa lugar: sin registrarlo, label_rooms ponía
+    # "RECÁMARA PRINCIPAL" justo encima del abatimiento de su propia puerta.
+    cerrada = (hinge[0] + width * math.cos(math.radians(along)),
+               hinge[1] + width * math.sin(math.radians(along)))
+    xs = [hinge[0], leaf_end[0], cerrada[0]]
+    ys = [hinge[1], leaf_end[1], cerrada[1]]
+    space.track(min(xs), min(ys), max(xs), max(ys), "puerta (abatimiento)")
 
     result["leafHandle"] = leaf
     result["arcHandle"] = arc

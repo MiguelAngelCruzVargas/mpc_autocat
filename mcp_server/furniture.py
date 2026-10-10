@@ -27,6 +27,9 @@ LW_SOFT = 13  # colchones, cojines: aún más liviano que el contorno
 # en label_rooms(), text_block_size() y label().
 AREA_HEIGHT_RATIO = 0.72
 
+# Separación entre las líneas de un nombre partido, en fracción de su altura.
+INTERLINEA = 0.35
+
 # Huella de todo lo dibujado, para que los rótulos de ambiente no caigan
 # encima de un mueble. Cada entrada es un bounding box (x0, y0, x1, y1).
 # El registro real vive en space.FOOTPRINTS: los rotulos de ambiente y los de
@@ -225,6 +228,31 @@ def fridge(x: float, y: float, width: float = 0.70, depth: float = 0.70,
           base, rotation_deg, LW_SOFT)
 
 
+# --------------------------------------------------------------- lavado
+
+def laundry_sink(x: float, y: float, width: float = 0.70, depth: float = 0.60,
+                 rotation_deg: float = 0.0) -> None:
+    """Tarja de lavado: pileta a un lado y lavadero con estrías al otro, que
+    es lo que la distingue en planta de un fregadero de cocina."""
+    base = (x, y)
+    _rect(x, y, width, depth, base, rotation_deg)
+    pileta = width * 0.45
+    _rect(x + 0.05, y + 0.08, pileta - 0.05, depth - 0.16, base, rotation_deg, LW_SOFT)
+    x0 = x + pileta + 0.05
+    for k in range(1, 5):
+        yy = y + 0.08 + (depth - 0.16) * k / 5.0
+        _line((x0, yy), (x + width - 0.05, yy), base, rotation_deg, LW_SOFT)
+
+
+def washer(x: float, y: float, width: float = 0.70, depth: float = 0.70,
+           rotation_deg: float = 0.0) -> None:
+    """Lavadora: el cuerpo y el tambor."""
+    base = (x, y)
+    _rect(x, y, width, depth, base, rotation_deg)
+    _circle(x + width / 2.0, y + depth / 2.0, min(width, depth) * 0.32,
+            base, rotation_deg)
+
+
 # ------------------------------------------------------------------- baño
 
 def wc(x: float, y: float, rotation_deg: float = 0.0) -> None:
@@ -270,6 +298,8 @@ CATALOG = {
     "stove":        (stove,        {"width": 0.60, "depth": 0.60}),
     "kitchen_sink": (kitchen_sink, {"width": 0.80, "depth": 0.60}),
     "fridge":       (fridge,       {"width": 0.70, "depth": 0.70}),
+    "laundry_sink": (laundry_sink, {"width": 0.70, "depth": 0.60}),
+    "washer":       (washer,       {"width": 0.70, "depth": 0.70}),
     "wc":           (wc,           {}),
     "lavatory":     (lavatory,     {"width": 0.60, "depth": 0.45}),
     "shower":       (shower,       {"width": 0.90, "depth": 0.90}),
@@ -773,44 +803,125 @@ def _amueblar_sala(caja, libres, nombre, salteados) -> list[dict]:
     return piezas
 
 
+# Abreviaturas de rótulo como las escribe un dibujante. Se prefieren a
+# achicar la letra: "REC. PPAL." se lee; un texto de 1 mm en papel, no.
+ABREVIATURAS = {
+    "RECÁMARA": "REC.", "RECAMARA": "REC.", "HABITACIÓN": "HAB.",
+    "HABITACION": "HAB.", "DORMITORIO": "DORM.", "PRINCIPAL": "PPAL.",
+    "SECUNDARIA": "SEC.", "SECUNDARIO": "SEC.", "ESTANCIA": "EST.",
+    "COMEDOR": "COM.", "COCINA": "COC.", "SERVICIO": "SERV.",
+    "LAVADO": "LAV.", "LAVANDERÍA": "LAV.", "LAVANDERIA": "LAV.",
+    "VESTÍBULO": "VEST.", "VESTIBULO": "VEST.", "PASILLO": "PAS.",
+    "ESTUDIO": "ESTUD.", "COCHERA": "COCH.", "VESTIDOR": "VEST.",
+    "COMPLETO": "COMPL.", "INTERIOR": "INT.",
+}
+
+
+def _abreviar(nombre: str) -> Optional[str]:
+    """'RECÁMARA PRINCIPAL' -> 'REC. PPAL.'; las palabras de enlace ('DE')
+    se caen si quedan entre abreviaturas. None si no hay nada que abreviar."""
+    palabras = nombre.split()
+    nuevas = [ABREVIATURAS.get(p, p) for p in palabras]
+    if nuevas == palabras:
+        return None
+    nuevas = [p for p in nuevas if p not in ("DE", "DEL", "LA", "EL")] or nuevas
+    return " ".join(nuevas)
+
+
+def _partir(nombre: str) -> Optional[str]:
+    """El nombre en dos líneas, cortando en el espacio más cercano al medio
+    ("RECÁMARA PRINCIPAL" -> "RECÁMARA\\nPRINCIPAL"). None si es una palabra."""
+    espacios = [i for i, ch in enumerate(nombre) if ch == " "]
+    if not espacios:
+        return None
+    corte = min(espacios, key=lambda i: abs(i - len(nombre) / 2.0))
+    return nombre[:corte] + "\n" + nombre[corte + 1:]
+
+
 def label_rooms(rooms: list[dict[str, Any]], height: float,
                 area_height: float = 0.0, layer: str = "TEXTOS",
-                show_area: bool = True) -> dict[str, Any]:
+                show_area: bool = True, inset: float = 0.075) -> dict[str, Any]:
     """Rotula ambientes esquivando el mobiliario ya dibujado.
 
     Cada room es {"name":..., "x0":..., "y0":..., "x1":..., "y1":...}. Usa las
     huellas registradas por place() para no poner el texto encima de una cama.
+
+    Los rooms vienen en EJES: el texto se mide contra la cara interior del
+    muro ('inset' = medio espesor), no contra el eje. Si no entra, se prueba
+    en este orden: partido en dos líneas, más chico (hasta 65 %, que en
+    papel sigue legible) y por último sin la superficie. Antes, el segundo
+    intento no verificaba nada: "RECÁMARA PRINCIPAL" en un cuarto de 2.2 m
+    salía cruzando los dos muros. Si ni así entra, va en 'warnings'.
     """
     layers.ensure(layer, 7, 25)
     out = []
+    avisos: list[str] = []
     ah = area_height or height * AREA_HEIGHT_RATIO
 
     for i, room in enumerate(rooms):
         try:
-            name = str(room["name"])
-            box = (float(room["x0"]), float(room["y0"]),
-                   float(room["x1"]), float(room["y1"]))
+            name = str(room["name"]).upper()
+            ejes = (float(room["x0"]), float(room["y0"]),
+                    float(room["x1"]), float(room["y1"]))
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(
                 f"Ambiente #{i + 1}: hace falta name, x0, y0, x1, y1. ({exc})")
+        box = (ejes[0] + inset, ejes[1] + inset, ejes[2] - inset, ejes[3] - inset)
+        area = ((box[2] - box[0]) * (box[3] - box[1])) if show_area else None
+        # Nivel de piso ("N.P.T. +0.15") como tercera línea del rótulo: suelto,
+        # como texto aparte, terminaba sobre un muro o afuera del terreno.
+        nivel = str(room["level"]) if room.get("level") else None
 
-        area = (box[2] - box[0]) * (box[3] - box[1]) if show_area else None
-        spot, fitted = find_label_spot(box, name, height, area, ah)
-        if not fitted and area is not None:
-            # No entraba con la superficie: probamos solo el nombre, chico.
-            spot, fitted = find_label_spot(box, name, ah)
-            label(name, spot[0], spot[1], height=ah, layer=layer)
-            out.append({"name": name, "x": spot[0], "y": spot[1],
-                        "area": None, "cramped": True})
-            continue
+        partido = _partir(name)
+        abrev = _abreviar(name)
+        abrev_partido = _partir(abrev) if abrev else None
+        # Orden de oficio: completo, partido, ABREVIADO (antes de achicar la
+        # letra), y recién después más chico.
+        variantes = [t for t in (name, partido, abrev, abrev_partido) if t]
+        intentos = []
+        for factor in (1.0, 0.8, 0.65):
+            for texto in variantes:
+                intentos.append((texto, height * factor, area, ah * factor))
+        if area is not None:
+            for texto in variantes:
+                intentos.append((texto, height * 0.65, None, 0.0))
 
-        label(name, spot[0], spot[1], height=height, layer=layer,
-              area=area, area_height=ah)
+        # El aire alrededor (12 cm) es para que el rótulo respire en un cuarto
+        # normal; en un baño de 1.35 m sobra, así que la última vuelta lo
+        # baja a 3 cm antes de declarar que no entra.
+        elegido = None
+        for margen in (0.12, 0.03):
+            for texto, hh, ar, ahh in intentos:
+                spot, fitted = find_label_spot(box, texto, hh, ar, ahh,
+                                               margin=margen, level=nivel)
+                if fitted:
+                    elegido = (texto, hh, ar, ahh, spot)
+                    break
+            if elegido:
+                break
+        if elegido is None:
+            texto, hh, ar, ahh = intentos[-1]
+            spot, _ = find_label_spot(box, texto, hh, ar, ahh, level=nivel)
+            elegido = (texto, hh, ar, ahh, spot)
+            avisos.append(
+                f"El rótulo '{name}' no entra en su recinto ni partido ni "
+                f"achicado (ancho libre {box[2] - box[0]:.2f} m): abreviá el "
+                "nombre o rotulalo afuera con un leader.")
+
+        texto, hh, ar, ahh, spot = elegido
+        label(texto, spot[0], spot[1], height=hh, layer=layer,
+              area=ar, area_height=ahh, level=nivel)
         out.append({"name": name, "x": spot[0], "y": spot[1],
-                    "area": round(area, 2) if area else None,
-                    "cramped": not fitted})
+                    "text": texto.replace("\n", " "),
+                    "area": round(ar, 2) if ar else None,
+                    "lines": texto.count("\n") + 1,
+                    "height": round(hh, 4),
+                    "cramped": elegido[0] != name or hh < height or ar is None})
 
-    return {"labeled": out, "count": len(out)}
+    r: dict[str, Any] = {"labeled": out, "count": len(out)}
+    if avisos:
+        r["warnings"] = avisos
+    return r
 
 
 # ------------------------------------------------------------------ otros
@@ -845,45 +956,56 @@ def measure(text: str, height: float) -> float:
     return width
 
 
+def _sublineas(area: Optional[float], level: Optional[str]) -> list[str]:
+    """Las líneas chicas debajo del nombre: superficie y nivel (N.P.T.)."""
+    return ([f"{area:.2f} m2"] if area is not None else []) + ([level] if level else [])
+
+
 def text_block_size(text: str, height: float, area: Optional[float] = None,
-                    area_height: float = 0.0) -> tuple[float, float]:
-    """Cuánto mide el bloque nombre + superficie, en unidades del modelo."""
-    w = measure(text, height)
-    h = height
-    if area is not None:
-        ah = area_height or height * AREA_HEIGHT_RATIO
-        w = max(w, measure(f"{area:.2f} m2", ah))
+                    area_height: float = 0.0, level: Optional[str] = None
+                    ) -> tuple[float, float]:
+    """Cuánto mide el bloque nombre + superficie + nivel, en unidades del
+    modelo. El nombre puede venir en varias líneas ('\\n')."""
+    lineas = text.split("\n")
+    w = max(measure(l, height) for l in lineas)
+    h = height * len(lineas) + height * INTERLINEA * (len(lineas) - 1)
+    ah = area_height or height * AREA_HEIGHT_RATIO
+    for sub in _sublineas(area, level):
+        w = max(w, measure(sub, ah))
         h += ah * 1.5
     return w, h
 
 
 def label(text: str, cx: float, cy: float, height: float,
           layer: str = "TEXTOS", lineweight: int = 25,
-          area: Optional[float] = None, area_height: float = 0.0) -> None:
-    """Nombre del ambiente y su superficie, CENTRADOS en (cx, cy).
+          area: Optional[float] = None, area_height: float = 0.0,
+          level: Optional[str] = None) -> None:
+    """Nombre del ambiente, su superficie y su nivel, CENTRADOS en (cx, cy).
 
     DBText se ancla abajo a la izquierda, así que acá se calcula el ancla a
     partir del centro pedido: quien llama razona con el centro del bloque, que
     es lo que hace falta para ubicarlo en un hueco libre.
     """
     name = text.upper()
-    _, block_h = text_block_size(name, height, area, area_height)
+    _, block_h = text_block_size(name, height, area, area_height, level)
     top = cy + block_h / 2.0
 
-    acad.call("create_text", {
-        "text": name,
-        "x": cx - measure(name, height) / 2.0,
-        "y": top - height, "z": 0.0, "height": height,
-        "layer": layer, "rotationDeg": 0.0,
-        "lineweight": lineweight, "colorIndex": None,
-    })
-    if area is not None:
-        ah = area_height or height * AREA_HEIGHT_RATIO
-        txt = f"{area:.2f} m2"
+    for k, linea in enumerate(name.split("\n")):
+        acad.call("create_text", {
+            "text": linea,
+            "x": cx - measure(linea, height) / 2.0,
+            "y": top - height - k * height * (1.0 + INTERLINEA), "z": 0.0,
+            "height": height, "layer": layer, "rotationDeg": 0.0,
+            "lineweight": lineweight, "colorIndex": None,
+        })
+    ah = area_height or height * AREA_HEIGHT_RATIO
+    subs = _sublineas(area, level)
+    for k, txt in enumerate(subs):
+        # De abajo hacia arriba: la última sublínea apoya en el pie del bloque.
         acad.call("create_text", {
             "text": txt,
             "x": cx - measure(txt, ah) / 2.0,
-            "y": cy - block_h / 2.0, "z": 0.0,
+            "y": cy - block_h / 2.0 + (len(subs) - 1 - k) * ah * 1.5, "z": 0.0,
             "height": ah, "layer": layer, "rotationDeg": 0.0,
             "lineweight": 13, "colorIndex": None,
         })
@@ -909,7 +1031,8 @@ def _clearance(box: tuple[float, float, float, float],
 def find_label_spot(room: tuple[float, float, float, float],
                     text: str, height: float,
                     area: Optional[float] = None, area_height: float = 0.0,
-                    margin: float = 0.12, steps: int = 16
+                    margin: float = 0.12, steps: int = 16,
+                    level: Optional[str] = None
                     ) -> tuple[tuple[float, float], bool]:
     """Dónde poner el rótulo de un ambiente sin taparle el mobiliario.
 
@@ -920,7 +1043,7 @@ def find_label_spot(room: tuple[float, float, float, float],
     rotular.
     """
     x0, y0, x1, y1 = room
-    w, h = text_block_size(text.upper(), height, area, area_height)
+    w, h = text_block_size(text.upper(), height, area, area_height, level)
 
     half_w, half_h = w / 2.0 + margin, h / 2.0 + margin
     min_cx, max_cx = x0 + half_w, x1 - half_w
