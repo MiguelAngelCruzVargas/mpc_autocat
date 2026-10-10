@@ -488,8 +488,15 @@ def dimension_layout(rooms: list[dict[str, Any]],
                      min_gap: float = 0.15,
                      scale: float = 0.0,
                      style: Optional[str] = None,
-                     layer: str = "COTAS") -> dict[str, Any]:
+                     layer: str = "COTAS",
+                     openings: Optional[list[dict[str, Any]]] = None
+                     ) -> dict[str, Any]:
     """Acota la planta entera a partir de los recintos, sin listar posiciones.
+
+    openings: las puertas y ventanas ({"x","y","width"}, las mismas que se le
+    pasaron a draw_layout). Con ellas cada lado lleva una cadena de VANOS,
+    la más pegada al muro: jamba por jamba, que es la cota con la que se
+    construye. Sin esa cadena el albañil no sabe dónde arranca la ventana.
 
     Es la contraparte de draw_layout: los cortes de la cadena de cotas son
     exactamente las fronteras entre recintos, que ya están en 'rooms'. Que
@@ -592,6 +599,26 @@ def dimension_layout(rooms: list[dict[str, Any]],
         else:
             referencia = bx0 if s == "left" else bx1
             extremos = [by0, by1]
+
+        # Vanos de ESTE paño, primero: create_dimension_chain apila hacia
+        # afuera, así que lo que se dibuja antes queda más cerca del muro.
+        jambas: list[float] = []
+        for o in (openings or []):
+            try:
+                ox, oy, ow = float(o["x"]), float(o["y"]), float(o.get("width", 0.80))
+            except (KeyError, TypeError, ValueError):
+                continue
+            sobre, centro = (abs(oy - referencia), ox) if horizontal else (abs(ox - referencia), oy)
+            if sobre < 0.03:
+                jambas += [centro - ow / 2.0, centro + ow / 2.0]
+        if jambas:
+            vanos = sorted(set([round(v, 4) for v in extremos + jambas]))
+            cadenas.append({
+                "side": s, "kind": "vanos", "cuts": len(vanos),
+                "positions": vanos,
+                "result": ann.create_dimension_chain(
+                    positions=vanos, side=s, reference=referencia,
+                    scale=scale, style=style, layer=layer)})
 
         if detail and len(cortes) > 2:
             cadenas.append({

@@ -1215,7 +1215,9 @@ def dimension_layout(rooms: list[dict[str, Any]],
                      detail: bool = True, total: bool = True,
                      min_gap: float = 0.15, scale: float = 0.0,
                      style: Optional[str] = None,
-                     layer: str = "COTAS") -> dict[str, Any]:
+                     layer: str = "COTAS",
+                     openings: Optional[list[dict[str, Any]]] = None
+                     ) -> dict[str, Any]:
     """Acota la planta ENTERA desde los recintos, sin listar posiciones.
 
     Es la contraparte de draw_layout: los cortes de la cadena de cotas son
@@ -1233,12 +1235,17 @@ def dimension_layout(rooms: list[dict[str, Any]],
     min_gap: fronteras más juntas que esto se funden en un corte — dos
     cotas de 3 cm pegadas no se leen ni entra el número entre las flechas.
     scale: 0 toma la escala registrada de la lámina.
+    openings: las puertas y ventanas que le pasaste a draw_layout (las que
+    traen x, y, width). Con ellas cada lado suma una cadena de VANOS, la
+    más pegada al muro: jamba por jamba, la cota con la que se construye.
+    Pasalas siempre que el plano vaya a obra.
 
     Va DESPUÉS de dibujar y de componer: si las vistas se mueven, lo
     reservado deja de valer."""
     return arch_mod.dimension_layout(
         rooms=rooms, sides=sides, detail=detail, total=total,
-        min_gap=min_gap, scale=scale, style=style, layer=layer)
+        min_gap=min_gap, scale=scale, style=style, layer=layer,
+        openings=openings)
 
 
 @mcp.tool()
