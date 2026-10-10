@@ -115,6 +115,28 @@ namespace AutoCadMcpPlugin.Commands
             }
         }
 
+        private const string CAPA_VIEWPORTS = "MCP-VIEWPORTS";
+
+        /// <summary>La capa de los marcos de viewport: gris y SIN imprimir.
+        /// Si ya existe se respeta tal cual (alguien la configuró).</summary>
+        private static ObjectId CapaViewports(Database db, Transaction tr)
+        {
+            var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            if (lt.Has(CAPA_VIEWPORTS))
+                return lt[CAPA_VIEWPORTS];
+            lt.UpgradeOpen();
+            var capa = new LayerTableRecord
+            {
+                Name = CAPA_VIEWPORTS,
+                IsPlottable = false,
+                Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 8)
+            };
+            ObjectId id = lt.Add(capa);
+            tr.AddNewlyCreatedDBObject(capa, true);
+            return id;
+        }
+
         /// <summary>params: (ninguno)</summary>
         public static JsonObject List(Document doc, JsonObject pars)
         {
@@ -223,6 +245,11 @@ namespace AutoCadMcpPlugin.Commands
                     vp.On = true;
                     if (locked)
                         vp.Locked = true;
+                    // El marco del viewport es una ayuda de pantalla: en una
+                    // lámina no se imprime. Impreso cortaba los títulos de vista
+                    // que caían sobre el borde (visto en vivo: "ISOMETRICO SO"
+                    // tachado por la línea del marco).
+                    vp.LayerId = CapaViewports(db, tr);
 
                     var result = new JsonObject
                     {

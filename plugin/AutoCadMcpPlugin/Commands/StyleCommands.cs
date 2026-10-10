@@ -86,7 +86,8 @@ namespace AutoCadMcpPlugin.Commands
         /// params: name, [textHeight], [arrowSize], [scale] (DIMSCALE global),
         /// [decimalPlaces], [textStyle] (nombre de un estilo de texto),
         /// [unitsFactor] (DIMLFAC: 1 dibujando en mm, 1000 en metros si querés
-        /// que la cota diga milímetros), [setCurrent=false]
+        /// que la cota diga milímetros), [textAbove] (DIMTAD), [textAligned]
+        /// (DIMTIH/DIMTOH), [textGap] (DIMGAP), [setCurrent=false]
         /// </summary>
         public static JsonObject SetDimStyle(Document doc, JsonObject pars)
         {
@@ -143,6 +144,21 @@ namespace AutoCadMcpPlugin.Commands
                     record.Dimexo = pars["extensionOffset"].GetValue<double>();
                 if (pars["extensionBeyond"] != null)
                     record.Dimexe = pars["extensionBeyond"].GetValue<double>();
+
+                // Convencion de plano: el numero ENCIMA de la linea (DIMTAD 1)
+                // y alineado con ella (DIMTIH/DIMTOH 0). Con los de fabrica,
+                // en una cota vertical el numero salia horizontal y la linea
+                // de cota lo atravesaba por el medio ("4.|10").
+                if (pars["textAbove"] != null)
+                    record.Dimtad = pars["textAbove"].GetValue<bool>() ? 1 : 0;
+                if (pars["textAligned"] != null)
+                {
+                    bool alineado = pars["textAligned"].GetValue<bool>();
+                    record.Dimtih = !alineado;
+                    record.Dimtoh = !alineado;
+                }
+                if (pars["textGap"] != null)
+                    record.Dimgap = pars["textGap"].GetValue<double>();
 
                 if (pars["textStyle"] != null)
                 {

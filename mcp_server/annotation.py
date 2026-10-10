@@ -85,6 +85,12 @@ def ensure_dim_style(scale: float = 0.0, decimals: int = 2,
             "trailingZeros": True,
             "extensionOffset": 0.6,
             "extensionBeyond": 0.8,
+            # Numero encima de la linea y alineado con ella: con los de
+            # fabrica la linea de una cota vertical cruzaba el numero.
+            # Un plugin anterior a estos parametros los ignora.
+            "textAbove": True,
+            "textAligned": True,
+            "textGap": 0.8,
             "setCurrent": False,
         })
         return ESTILO_COTAS
