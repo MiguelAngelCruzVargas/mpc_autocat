@@ -655,7 +655,11 @@ def _fmt_item(item: dict[str, Any]) -> str:
     tipo = item["type"]
 
     if tipo == "concrete_volume":
-        base = f"{_suma_areas(item['areas'])} m² × {item['depth']:.2f} m"
+        if "solidVolumes" in item:
+            # Medido del sólido 3D: el volumen ES la medición, no área × alto.
+            base = f"{_suma_areas(item['solidVolumes'])} m³ (sólido 3D medido)"
+        else:
+            base = f"{_suma_areas(item['areas'])} m² × {item['depth']:.2f} m"
         return _merma(base, item["wastePct"], f"{item['volume']:.3f} m³")
 
     if tipo == "concrete_mix":
