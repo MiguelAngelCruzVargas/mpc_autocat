@@ -3741,6 +3741,43 @@ def export_quantities_csv(result: dict[str, Any], path: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def export_concept_catalog(result: dict[str, Any], path: str,
+                           extra_concepts: Optional[list[dict[str, Any]]] = None,
+                           project: str = "",
+                           vat_pct: float = 16.0) -> dict[str, Any]:
+    """CATÁLOGO DE CONCEPTOS para el presupuesto, SIN precios: los conceptos
+    redactados, con clave, unidad y cantidad, en un .xlsx donde quien
+    presupuesta solo escribe el P.U. (celdas amarillas) — importe,
+    subtotales por partida, IVA y total ya van formulados. Es el paso final
+    de todo plano cuantificado: después de calculate_quantities.
+
+    result: lo que devolvió calculate_quantities (ponele 'group' a cada item:
+    "Preliminares", "Cimentación", "Estructura", "Albañilería",
+    "Instalaciones", "Acabados"; las partidas se ordenan solas así).
+    path: .xlsx (con fórmulas, lo normal) o .csv.
+
+    No es una copia del cuadro de volúmenes, y no tiene que serlo:
+      - cantidades NETAS: la merma va en el P.U., no en la obra ejecutada;
+      - los insumos (piezas de block, mortero de junteo, cemento/arena/grava)
+        NO son conceptos: van incluidos en el P.U. del muro o del concreto.
+        El muro se presupuesta en m², la pintura en m² de superficie ("a dos
+        manos" va en la descripción, no multiplica la cantidad).
+
+    extra_concepts: lo que la obra necesita y el dibujo no mide, como
+    [{"group": "Preliminares", "concept": "Limpieza, trazo y nivelación...",
+      "unit": "m2", "quantity": 105.0, "source": "predio 7x15"}].
+    La cantidad sale de un dato medido o del proyecto; si no se conoce, va
+    quantity=None y el concepto sale POR CUANTIFICAR — nunca un número
+    inventado. Cada item puede traer 'concept' (descripción propia) y
+    'concept_unit' para forzar la unidad.
+    vat_pct: IVA en %; 0 lo omite."""
+    import budget
+    return budget.export_concept_catalog(
+        result=result, path=path, extra_concepts=extra_concepts,
+        project=project, vat_pct=vat_pct)
+
+
+@mcp.tool()
 def get_drawing_info() -> dict[str, Any]:
     """Info general del dibujo activo: nombre de archivo, unidades, capa actual,
     cantidad de entidades en el espacio modelo."""

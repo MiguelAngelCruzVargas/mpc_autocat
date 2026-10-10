@@ -890,6 +890,23 @@ def create_dimension_chain(
         resultado["totalChain"] = general
         resultado["total"] = round(cortes[-1] - cortes[0], 3)
 
+    # Los numeros IMPRESOS tienen que sumar el total impreso: con vanos en
+    # medios centimetros (0.425, 1.375) cada uno redondea hacia arriba y la
+    # cadena dice 6.86 donde el total dice 6.85. Quien revisa suma a mano y
+    # lo marca como error de cota, aunque el dibujo este bien.
+    if len(tramos) > 1:
+        impresos = sum(_redondeo_cota(t) for t in tramos)
+        total_impreso = _redondeo_cota(round(cortes[-1] - cortes[0], 6))
+        if abs(impresos - total_impreso) > 0.004:
+            resultado["roundingMismatch"] = {"sum": round(impresos, 2),
+                                             "total": round(total_impreso, 2)}
+            aviso = (f"Los numeros de la cadena suman {impresos:.2f} y el total "
+                     f"es {total_impreso:.2f}: hay tramos en medios centimetros "
+                     "que redondean hacia el mismo lado. Corre un vano o un eje "
+                     "a centimetro entero.")
+            resultado["warning"] = ((resultado["warning"] + " ")
+                                    if resultado.get("warning") else "") + aviso
+
     if desacuerdo:
         resultado["spanMismatch"] = [
             {"otra": b["what"], "abarca": b["span"]} for b in desacuerdo]
@@ -922,6 +939,12 @@ def create_dimension_chain(
 RENGLON_MM = 3.0     # separacion entre renglones de numeros sacados afuera
 
 
+def _redondeo_cota(valor: float, decimales: int = 2) -> float:
+    """Como redondea AutoCAD el numero de una cota: mitad hacia arriba."""
+    q = Decimal(1).scaleb(-decimales)
+    return float(Decimal(repr(round(valor, 6))).quantize(q, rounding=ROUND_HALF_UP))
+
+
 def _numeros_afuera(apretados: list[dict[str, Any]], side: str,
                     coord_linea: float, upm: float, layer: str) -> int:
     """Escribe el numero de cada tramo corto en un renglon por fuera de la
@@ -937,8 +960,7 @@ def _numeros_afuera(apretados: list[dict[str, Any]], side: str,
     for t in apretados:
         # Redondeo como el de AutoCAD (mitad hacia arriba): 0.425 es "0.43"
         # en la cota, y el numero de afuera tiene que decir lo mismo.
-        texto = str(Decimal(repr(t["length"])).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP))
+        texto = f"{_redondeo_cota(t['length']):.2f}"
         ancho = len(texto) * alto * CHAR_W_COTA
         medio = (t["from"] + t["to"]) / 2.0
         a0, a1 = medio - ancho / 2.0, medio + ancho / 2.0

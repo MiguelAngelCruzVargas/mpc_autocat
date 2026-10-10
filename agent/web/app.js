@@ -96,6 +96,27 @@ async function actualizarEstadoAutoCAD() {
 // ==========================================================================
 // ARRANQUE DE LA APLICACIÓN
 // ==========================================================================
+// Entregables: lo que el agente dejó en la carpeta de entregables (PDF,
+// catálogo de conceptos .xlsx, CSV), listo para bajar desde el panel.
+async function actualizarEntregables() {
+  const cont = document.getElementById('lista-entregables');
+  if (!cont) return;
+  try {
+    const res = await fetch('/api/entregables');
+    if (!res.ok) return;
+    const { archivos } = await res.json();
+    if (!archivos || !archivos.length) return;
+    cont.innerHTML = archivos.map(a => {
+      const kb = a.bytes < 1024 * 1024
+        ? `${Math.max(1, Math.round(a.bytes / 1024))} KB`
+        : `${(a.bytes / 1024 / 1024).toFixed(1)} MB`;
+      const url = '/entregables/' + encodeURIComponent(a.nombre);
+      return `<a class="entregable" href="${url}" download="${escaparHtml(a.nombre)}">` +
+             `<span>${escaparHtml(a.nombre)}</span><small>${kb}</small></a>`;
+    }).join('');
+  } catch {}
+}
+
 async function init() {
   try {
     const res = await fetch('/api/estado');
@@ -133,6 +154,9 @@ async function init() {
 
   registrarEventos();
   actualizarEstadoAutoCAD();
+  actualizarEntregables();
+  const btnEntregables = document.getElementById('btn-refrescar-entregables');
+  if (btnEntregables) btnEntregables.onclick = actualizarEntregables;
   setInterval(actualizarEstadoAutoCAD, 15000);
 }
 
@@ -671,6 +695,7 @@ async function enviarMensaje() {
       agregarAvisoChat(err.error || `El servidor respondió con código ${res.status}`);
     } else {
       huboDibujo = await procesarSSE(res);
+      actualizarEntregables();
     }
   } catch (err) {
     agregarAvisoChat('Se cortó la conexión: ' + err.message);

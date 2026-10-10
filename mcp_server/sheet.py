@@ -298,6 +298,15 @@ def create_sheet(
         # el dato completo a la vista, no en silencio.
         resultado["warning"] = ("Dato mas ancho que su celda del rotulo, se "
                                  "sale del cajon: " + "; ".join(desbordes))
+    if not scale_label and abs(float(scale_denominator) - 1.0) < 1e-9:
+        # Cajon a 1:1 = casi siempre un layout (hoja en mm de papel). Ahi la
+        # escala de la HOJA no es la del dibujo: el rotulo de un plano a
+        # 1:75 salio diciendo "ESCALA 1:1".
+        aviso = ("La celda ESCALA dice 1:1: si esta lamina es un layout, esa "
+                 "es la escala de la hoja, no la del dibujo. Pasa scale_label "
+                 "con la de las vistas ('1:75') o 'INDICADA' si hay varias.")
+        resultado["warning"] = ((resultado["warning"] + " ")
+                                if resultado.get("warning") else "") + aviso
     return resultado
 
 

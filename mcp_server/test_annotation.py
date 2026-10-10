@@ -190,6 +190,21 @@ def test_tramo_apretado_avisa() -> None:
           alto(corto) > alto(normal), f"{alto(corto)} vs {alto(normal)}")
 
 
+def test_avisa_si_los_numeros_no_suman_el_total() -> None:
+    """Fachada del examen: 0.425 + 1.50 + 0.35 + 0.90 + 1.375 + 1.20 + 1.10
+    = 6.85, pero impresos (0.43, 1.38) suman 6.86."""
+    limpiar()
+    cortes = [0.0, 0.425, 1.925, 2.275, 3.175, 4.55, 5.75, 6.85]
+    r = ann.create_dimension_chain(cortes, "bottom", 0.0, total=True)
+    check("detecta que la cadena impresa no suma el total",
+          r.get("roundingMismatch") == {"sum": 6.86, "total": 6.85},
+          str(r.get("roundingMismatch")))
+    limpiar()
+    r = ann.create_dimension_chain([0.0, 1.5, 3.0, 4.2], "bottom", 0.0)
+    check("y no molesta cuando cierra", "roundingMismatch" not in r,
+          str(r.get("roundingMismatch")))
+
+
 def test_offset_a_mano_se_respeta_y_se_reserva() -> None:
     limpiar()
     r = ann.create_dimension_chain([0.0, 9.0], "bottom", 0.0, offset=2.0)
@@ -324,6 +339,7 @@ def main() -> int:
                test_los_cuatro_lados,
                test_tramos_sueltos_en_una_sola_linea, test_segments_invalidos,
                test_tramo_apretado_avisa,
+               test_avisa_si_los_numeros_no_suman_el_total,
                test_offset_a_mano_se_respeta_y_se_reserva,
                test_check_annotations_detecta_lo_puesto_a_mano,
                test_errores_claros, test_el_preview_dibuja_las_cotas,

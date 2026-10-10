@@ -1009,7 +1009,8 @@ def label_rooms(rooms: list[dict[str, Any]], height: float,
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(
                 f"Ambiente #{i + 1}: hace falta name, x0, y0, x1, y1. ({exc})")
-        box = (ejes[0] + inset, ejes[1] + inset, ejes[2] - inset, ejes[3] - inset)
+        izq, abj, der, arr = _retiros(ejes, room.get("inset", inset))
+        box = (ejes[0] + izq, ejes[1] + abj, ejes[2] - der, ejes[3] - arr)
         area = ((box[2] - box[0]) * (box[3] - box[1])) if show_area else None
         # Nivel de piso ("N.P.T. +0.15") como tercera línea del rótulo: suelto,
         # como texto aparte, terminaba sobre un muro o afuera del terreno.
@@ -1171,6 +1172,35 @@ def _clearance(box: tuple[float, float, float, float],
     return best
 
 
+def _retiros(ejes: tuple[float, float, float, float],
+             inset: float) -> tuple[float, float, float, float]:
+    """Medio muro hacia adentro (izq, abajo, der, arriba), pero SOLO en los
+    lados donde hay un muro registrado. Una cochera sin muros perdía medio
+    muro por lado y salía 28.43 m2 en vez de 30.10: una superficie falsa en
+    el rótulo. Si no hay ningún muro registrado (el plano lo dibujó otro
+    proceso), se descuenta en los cuatro lados como antes."""
+    muros = [b for b in space.barriers()]
+    if not muros or inset <= 0:
+        return (max(inset, 0.0),) * 4
+    x0, y0, x1, y1 = ejes
+    tol = max(inset, 1e-6) * 1.5
+
+    def cubierto(vertical: bool, c: float, a0: float, a1: float) -> bool:
+        largo = 0.0
+        for b in muros:
+            if vertical:
+                if b["x0"] - tol <= c <= b["x1"] + tol:
+                    largo += max(0.0, min(a1, b["y1"]) - max(a0, b["y0"]))
+            elif b["y0"] - tol <= c <= b["y1"] + tol:
+                largo += max(0.0, min(a1, b["x1"]) - max(a0, b["x0"]))
+        return largo >= 0.3 * (a1 - a0)
+
+    return (inset if cubierto(True, x0, y0, y1) else 0.0,
+            inset if cubierto(False, y0, x0, x1) else 0.0,
+            inset if cubierto(True, x1, y0, y1) else 0.0,
+            inset if cubierto(False, y1, x0, x1) else 0.0)
+
+
 def find_label_spot(room: tuple[float, float, float, float],
                     text: str, height: float,
                     area: Optional[float] = None, area_height: float = 0.0,
@@ -1198,8 +1228,12 @@ def find_label_spot(room: tuple[float, float, float, float],
         # rotular, y que la persona lo mueva. Peor seria dejarlo afuera.
         return (room_cx, room_cy), False
 
-    # Solo estorban las huellas que caen dentro de este ambiente.
-    obstacles = [(h["x0"], h["y0"], h["x1"], h["y1"]) for h in OCCUPIED
+    # Solo estorban las huellas que caen dentro de este ambiente: muebles,
+    # muros y textos (OCCUPIED) Y las franjas de cotas (space.OCCUPIED). Sin
+    # las segundas, el rótulo de un espacio sin muros (una cochera) caía
+    # encima de la cadena de cotas que la cruza.
+    obstacles = [(h["x0"], h["y0"], h["x1"], h["y1"])
+                 for h in list(OCCUPIED) + list(space.OCCUPIED)
                  if _overlaps((h["x0"], h["y0"], h["x1"], h["y1"]),
                               (x0, y0, x1, y1), 0.0)]
 

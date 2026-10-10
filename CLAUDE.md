@@ -822,6 +822,28 @@ merma— **hay que preguntarlo**, no inventarlo. La tool ya rechaza el cálculo
 sin esos datos (`ValueError` explícito), pero preguntar antes de dibujar
 ahorra el redibujado.
 
+**Y cierra con el presupuesto sin precios: `export_concept_catalog`.** Del
+mismo resultado sale el catálogo de conceptos en .xlsx (clave, concepto
+redactado, unidad, cantidad; el P.U. en blanco y el importe, subtotales, IVA
+y total ya formulados). No es el cuadro de volúmenes: cantidades netas (la
+merma va en el P.U.), sin insumos (block, mortero, cemento van dentro del
+P.U.), muro en m², pintura por superficie. Lo que la obra necesita y el
+dibujo no mide va en `extra_concepts` con `quantity=None` → POR CUANTIFICAR.
+Ponele `group` a cada item: las partidas se ordenan solas en orden de obra.
+
+## 8.ter Errores que ya salieron en un entregable (y qué los ataja)
+
+| Lo que pasó | Qué lo ataja ahora |
+|---|---|
+| Rótulo "ESCALA 1:1" en una planta a 1:75 (cajón en un layout) | `create_sheet(scale_label="1:75" o "INDICADA")`; sin él avisa |
+| Títulos de vista escritos con `create_text` sobre el borde del viewport | Títulos con `create_view_title` / `compose_layout`, nunca texto suelto; el marco del viewport ya no se imprime |
+| Números de cotas cortas encimados ("0.431.50") | La cadena los saca a un renglón propio |
+| La cadena impresa suma 6.86 y el total dice 6.85 | La cadena avisa (`roundingMismatch`): vanos en cm enteros |
+| Cotas en `txt.shx`, número cruzado por la línea | `MCP-COTAS` usa la TrueType del dibujo, número encima y alineado |
+| PDF cortado (plotea A2 sobre el papel por defecto) | `export_pdf` conserva el papel de la lámina |
+| Superficie de un espacio sin muros (cochera) descontando medio muro | `label_rooms` descuenta solo donde hay muro; esquiva las cotas |
+| "145.57 m² × 0.15 = 17.85 m³" (la cuenta no cierra) | La medición escribe el área neta y las caras con que se calculó |
+
 ## 9. Verificar antes de dar por terminado
 
 `check_all` corre todos los checks de cierre en una llamada, incluidos los
@@ -884,7 +906,7 @@ El preview dibuja también las cotas (las descompone en sus líneas y su
 número), así que el encimado se ve ahí y no recién al abrir el DWG.
 
 Antes de dar por buena cualquier cambio, correr `python mcp_server/run_tests.py`
-— son las 25 suites que no necesitan AutoCAD, en unos 15 segundos. Cubren el
+— son las 46 suites que no necesitan AutoCAD, en alrededor de un minuto. Cubren el
 inglete de las esquinas, el partido de los huecos, que los abatimientos barran
 90°, que las cadenas de cota y las burbujas no se pisen en ningún orden de
 dibujo, y que cambiar de dibujo no arrastre el estado del anterior. Con AutoCAD

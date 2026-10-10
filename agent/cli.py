@@ -54,6 +54,12 @@ PERFILES: dict[str, list[str]] = {
         # preset "Instalación Eléctrica" de la interfaz pedía una tool que
         # ningún perfil ofrecía, en ninguno de los cuatro.
         "place_devices", "create_conduit",
+        # Muros rematados, 3D y presupuesto: sin esto el panel web (que usa
+        # este perfil por default) dibujaba la casa pero no podia levantarla
+        # en 3D, cuantificarla ni sacar el catalogo de conceptos.
+        "create_wall_network", "create_3d_model", "create_castillos",
+        "calculate_quantities", "create_quantities_table",
+        "export_quantities_csv", "export_concept_catalog", "export_pdf",
         *_ACCESO_API,
     ],
     "civil": [
@@ -72,6 +78,7 @@ PERFILES: dict[str, list[str]] = {
         "create_column_section", "create_rebar_elevation",
         "create_footing_plan", "create_truss", "calculate_quantities",
         "create_quantities_table", "export_quantities_csv",
+        "export_concept_catalog",
         "create_sheet", "set_layer", "save_drawing", "zoom_",
         "capture_viewport", "get_extents", "new_document", "open_document",
         "ping", "list_layers",
@@ -89,6 +96,11 @@ PERFILES: dict[str, list[str]] = {
     # de acceso a la API, y agregarlas acá la convertiría en "solo esas".
     "todo": [],
 }
+
+# Donde el agente deja lo que se entrega (PDF, catalogo .xlsx, CSV): el
+# panel web lista esta carpeta y la persona lo descarga desde ahi.
+ENTREGABLES = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "entregables")
 
 SYSTEM_BASE = """Eres un asistente que dibuja planos en AutoCAD a través de \
 herramientas MCP. Trabajas sobre el dibujo abierto de una persona real: \
@@ -124,7 +136,15 @@ que está listo.
 bien, y si algo no queda claro — una medida, qué cuarto es cuál, un \
 mueble que no reconoces, una distribución rara — pregunta antes de \
 dibujar. No supongas y sigas de largo: un plano mal interpretado sale \
-mal, y rehacerlo cuesta más que haber preguntado."""
+mal, y rehacerlo cuesta más que haber preguntado.
+- Todo plano cuantificado termina con su presupuesto SIN precios: \
+calculate_quantities (con 'group' por partida) y export_concept_catalog en \
+.xlsx; la persona solo pone los precios unitarios. Lo que la obra necesita \
+y el dibujo no mide va en extra_concepts con quantity=None (POR \
+CUANTIFICAR), nunca con un número inventado.
+- Los entregables (PDF con export_pdf, catálogo .xlsx, CSV) guárdalos en \
+la carpeta """ + ENTREGABLES.replace(os.sep, "/") + """ : desde ahí la \
+persona los descarga en el panel."""
 
 
 def _system_prompt(con_reglas: bool, limite: int) -> str:

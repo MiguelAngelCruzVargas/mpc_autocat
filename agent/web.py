@@ -12,15 +12,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import os
 import socket
 import threading
+import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
 from . import credenciales, providers
-from .cli import PERFILES, _system_prompt
+from .cli import ENTREGABLES, PERFILES, _system_prompt
 from .loop import conversar
 from .mcp_link import ConexionMcp, SERVIDOR_DEFECTO
 
@@ -276,6 +278,22 @@ class CapturaUnica:
 CAPTURA_UNICA = CapturaUnica()
 
 
+def _listar_entregables() -> list[dict[str, Any]]:
+    """Lo que el agente dejó para descargar, lo más nuevo primero."""
+    try:
+        nombres = os.listdir(ENTREGABLES)
+    except OSError:
+        return []
+    archivos = []
+    for n in nombres:
+        ruta = os.path.join(ENTREGABLES, n)
+        if n.startswith(".") or not os.path.isfile(ruta):
+            continue
+        st = os.stat(ruta)
+        archivos.append({"nombre": n, "bytes": st.st_size, "mtime": st.st_mtime})
+    return sorted(archivos, key=lambda a: -a["mtime"])
+
+
 def pedido_confiable(headers: Any, puerto: int, escribe: bool) -> bool:
     """¿El pedido viene de la propia interfaz y no de otra página?
 
@@ -334,6 +352,30 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------ GET
 
+    def _servir_entregable(self, nombre: str) -> None:
+        # Solo un nombre de archivo de ESA carpeta: nada de rutas, así una
+        # página no puede pedir ../../ y leer cualquier archivo del disco.
+        nombre = urllib.parse.unquote(nombre)
+        if (not nombre or nombre != os.path.basename(nombre)
+                or nombre.startswith(".") or "\\" in nombre):
+            self.send_error(404)
+            return
+        try:
+            with open(os.path.join(ENTREGABLES, nombre), "rb") as fh:
+                cuerpo = fh.read()
+        except OSError:
+            self.send_error(404)
+            return
+        tipo = mimetypes.guess_type(nombre)[0] or "application/octet-stream"
+        self.send_response(200)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Disposition",
+                         "attachment; filename*=UTF-8''" + urllib.parse.quote(nombre))
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(cuerpo)
+
     def _rechazar_ajeno(self, escribe: bool) -> bool:
         if pedido_confiable(self.headers, self.server.server_address[1],
                             escribe):
@@ -362,6 +404,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(cuerpo)))
             self.end_headers()
             self.wfile.write(cuerpo)
+            return
+
+        if self.path == "/api/entregables":
+            self._json({"carpeta": ENTREGABLES,
+                        "archivos": _listar_entregables()})
+            return
+
+        if self.path.startswith("/entregables/"):
+            self._servir_entregable(self.path[len("/entregables/"):])
             return
 
         if self.path == "/api/autocad_estado":

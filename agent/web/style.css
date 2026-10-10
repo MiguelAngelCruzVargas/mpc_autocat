@@ -617,6 +617,45 @@ aside.sidebar {
   border-color: var(--primary);
 }
 
+.entregables-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.entregable {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  text-decoration: none;
+  transition: all var(--transition);
+}
+
+.entregable span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entregable small {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.entregable:hover {
+  background: var(--bg-hover);
+  border-color: var(--primary);
+}
+
 .sidebar-footer {
   padding: 14px 20px;
   border-top: 1px solid var(--border-subtle);

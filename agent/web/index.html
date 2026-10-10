@@ -205,10 +205,20 @@
           </label>
         </section>
 
+        <!-- ENTREGABLES: lo que el agente deja para descargar -->
+        <section class="sidebar-section">
+          <div class="section-title">Entregables</div>
+          <div id="lista-entregables" class="entregables-list">
+            <small class="field-help">Todavía no hay archivos. El PDF, el catálogo de conceptos (.xlsx) y los CSV aparecen acá.</small>
+          </div>
+          <button class="btn btn-sm btn-ghost" id="btn-refrescar-entregables" type="button">Actualizar</button>
+        </section>
+
         <!-- PLANTILLAS -->
         <section class="sidebar-section">
           <div class="section-title">Plantillas Rápidas</div>
           <div class="quick-prompts-list">
+            <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Cuantifica lo que está dibujado en el plano abierto (agrupado por partida) y genera el catálogo de conceptos para el presupuesto en .xlsx, sin precios. Lo que la obra necesite y el plano no mida, ponlo POR CUANTIFICAR.">Presupuesto (Catálogo de Conceptos)</button>
             <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Dibuja una casa de 2 plantas de 7x15m con 3 recámaras, 2.5 baños, sala, cocina y cochera.">Casa 2 Plantas (7×15m)</button>
             <button class="quick-prompt-btn" data-perfil="estructura" data-prompt="Dibuja una zapata aislada Z-1 de 1.20x1.20m con dado de 30x30cm y armado de varilla #4 @ 15cm.">Zapata Aislada Z-1</button>
             <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Verifica las capas del dibujo actual, lista los bloques insertados y acota todos los muros principales.">Acotar & Revisar Capas</button>

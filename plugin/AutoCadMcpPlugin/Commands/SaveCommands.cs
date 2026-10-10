@@ -61,11 +61,21 @@ namespace AutoCadMcpPlugin.Commands
             // lo pase a .bak y renombre (la sobrecarga con bBakAndRename), que
             // es lo que hace QSAVE. Sin esto, el ciclo de corrección —abrir
             // un plano, corregir, guardar— fallaba justo en el último paso.
-            bool mismoArchivo = !string.IsNullOrEmpty(db.Filename)
-                && string.Equals(Path.GetFullPath(db.Filename), path,
+            bool mismoArchivo = (!string.IsNullOrEmpty(db.Filename)
+                    && string.Equals(Path.GetFullPath(db.Filename), path,
+                                     StringComparison.OrdinalIgnoreCase))
+                || string.Equals(SafeFullPath(doc.Name), path,
                                  StringComparison.OrdinalIgnoreCase);
             if (mismoArchivo)
+            {
+                // La base de datos lee el .dwg A DEMANDA y lo deja abierto:
+                // sin soltarlo, el rename a .bak falla igual con eFilerError
+                // (visto en vivo: plano abierto con open_document, corregido,
+                // y el guardado fallaba). CloseInput(true) termina de cargar
+                // todo a memoria y suelta el archivo, como hace QSAVE.
+                try { db.CloseInput(true); } catch (Autodesk.AutoCAD.Runtime.Exception) { }
                 db.SaveAs(path, true, DwgVersion.Current, db.SecurityParameters);
+            }
             else
                 db.SaveAs(path, DwgVersion.Current);
 
@@ -74,6 +84,12 @@ namespace AutoCadMcpPlugin.Commands
                 ["path"] = path,
                 ["sizeBytes"] = new FileInfo(path).Length
             };
+        }
+
+        private static string SafeFullPath(string p)
+        {
+            try { return string.IsNullOrEmpty(p) ? "" : Path.GetFullPath(p); }
+            catch (System.Exception) { return ""; }
         }
 
         /// <summary>

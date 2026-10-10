@@ -41,3 +41,7 @@ agent/__pycache__/
 
 # Bytecode de los scripts de tools/ (coordinacion.py, run_code_acceso.py)
 tools/__pycache__/
+
+# Lo que el agente deja para descargar desde el panel web (PDF, catalogo
+# de conceptos, CSV): son de cada proyecto, no del repo.
+/entregables/

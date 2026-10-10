@@ -207,8 +207,30 @@ def test_errores_claros() -> None:
             check(nombre, False, "no dio error")
 
 
+def test_espacio_sin_muros_no_pierde_superficie() -> None:
+    """La cochera (sin muros salvo la fachada) salia 28.43 m2: se le
+    descontaba medio muro en los cuatro lados. Y el rotulo caia encima de
+    la cadena de cotas que la cruza."""
+    import furniture
+    preview.DRAWN.clear()
+    space.clear()
+    space.set_scale(0.075)
+    casa = [{"name": "SALA", "x0": 0, "y0": 4.3, "x1": 7, "y1": 8.7}]
+    arch.draw_layout(casa)
+    cadena = ann.create_dimension_chain([0.0, 7.0], "bottom", 4.3)
+    r = furniture.label_rooms(
+        [{"name": "COCHERA", "x0": 0, "y0": 0, "x1": 7, "y1": 4.3}], height=0.18)
+    l = r["labeled"][0]
+    check("descuenta medio muro solo del lado con muro (la fachada)",
+          abs(l["area"] - 7.0 * (4.3 - 0.075)) < 0.01, str(l["area"]))
+    b = cadena["band"]
+    check("el rotulo no cae en la franja de cotas", not (b[1] <= l["y"] <= b[3]),
+          f"y={l['y']} franja={b}")
+
+
 def main() -> int:
-    for fn in [test_no_escribe_encima_del_elemento,
+    for fn in [test_espacio_sin_muros_no_pierde_superficie,
+               test_no_escribe_encima_del_elemento,
                test_dos_rotulos_no_se_pisan_entre_si,
                test_esquiva_lo_que_dibujaron_las_tools,
                test_obstaculos_extra, test_rotado_90,
