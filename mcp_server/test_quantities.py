@@ -603,8 +603,37 @@ def test_export_quantities_csv_no_recalcula() -> None:
         quantities.acad.call = real
 
 
+def test_la_cuenta_escrita_cierra() -> None:
+    """El CSV del examen decia '145.573 m2 x 0.15 m = 17.854 m3' (eso da
+    21.84): el calculo usaba el area NETA (descontados castillos y dalas)
+    y el texto escribia la bruta; el aplanado a dos caras tampoco mostraba
+    el x2. La cantidad estaba bien, pero un cuadro cuya cuenta no cierra se
+    marca como error en cualquier revision."""
+    real = quantities.acad.call
+    try:
+        _mock_areas({"muro": 145.573})
+        r = quantities.calculate_quantities([
+            {"type": "mortar_volume", "label": "Mortero", "handles": ["muro"],
+             "thickness": 0.15, "deduct_area": 26.546},
+            {"type": "brick_count", "label": "Block", "handles": ["muro"],
+             "deduct_area": 26.546},
+            {"type": "area_finish", "label": "Aplanado", "material": "aplanado",
+             "handles": ["muro"], "faces": 2, "waste_pct": 5.0},
+        ])
+        mortero, block, aplanado = (quantities._fmt_item(i) for i in r["items"])
+        ok_m = "119.027" in mortero and "17.854" in mortero
+        check("mortero: muestra el area neta con la que calcula",
+              1 if ok_m else 0, 1)
+        check("block: muestra el area neta", 1 if "119.027" in block else 0, 1)
+        check("aplanado: muestra las dos caras",
+              1 if "× 2 caras" in aplanado else 0, 1)
+    finally:
+        quantities.acad.call = real
+
+
 def main() -> int:
-    for fn in [test_concrete_volume_suma_areas_reales,
+    for fn in [test_la_cuenta_escrita_cierra,
+               test_concrete_volume_suma_areas_reales,
                test_concrete_mix_desde_volumen_ya_calculado,
                test_concrete_mix_redondea_bolsas_hacia_arriba,
                test_concrete_mix_coeficientes_propios,

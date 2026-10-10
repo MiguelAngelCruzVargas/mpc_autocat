@@ -599,7 +599,7 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
 
             fila = {"label": label, "type": tipo, "material": material,
                     "areas": [round(a, 4) for a in areas], "area": round(area, 4),
-                    "coats": coats, "wastePct": waste_pct,
+                    "faces": caras, "coats": coats, "wastePct": waste_pct,
                     "billableArea": round(billable_area, 4), "unit": "m2"}
             if volumen is not None:
                 fila["thickness"] = float(thickness)
@@ -649,6 +649,19 @@ def _merma(texto: str, waste_pct: float, resultado: str) -> str:
     return f"{texto} = {resultado}"
 
 
+def _area_neta(item: dict[str, Any]) -> str:
+    """El área con la que de verdad se calculó. Si se descontó algo
+    (deduct_area: castillos, dalas), se muestra: escribir el bruto con el
+    resultado del neto daba "145.573 m² × 0.15 m = 17.854 m³", una cuenta
+    que no cierra y que cualquiera que revise el cuadro marca como error."""
+    bruta = sum(item["areas"])
+    neta = item.get("wallArea", bruta)
+    if abs(bruta - neta) < 1e-6:
+        return _suma_areas(item["areas"])
+    return (f"({_suma_areas(item['areas'])} − {bruta - neta:.3f} descontado"
+            f" = {neta:.3f})")
+
+
 def _fmt_item(item: dict[str, Any]) -> str:
     """Cómo se llegó al número — la tabla muestra la operación completa,
     no el resultado ya sumado."""
@@ -678,11 +691,11 @@ def _fmt_item(item: dict[str, Any]) -> str:
         modulo_op = (f"({item['brickW']:.3f}+{item['joint']:.3f})×"
                     f"({item['brickH']:.3f}+{item['joint']:.3f})="
                     f"{item['moduleArea']:.4f}")
-        return (f"{_suma_areas(item['areas'])} m² / {modulo_op} m² "
+        return (f"{_area_neta(item)} m² / {modulo_op} m² "
                 f"(+{item['wastePct']:g}% merma) = {item['pieces']} pzas")
 
     if tipo == "mortar_volume":
-        base = (f"{_suma_areas(item['areas'])} m² × {item['thickness']:.2f} m = "
+        base = (f"{_area_neta(item)} m² × {item['thickness']:.2f} m = "
                 f"{item['wallVolume']:.3f} m³ muro − ({item['piecesExact']:.1f} "
                 f"pzas × {item['unitBrickVolume']:.5f} m³/pza = "
                 f"{item['brickVolume']:.3f} m³ ladrillo)")
@@ -710,7 +723,10 @@ def _fmt_item(item: dict[str, Any]) -> str:
         return _merma(base, item["wastePct"], f"{item['areaTotal']:.3f} m²")
 
     if tipo == "area_finish":
-        base = f"{_suma_areas(item['areas'])} m² × {item['coats']} mano(s)"
+        caras = item.get("faces", 1)
+        base = (f"{_suma_areas(item['areas'])} m²"
+                + (f" × {caras:g} caras" if caras != 1 else "")
+                + f" × {item['coats']} mano(s)")
         texto = _merma(base, item["wastePct"], f"{item['billableArea']:.3f} m²")
         if "volume" in item:
             texto += f", espesor {item['thickness']:.3f} m = {item['volume']:.3f} m³"
