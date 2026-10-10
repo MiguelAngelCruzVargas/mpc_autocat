@@ -673,6 +673,32 @@ marcas de conductores: `'/'` cada fase, `'|'` cada neutro, `'T'` la tierra —
 `conductors="//|T"` son dos fases, un neutro y tierra. Recta de aparato a
 aparato la tubería se confunde con la muraria.
 
+## 6.quater-bis Instalaciones de la vivienda: `suggest_electrical` / `suggest_hydraulic` / `suggest_sanitary`
+
+Van DESPUÉS de `draw_layout` + `suggest_furniture` y toman de ahí recintos,
+puertas y muebles. Cada criterio sale de `instalaciones.NORMA` con su fuente
+(NOM-001-SEDE-2012, NTC CDMX, INIFED); lo que es práctica y no norma está
+marcado así. Las redes son árboles ortogonales: cada tramo sabe qué muebles
+alimenta o drena, y eso define su diámetro.
+
+- **Eléctrica**: circuitos por RECINTO COMPLETO, canalización por el árbol
+  más corto dentro de cada circuito y flecha de llegada al tablero con su
+  número. Encadenar todo desde el tablero dibujaba arcos de 15 m cruzando la
+  casa. Lo del patio va sobre la FACHADA de la casa: "atrás" en 210-52(e) es
+  atrás de la vivienda, no la barda del fondo.
+- **Todas dibujan su SIMBOLOGÍA con NOTAS** a la derecha de la planta
+  (`legend=False` para no hacerlo, `create_installation_legend` para ponerla
+  en otro lado). Sin ella el plano solo lo lee quien lo dibujó. Los símbolos
+  salen de las mismas funciones que la planta, y las notas solo dicen lo que
+  respalda una norma. El material, la marca y las alturas de montaje van en
+  `notes` cuando el proyecto los defina; no se inventan.
+
+**Un plano, UNA pestaña.** Corregir es borrar las capas de instalaciones y
+redibujarlas en el mismo dibujo, no abrir un `Drawing` nuevo por corrida.
+Pasó: quedaron cuatro pestañas abiertas en AutoCAD, una de ellas en solo
+lectura con una corrida dibujada encima de otra. `test_live_instalaciones.py`
+trabaja así: reusa la pestaña del plano, y si la base ya está, no la rehace.
+
 ## 7. Capas
 
 Una capa por tipo de elemento, creada con `set_layer` antes de dibujar (color y

@@ -2,6 +2,7 @@ using System;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
 
 namespace AutoCadMcpPlugin
 {
@@ -114,9 +115,24 @@ namespace AutoCadMcpPlugin
                         tcs.SetResult(Handlers.Execute(cmd, doc, pars));
                         return;
                     }
-                    using (doc.LockDocument())
+                    // El activo se relee ACÁ, en el hilo principal: entre que
+                    // el socket recibió el comando y que AutoCAD quedó idle
+                    // pudo cambiar (new_document, set_active_document).
+                    var actual = Application.DocumentManager.MdiActiveDocument ?? doc;
+                    using (actual.LockDocument())
                     {
-                        JsonObject r = Handlers.Execute(cmd, doc, pars);
+                        // WorkingDatabase NO sigue al documento activo cuando
+                        // se cambia por API: queda apuntando al anterior un
+                        // rato. Toda entidad nueva (DBText, Polyline) toma de
+                        // ahí sus defaults -- estilo de texto, capa, tipo de
+                        // línea -- y al agregarla al dibujo activo AutoCAD
+                        // tira eWrongDatabase o eKeyNotFound. Pasó en vivo con
+                        // test_live_instalaciones: el cuadro de cargas y los
+                        // contactos fallaban después de un new_document.
+                        // No se restaura: el anterior es justamente el valor viejo.
+                        if (!ReferenceEquals(HostApplicationServices.WorkingDatabase, actual.Database))
+                            HostApplicationServices.WorkingDatabase = actual.Database;
+                        JsonObject r = Handlers.Execute(cmd, actual, pars);
                         tcs.SetResult(r);
                     }
                 }

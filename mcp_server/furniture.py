@@ -578,8 +578,12 @@ def suggest_furniture(rooms: list[dict[str, Any]],
             piezas = _amueblar_comedor(caja, nombre, salteados)
         elif clase == "social":
             piezas = _amueblar_sala(caja, libres, nombre, salteados)
+        elif any(p in nombre.upper() for p in ("LAVADO", "LAVANDER")):
+            # Sin lavadero el área de lavado quedaba vacía y las
+            # instalaciones hidráulica y sanitaria no tenían a qué llegar.
+            piezas = _amueblar_lavado(caja, libres, nombre, salteados)
         else:
-            continue        # pasillo, patio, lavado: sin mobiliario fijo
+            continue        # pasillo, patio: sin mobiliario fijo
 
         piezas = _sin_choques(piezas, caja, _barridos(eje, caja, nombre, doors or []),
                               nombre, salteados)
@@ -821,6 +825,19 @@ def _amueblar_bano(caja, libres, nombre, salteados,
         piezas.append(_pieza(tipo, muro, caja, _centro_muro(muro, caja),
                              ancho, fondo, **extra))
     return piezas
+
+
+def _amueblar_lavado(caja, libres, nombre, salteados) -> list[dict]:
+    """Lavadero contra el muro libre más largo."""
+    candidatos = sorted((m for m in libres if _cabe(caja, m, 0.70, 0.60)),
+                        key=lambda m: -_largo_muro(m, caja))
+    if not candidatos:
+        salteados.append({"room": nombre,
+                          "problem": "no hay muro libre de 0.70 m para el lavadero"})
+        return []
+    muro = candidatos[0]
+    return [_pieza("laundry_sink", muro, caja, _centro_muro(muro, caja),
+                   0.70, 0.60, width=0.70, depth=0.60)]
 
 
 def _amueblar_cocina(caja, libres, nombre, salteados) -> list[dict]:

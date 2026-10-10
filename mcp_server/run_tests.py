@@ -36,7 +36,7 @@ import time
 
 # Necesita AutoCAD abierto con el plugin cargado, asi que no entra en la
 # corrida por defecto: fallaria en cualquier maquina sin AutoCAD.
-NEEDS_AUTOCAD = {"test_live.py", "test_live_mejoras.py"}
+NEEDS_AUTOCAD = {"test_live.py", "test_live_mejoras.py", "test_live_instalaciones.py"}
 
 # La salida de los tests trae acentos, y con errors="replace" ademas puede
 # traer U+FFFD. Imprimir eso en una consola cp1252 (el default en Windows)

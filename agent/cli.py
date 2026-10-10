@@ -54,6 +54,8 @@ PERFILES: dict[str, list[str]] = {
         # preset "Instalación Eléctrica" de la interfaz pedía una tool que
         # ningún perfil ofrecía, en ninguno de los cuatro.
         "place_devices", "create_conduit",
+        "suggest_electrical", "suggest_hydraulic", "suggest_sanitary",
+        "create_installation_legend",
         # Muros rematados, 3D y presupuesto: sin esto el panel web (que usa
         # este perfil por default) dibujaba la casa pero no podia levantarla
         # en 3D, cuantificarla ni sacar el catalogo de conceptos.

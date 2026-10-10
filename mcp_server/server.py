@@ -1766,6 +1766,138 @@ def place_devices(devices: list[dict[str, Any]],
 
 
 @mcp.tool()
+def suggest_electrical(rooms: list[dict[str, Any]],
+                       doors: Optional[list[dict[str, Any]]] = None,
+                       fixtures: Optional[list[dict[str, Any]]] = None,
+                       panel_room: Optional[str] = None, draw: bool = True,
+                       exterior_thickness: float = 0.15,
+                       interior_thickness: float = 0.10,
+                       table_x: Optional[float] = None,
+                       table_y: Optional[float] = None,
+                       legend: bool = True,
+                       legend_x: Optional[float] = None,
+                       legend_y: Optional[float] = None,
+                       notes: Optional[list[str]] = None) -> dict[str, Any]:
+    """INSTALACIÓN ELÉCTRICA de la vivienda según la NOM-001-SEDE-2012, a
+    partir de los rooms/doors de suggest_layout (y los muebles de
+    suggest_furniture): salidas de alumbrado (al menos una con apagador por
+    recinto, 210-70), apagador junto a la puerta, contactos a no más de
+    1.80 m de cualquier punto del muro (210-52(a)), cubierta de cocina a
+    600 mm (210-52(c)), contacto a ≤90 cm del lavabo (210-52(d)), exterior
+    al frente y atrás (210-52(e)), lavado (210-52(f)), pasillo ≥3 m
+    (210-52(h)); con falla a tierra en baños, cocina, exteriores y junto al
+    lavadero (210-8). Circuitos: 2 de pequeños aparatos de 20 A, lavado de
+    20 A, baño de 20 A (210-11(c)) y alumbrado/contactos de 15 A al 80 %.
+    Dibuja símbolos, canalizaciones, número de circuito y el CUADRO DE
+    CARGAS (por circuito con 180 VA por salida, y la carga del servicio con
+    33 VA/m² + 1500 VA por circuito de 20 A y la demanda de 220-42).
+
+    Va DESPUÉS de draw_layout y suggest_furniture. draw=False devuelve el
+    proyecto sin dibujar, para revisarlo. table_x/table_y: esquina superior
+    izquierda del cuadro (por default a la derecha de la planta).
+
+    legend (default True): dibuja a la derecha de la planta el cuadro de
+    SIMBOLOGÍA con NOTAS de norma, para que el cliente y quien ejecuta sepan
+    qué es cada símbolo. legend_x/legend_y: su esquina superior izquierda.
+    notes: notas del PROYECTO que se suman a las de norma (material de
+    tubería, marcas, alturas de montaje) — lo que el proyecto no definió no
+    se escribe."""
+    import instalaciones as inst_mod
+    return inst_mod.suggest_electrical(
+        rooms, doors, fixtures, panel_room, draw, exterior_thickness,
+        interior_thickness, table_x, table_y, legend, legend_x, legend_y, notes)
+
+
+@mcp.tool()
+def suggest_hydraulic(rooms: list[dict[str, Any]],
+                      doors: Optional[list[dict[str, Any]]] = None,
+                      fixtures: Optional[list[dict[str, Any]]] = None,
+                      supply: Optional[list[float]] = None,
+                      heater: Optional[list[float]] = None,
+                      draw: bool = True,
+                      legend: bool = True,
+                      legend_x: Optional[float] = None,
+                      legend_y: Optional[float] = None,
+                      notes: Optional[list[str]] = None) -> dict[str, Any]:
+    """INSTALACIÓN HIDRÁULICA: agua fría (línea continua) desde la bajada
+    del tinaco (BAF) y agua caliente (discontinua) desde el calentador a
+    cada mueble, en red de árbol con troncales compartidas. Diámetro de cada
+    tramo por unidades mueble acumuladas (INIFED Tablas 2.2/2.3: 1 UM →
+    13 mm, 2-4 → 19, 5-8 → 25, 9-14 → 32), cada mueble contado una vez.
+    Avisa la altura mínima del tinaco (2 m sobre la regadera, NTC 6.1.2) y
+    si hace falta retorno de agua caliente (>25 m, INIFED §2.8).
+
+    supply: [x, y] de la BAF (por default, en el patio, del lado de los
+    muebles). heater: [x, y] del calentador (default junto a la BAF).
+    Va DESPUÉS de suggest_furniture (toma de ahí los muebles).
+
+    legend (default True): dibuja a la derecha de la planta el cuadro de
+    SIMBOLOGÍA con NOTAS de norma, para que el cliente y quien ejecuta sepan
+    qué es cada símbolo. legend_x/legend_y: su esquina superior izquierda.
+    notes: notas del PROYECTO que se suman a las de norma (material de
+    tubería, marcas, alturas de montaje) — lo que el proyecto no definió no
+    se escribe."""
+    import instalaciones as inst_mod
+    return inst_mod.suggest_hydraulic(rooms, doors, fixtures, supply, heater, draw,
+                                      legend, legend_x, legend_y, notes)
+
+
+@mcp.tool()
+def suggest_sanitary(rooms: list[dict[str, Any]],
+                     doors: Optional[list[dict[str, Any]]] = None,
+                     fixtures: Optional[list[dict[str, Any]]] = None,
+                     outlet: Optional[list[float]] = None,
+                     draw: bool = True,
+                     legend: bool = True,
+                     legend_x: Optional[float] = None,
+                     legend_y: Optional[float] = None,
+                     notes: Optional[list[str]] = None) -> dict[str, Any]:
+    """INSTALACIÓN SANITARIA: desagüe de cada mueble hasta la red municipal.
+    Diámetro de cada tramo: el mayor entre la boca del mueble (INIFED Tabla
+    3.1: WC 100, regadera 50, lavadero 38, lavabo 32) y lo que piden las
+    unidades de descarga acumuladas (Tabla 3.3); nunca menos de 32 mm.
+    Pendiente 2 %, albañal a la calle de 150 mm, registros de 40x60 en cada
+    cambio de dirección del albañal y a no más de 10 m (NTC 6.1.3.2), con
+    DOBLE TAPA si caen bajo un local habitable, y tubo ventilador de 50 mm
+    en el origen del albañal. Dibuja tuberías, flechas de flujo, registros y
+    rótulos con diámetro y pendiente.
+
+    outlet: [x, y] de la conexión a la red municipal (default al frente,
+    alineado con los muebles). Va DESPUÉS de suggest_furniture.
+
+    legend (default True): dibuja a la derecha de la planta el cuadro de
+    SIMBOLOGÍA con NOTAS de norma, para que el cliente y quien ejecuta sepan
+    qué es cada símbolo. legend_x/legend_y: su esquina superior izquierda.
+    notes: notas del PROYECTO que se suman a las de norma (material de
+    tubería, marcas, alturas de montaje) — lo que el proyecto no definió no
+    se escribe."""
+    import instalaciones as inst_mod
+    return inst_mod.suggest_sanitary(rooms, doors, fixtures, outlet, draw,
+                                     legend, legend_x, legend_y, notes)
+
+
+@mcp.tool()
+def create_installation_legend(kind: str, x: float, y: float,
+                               notes: Optional[list[str]] = None,
+                               norm_notes: bool = True) -> dict[str, Any]:
+    """Cuadro de SIMBOLOGÍA + NOTAS de una instalación ('electrica',
+    'hidraulica' o 'sanitaria'), con su esquina superior izquierda en (x, y).
+
+    Todo plano de instalaciones lo lleva: sin él solo lo lee quien lo dibujó
+    (qué es BAF, D.T., TV, GFCI, la línea discontinua, las marcas / | T). Cada
+    símbolo se dibuja con la misma función que lo dibuja en planta, y las
+    notas de norma salen de los valores que usa el cálculo (NOM-001-SEDE-2012,
+    NTC CDMX, INIFED). suggest_electrical/hydraulic/sanitary ya lo dibujan
+    solos; esta tool es para ubicarlo aparte (otra lámina, otro lugar).
+
+    notes: notas del proyecto que se suman (materiales, marcas, alturas de
+    montaje). No se inventan: lo que el proyecto no definió no se escribe.
+    norm_notes=False deja solo las del proyecto."""
+    import instalaciones as inst_mod
+    return inst_mod.create_installation_legend(kind, x, y, notes, norm_notes)
+
+
+@mcp.tool()
 def create_conduit(points: list[list[float]], sag: float = 0.0,
                    conductors: str = "", layer: str = "TUBERIA",
                    lineweight: int = 20, mark_size: float = 0.0,

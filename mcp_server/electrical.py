@@ -108,6 +108,13 @@ def place_devices(devices: list[dict[str, Any]],
     if not devices:
         raise ValueError("No hay dispositivos que dibujar.")
 
+    # Las capas se crean ANTES de dibujar, con su color: sin esto AutoCAD
+    # las creaba solo con el color que le tocara (salieron en azul 5, que no
+    # se lee sobre el modelo). La simbología va en negro, como en cualquier
+    # plano eléctrico; si la capa ya existe configurada, manda la del proyecto.
+    for capa in {light_layer, outlet_layer, panel_layer}:
+        layers.ensure(capa, layers.COLOR_PRINCIPAL, lineweight)
+
     dibujados = []
     for i, d in enumerate(devices, start=1):
         tipo = str(d.get("type", "")).lower()
