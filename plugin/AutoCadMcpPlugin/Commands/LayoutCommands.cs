@@ -155,7 +155,9 @@ namespace AutoCadMcpPlugin.Commands
                         ["tabOrder"] = layout.TabOrder,
                         ["paperWidth"] = layout.PlotPaperSize.X,
                         ["paperHeight"] = layout.PlotPaperSize.Y,
-                        ["isModel"] = layout.ModelType
+                        ["isModel"] = layout.ModelType,
+                        ["plotRotation"] = layout.PlotRotation.ToString(),
+                        ["mediaName"] = layout.CanonicalMediaName
                     });
                 }
                 tr.Commit();

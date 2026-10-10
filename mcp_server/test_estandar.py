@@ -33,7 +33,8 @@ def _dibujo(capas, entidades, estilos):
 
 
 CAPAS = [{"name": "0", "colorIndex": 7, "linetype": "Continuous"},
-         {"name": "MUROS", "colorIndex": 1, "linetype": "Continuous"},
+         {"name": "MUROS", "colorIndex": 1, "linetype": "Continuous",
+          "lineweight": 25},
          {"name": "EJES", "colorIndex": 4, "linetype": "Continuous"},
          {"name": "COTAS", "colorIndex": 12, "linetype": "Continuous"}]
 ENTIDADES = ([{"layer": "0"}] * 3 + [{"layer": "MUROS"}] * 5
@@ -64,7 +65,8 @@ def test_estandar_de_la_oficina() -> None:
     try:
         _dibujo(CAPAS, ENTIDADES, ESTILOS)
         est = {"nombre": "Oficina X",
-               "capas": {"MUROS": {"color": 7}, "EJES": {"color": 32,
+               "capas": {"MUROS": {"color": 7, "grosor": 50},
+                         "EJES": {"color": 32, "grosor": 13,
                                                          "linetype": "CENTER2"}},
                "capas_obligatorias": ["MUROS", "TEXTOS"],
                "prohibir_capa_0": False, "fuentes_prohibidas": []}
@@ -74,11 +76,28 @@ def test_estandar_de_la_oficina() -> None:
         check("MUROS en color 1 cuando el estándar pide 7",
               "'MUROS' tiene color 1" in textos, textos)
         check("EJES con tipo de línea equivocado", "CENTER2" in textos, textos)
+        check("MUROS con grosor 25 cuando el estándar pide 50",
+              "'MUROS' tiene grosor 25" in textos, textos)
+        check("sin dato de grosor (plugin viejo) no inventa un problema",
+              "'EJES' tiene grosor" not in textos, textos)
         check("una capa del estándar no se marca además como 'color puro'",
               not any(p["rule"] == "color puro" and "'MUROS'" in p["problem"]
                       for p in r["problems"]), textos)
         check("respeta prohibir_capa_0=False",
               not any(p["rule"] == "capa 0" for p in r["problems"]))
+    finally:
+        estandar.acad.call = real
+
+
+def test_estandar_parcial_se_completa_con_el_minimo() -> None:
+    """Pasar solo {"capas": ...} apagaba la capa 0 y los colores puros."""
+    real = estandar.acad.call
+    try:
+        _dibujo(CAPAS, ENTIDADES, ESTILOS)
+        r = estandar.revisar({"capas": {"COTAS": {"color": 12}}})
+        reglas = {p["rule"] for p in r["problems"]}
+        check("un estándar parcial sigue revisando capa 0 y colores puros",
+              {"capa 0", "color puro"} <= reglas, str(sorted(reglas)))
     finally:
         estandar.acad.call = real
 
@@ -102,6 +121,7 @@ def test_guardar_y_errores_claros() -> None:
 
 def main() -> int:
     for t in (test_minimo_sin_archivo, test_estandar_de_la_oficina,
+              test_estandar_parcial_se_completa_con_el_minimo,
               test_guardar_y_errores_claros):
         print(t.__name__)
         t()

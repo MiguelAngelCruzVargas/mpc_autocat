@@ -906,7 +906,7 @@ El preview dibuja también las cotas (las descompone en sus líneas y su
 número), así que el encimado se ve ahí y no recién al abrir el DWG.
 
 Antes de dar por buena cualquier cambio, correr `python mcp_server/run_tests.py`
-— son las 46 suites que no necesitan AutoCAD, en alrededor de un minuto. Cubren el
+— son las 47 suites que no necesitan AutoCAD, en alrededor de un minuto. Cubren el
 inglete de las esquinas, el partido de los huecos, que los abatimientos barran
 90°, que las cadenas de cota y las burbujas no se pisen en ningún orden de
 dibujo, y que cambiar de dibujo no arrastre el estado del anterior. Con AutoCAD
@@ -915,6 +915,14 @@ y ese dibuja sobre el **dibujo activo** — el del usuario — y tarda ~3 min.
 Limpia lo suyo al final, pero si la corrida se corta o AutoCAD se cae, lo que
 dibujó se queda ahí (pasó: 133 entidades de prueba dentro del plano de una
 casa). Con el plano de un cliente activo: guardarlo antes, o `--no-live`.
+
+`test_live_mejoras.py` (también en `--live`) verifica en AutoCAD real cada
+arreglo que salió de un entregable: guardado sobre el mismo archivo, cotas
+(número afuera, encima y alineado, sin txt.shx), rotación de lámina, marco
+de viewport sin imprimir, PDF en el papel de la lámina, superficie sin
+muros, estándar de oficina en todos los espacios y las rutas del panel web.
+Trabaja en un dibujo NUEVO y lo cierra al final. Ya pagó lo suyo: encontró
+tres fallas que las suites offline daban por buenas.
 
 ## Espacio papel vs espacio modelo
 

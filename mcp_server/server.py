@@ -7,6 +7,7 @@ cargado dentro de AutoCAD (ver autocad_client.py).
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -4267,6 +4268,16 @@ def purge_block(name: str) -> dict[str, Any]:
     return acad.call("purge_block", {"name": name})
 
 
+def _mismo_archivo(a: Optional[str], b: Optional[str]) -> bool:
+    """La misma ruta escrita distinto: mayúsculas, barras, o el nombre corto
+    de Windows (la carpeta MQERKA~1 en vez de su nombre largo)."""
+    if not a or not b:
+        return False
+    def norm(p: str) -> str:
+        return os.path.normcase(os.path.realpath(os.path.abspath(p)))
+    return norm(a) == norm(b)
+
+
 @mcp.tool()
 def save_drawing(path: Optional[str] = None,
                   overwrite: bool = False) -> dict[str, Any]:
@@ -4286,7 +4297,13 @@ def save_drawing(path: Optional[str] = None,
     efectivo = path or recordado
     r = acad.call("save_drawing", {
         "path": efectivo,
-        "overwrite": overwrite or (path is None and recordado is not None),
+        # Guardar otra vez donde ESTE dibujo ya se guardó (o de donde se
+        # abrió) no es pisar un archivo ajeno. Visto en vivo: un dibujo nuevo
+        # guardado una vez ya no se podía volver a guardar ("Ya existe…"),
+        # porque AutoCAD no actualiza el nombre de un dibujo nuevo al hacer
+        # SaveAs y el plugin no puede saber que el archivo es suyo.
+        "overwrite": overwrite or (recordado is not None
+                                   and _mismo_archivo(efectivo, recordado)),
     })
     session_mod.note_saved(efectivo)
     if path is None and recordado:

@@ -26,7 +26,12 @@ namespace AutoCadMcpPlugin.Commands
                         ["linetype"] = ltype.Name,
                         ["off"] = ltr.IsOff,
                         ["frozen"] = ltr.IsFrozen,
-                        ["locked"] = ltr.IsLocked
+                        ["locked"] = ltr.IsLocked,
+                        // Para revisar contra un estándar de oficina y que
+                        // un test en vivo pueda verificar que el marco de
+                        // viewport NO se imprime.
+                        ["plottable"] = ltr.IsPlottable,
+                        ["lineweight"] = (int)ltr.LineWeight
                     });
                 }
                 tr.Commit();

@@ -27,7 +27,10 @@ namespace AutoCadMcpPlugin.Commands
 
             if (string.IsNullOrEmpty(path))
             {
-                string current = doc.Name;
+                // doc.Name de un dibujo nuevo sigue siendo "Drawing2.dwg"
+                // aunque ya se haya guardado con SaveAs: el archivo real está
+                // en db.Filename.
+                string current = File.Exists(doc.Name) ? doc.Name : db.Filename;
                 if (string.IsNullOrEmpty(current)
                     || !current.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase)
                     || !File.Exists(current))
@@ -48,7 +51,14 @@ namespace AutoCadMcpPlugin.Commands
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 throw new DirectoryNotFoundException($"No existe la carpeta: {dir}");
 
-            if (File.Exists(path) && !overwrite
+            // Guardar otra vez donde ESTA base de datos ya se guardó no es
+            // pisar un archivo ajeno: visto en vivo, un dibujo nuevo guardado
+            // una vez ya no se podía volver a guardar ("Ya existe…") y la
+            // regla de guardar seguido quedaba imposible de cumplir.
+            bool yaEsSuyo = !string.IsNullOrEmpty(db.Filename)
+                && string.Equals(Path.GetFullPath(db.Filename), path,
+                                 StringComparison.OrdinalIgnoreCase);
+            if (File.Exists(path) && !overwrite && !yaEsSuyo
                 && !string.Equals(path, doc.Name, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(

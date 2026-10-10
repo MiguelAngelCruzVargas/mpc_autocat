@@ -782,18 +782,28 @@ def t_new_document():
     Si eso está mal, este test falla con 'eLockViolation'."""
     antes = acad.call("list_documents", {})
     original = next(d for d in antes["documents"] if d["isActive"])["name"]
+    creado = None
     try:
         r = acad.call("new_document", {})
-        if not r.get("active"):
+        creado = r.get("active")
+        if not creado:
             raise RuntimeError("new_document no devolvió el dibujo activo")
         despues = acad.call("list_documents", {})
         if despues["count"] != antes["count"] + 1:
             raise RuntimeError(
                 f"esperaba {antes['count'] + 1} dibujos abiertos, "
                 f"hay {despues['count']}")
-        return f"creó {r['active']} (queda abierto, cerralo a mano)"
+        return f"creó {creado} y lo cerró"
     finally:
         _volver_a(original)
+        # Se cierra: antes quedaba abierto ("cerralo a mano"), y una suite
+        # que corría después operaba sobre ESE dibujo en vez del suyo.
+        if creado:
+            try:
+                acad.call("close_document", {"name": creado, "save": False,
+                                             "discardUnsaved": True})
+            except acad.AutoCadError:
+                pass
 
 
 def t_open_document():
@@ -821,6 +831,15 @@ def t_open_document():
         return f"{r['active']} readOnly, y la 2da vez avisó alreadyOpen"
     finally:
         _volver_a(original)
+        # Y se cierra: quedaba abierto en AutoCAD después de cada corrida
+        # (visto: mcp_prueba_bloque.dwg colgado junto al plano del usuario).
+        nombre = os.path.basename(ruta)
+        if not any(d["name"].lower() == nombre.lower() for d in antes["documents"]):
+            try:
+                acad.call("close_document", {"name": nombre, "save": False,
+                                             "discardUnsaved": True})
+            except acad.AutoCadError:
+                pass
 
 
 def t_open_document_inexistente_da_error_claro():

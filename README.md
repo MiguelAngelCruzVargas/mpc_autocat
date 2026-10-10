@@ -75,7 +75,7 @@ cd mcp_server
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python run_tests.py       # las 46 suites que NO necesitan AutoCAD (~1 min)
+python run_tests.py       # las 47 suites que NO necesitan AutoCAD (~1 min)
 python smoke_test.py      # este si: dibuja sobre el dibujo abierto
 ```
 

@@ -150,6 +150,17 @@ namespace AutoCadMcpPlugin.Commands
                         result["styleName"] = dim.DimensionStyleName;
                         result["textPosition"] = PointToJson(dim.TextPosition);
                         try { result["textHeight"] = dim.Dimtxt; } catch (System.Exception) { }
+                        // Dónde va el número: DIMTAD 1 = encima de la línea;
+                        // DIMTIH false = alineado con ella. Y con qué letra.
+                        try { result["textAbove"] = dim.Dimtad; } catch (System.Exception) { }
+                        try { result["textInsideHorizontal"] = dim.Dimtih; } catch (System.Exception) { }
+                        try
+                        {
+                            var ts = (TextStyleTableRecord)tr.GetObject(dim.TextStyleId, OpenMode.ForRead);
+                            result["textStyle"] = ts.Name;
+                            result["textFont"] = ts.FileName;
+                        }
+                        catch (System.Exception) { }
                         try { result["dimScale"] = dim.Dimscale; } catch (System.Exception) { }
                         break;
 

@@ -15,7 +15,7 @@ Formato (todo opcional):
 
     {
       "nombre": "Oficina X",
-      "capas": {"MUROS": {"color": 7, "linetype": "Continuous"},
+      "capas": {"MUROS": {"color": 7, "linetype": "Continuous", "grosor": 50},
                 "COTAS": {"color": 12}},
       "capas_obligatorias": ["MUROS", "COTAS", "TEXTOS"],
       "prohibir_capa_0": true,
@@ -83,6 +83,10 @@ def validar(estandar: Any) -> None:
         color = regla.get("color")
         if color is not None and not (isinstance(color, int) and 1 <= color <= 255):
             raise ValueError(f"Capa '{nombre}': color {color!r} no es un índice 1-255.")
+        grosor = regla.get("grosor")
+        if grosor is not None and not (isinstance(grosor, int) and 0 <= grosor <= 211):
+            raise ValueError(f"Capa '{nombre}': grosor {grosor!r} tiene que ir en "
+                             "centésimas de mm (0-211, p.ej. 50 = 0.50 mm).")
     for clave in ("capas_obligatorias", "fuentes_prohibidas", "colores_prohibidos"):
         if not isinstance(estandar.get(clave, []), list):
             raise ValueError(f"'{clave}' tiene que ser una lista.")
@@ -91,13 +95,20 @@ def validar(estandar: Any) -> None:
 def revisar(estandar: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Compara el dibujo abierto contra el estándar. Problemas en el mismo
     formato que los demás check_* (rule / problem / fix)."""
-    est = estandar if estandar is not None else cargar()
+    # Un estándar PARCIAL se completa con el mínimo: pasado así nomás,
+    # {"capas": {...}} apagaba "nada en la capa 0" y "sin colores puros"
+    # (visto en vivo: la revisión no los encontraba).
+    est = {**MINIMO, **estandar} if estandar is not None else cargar()
     validar(est)
     problemas: list[dict[str, str]] = []
 
     capas = acad.call("list_layers", {}).get("layers", [])
     por_nombre = {str(c.get("name", "")).upper(): c for c in capas}
-    entidades = acad.call("list_entities", {"limit": 200000}).get("entities", [])
+    # TODOS los espacios (modelo y láminas): con una lámina abierta, mirar
+    # solo el espacio activo no veía lo dibujado en el modelo (visto en
+    # vivo). Un plugin anterior a 1.8.2 ignora allSpaces y lista el activo.
+    entidades = acad.call("list_entities", {"limit": 200000,
+                                            "allSpaces": True}).get("entities", [])
     usadas: dict[str, int] = {}
     for e in entidades:
         clave = str(e.get("layer", "")).upper()
@@ -121,6 +132,16 @@ def revisar(estandar: Optional[dict[str, Any]] = None) -> dict[str, Any]:
                 "problem": f"La capa '{capa['name']}' tiene color "
                            f"{capa.get('colorIndex')} y el estándar pide {color}.",
                 "fix": f"set_layer('{capa['name']}', color_index={color})."})
+        grosor = regla.get("grosor")
+        # Plugin < 1.8.1 no informa el grosor: entonces no se puede revisar,
+        # y se calla en vez de inventar un incumplimiento.
+        if grosor is not None and "lineweight" in capa                 and int(capa["lineweight"]) != int(grosor):
+            problemas.append({
+                "rule": "grosor de capa",
+                "problem": f"La capa '{capa['name']}' tiene grosor "
+                           f"{capa['lineweight']} y el estándar pide {grosor} "
+                           "(centésimas de mm).",
+                "fix": f"set_layer('{capa['name']}', lineweight={grosor})."})
         tipo = regla.get("linetype")
         if tipo and str(capa.get("linetype", "")).upper() != str(tipo).upper():
             problemas.append({
