@@ -570,7 +570,8 @@ def suggest_furniture(rooms: list[dict[str, Any]],
         if clase == "recamara":
             piezas = _amueblar_recamara(caja, libres, nombre, salteados)
         elif clase == "bano":
-            piezas = _amueblar_bano(caja, libres, nombre, salteados)
+            piezas = _amueblar_bano(caja, libres, nombre, salteados,
+                                    _barridos(eje, caja, nombre, doors or []))
         elif "COCINA" in nombre.upper():
             piezas = _amueblar_cocina(caja, libres, nombre, salteados)
         elif "COMEDOR" in nombre.upper():
@@ -580,6 +581,8 @@ def suggest_furniture(rooms: list[dict[str, Any]],
         else:
             continue        # pasillo, patio, lavado: sin mobiliario fijo
 
+        piezas = _sin_choques(piezas, caja, _barridos(eje, caja, nombre, doors or []),
+                              nombre, salteados)
         if piezas:
             for p in piezas:
                 p["_room"] = nombre
@@ -590,8 +593,7 @@ def suggest_furniture(rooms: list[dict[str, Any]],
     # conoce); 'placements' lleva ademas a que ambiente pertenece cada
     # pieza y que caja ocupa -- sin eso, con dos banos y tres recamaras no
     # hay forma de saber cual es cual al verificar el resultado.
-    internas = ("_box", "_room")
-    limpios = [{k: v for k, v in p.items() if k not in internas}
+    limpios = [{k: v for k, v in p.items() if not k.startswith("_")}
                for p in items]
     resultado: dict[str, Any] = {
         "items": limpios,
@@ -619,9 +621,99 @@ def _pieza(tipo: str, muro: str, caja, centro: float, ancho: float,
            fondo: float, **extra) -> dict[str, Any]:
     x, y, rot, huella = _contra_muro(muro, caja, centro, ancho, fondo)
     p = {"type": tipo, "x": round(x, 3), "y": round(y, 3),
-         "rotation_deg": rot, "_box": huella}
+         "rotation_deg": rot, "_box": huella,
+         # Con esto se la puede volver a apoyar más allá sobre el mismo muro.
+         "_muro": muro, "_centro": centro, "_dims": (ancho, fondo),
+         "_extra": dict(extra)}
     p.update(extra)
     return p
+
+
+def _barridos(eje: tuple[float, float, float, float],
+              caja: tuple[float, float, float, float], nombre: str,
+              doors: list[dict[str, Any]], tol: float = 0.25) -> list[tuple]:
+    """El cuadrado que barre la hoja de cada puerta que abre HACIA este
+    recinto (ancho × ancho, contra la cara interior del muro). Excluir el
+    muro de la puerta no alcanzaba: una puerta en la esquina barre también
+    el arranque del muro vecino, y ahí caía el buró de la cama."""
+    x0, y0, x1, y1 = eje
+    cx0, cy0, cx1, cy1 = caja
+    out = []
+    for d in doors or []:
+        if "x" not in d or "y" not in d or d.get("open") \
+                or str(d.get("type", "door")).lower() in ("pass", "vano", "opening"):
+            continue
+        if str(d.get("to", "")).upper() != nombre.upper():
+            continue
+        px, py, w = float(d["x"]), float(d["y"]), float(d.get("width", 0.80))
+        if abs(py - y0) <= tol and x0 - tol <= px <= x1 + tol:
+            out.append((px - w / 2.0, cy0, px + w / 2.0, cy0 + w))
+        elif abs(py - y1) <= tol and x0 - tol <= px <= x1 + tol:
+            out.append((px - w / 2.0, cy1 - w, px + w / 2.0, cy1))
+        elif abs(px - x0) <= tol and y0 - tol <= py <= y1 + tol:
+            out.append((cx0, py - w / 2.0, cx0 + w, py + w / 2.0))
+        elif abs(px - x1) <= tol and y0 - tol <= py <= y1 + tol:
+            out.append((cx1 - w, py - w / 2.0, cx1, py + w / 2.0))
+    return out
+
+
+def _sin_choques(piezas: list[dict[str, Any]], caja, obstaculos: list[tuple],
+                 nombre: str, salteados: list[dict[str, str]]) -> list[dict]:
+    """Ninguna pieza encima del barrido de una puerta ni de otra pieza.
+
+    Cada una se queda donde la propuso su regla si está libre; si no, se
+    corre a lo largo de SU muro hasta encontrar lugar. Un buró sigue a su
+    cama (se recalcula desde donde quedó la cama) y si no entra se quita.
+    Lo que no entra en ningún lado se reporta: dibujar la regadera encima
+    del lavabo es peor que no dibujarla."""
+    def dentro(b) -> bool:
+        return (b[0] >= caja[0] - 1e-6 and b[1] >= caja[1] - 1e-6
+                and b[2] <= caja[2] + 1e-6 and b[3] <= caja[3] + 1e-6)
+
+    ocupado = list(obstaculos)
+    finales: list[dict[str, Any]] = []
+    cama_centro: Optional[float] = None
+    # Lo grande elige primero: si el lavabo toma el centro del baño, la
+    # regadera ya no tiene dónde ir; al revés, el lavabo se corre y entran
+    # los dos. (La cama, mayor que sus burós, sigue yendo antes que ellos.)
+    piezas = sorted(piezas, key=lambda p: -((p["_box"][2] - p["_box"][0])
+                                            * (p["_box"][3] - p["_box"][1])))
+
+    def libre(b) -> bool:
+        return dentro(b) and not any(_overlaps(b, o, -1e-6) for o in ocupado)
+
+    for p in piezas:
+        elegido = None
+        if "_muro" not in p:
+            elegido = p if libre(p["_box"]) else None
+        elif "_rel" in p:
+            if cama_centro is not None:
+                c = _pieza(p["type"], p["_muro"], caja, cama_centro + p["_rel"],
+                           *p["_dims"], **p["_extra"])
+                elegido = c if libre(c["_box"]) else None
+        else:
+            largo = _largo_muro(p["_muro"], caja)
+            pasos = int(largo / 0.05) + 1
+            for k in range(pasos + 1):
+                for signo in ((0,) if k == 0 else (1, -1)):
+                    c = _pieza(p["type"], p["_muro"], caja,
+                               p["_centro"] + signo * k * 0.05,
+                               *p["_dims"], **p["_extra"])
+                    if libre(c["_box"]):
+                        elegido = c
+                        break
+                if elegido:
+                    break
+        if elegido is None:
+            salteados.append({"room": nombre,
+                              "problem": f"{p['type']}: no entra sin pisar el "
+                                         "abatimiento de una puerta u otra pieza"})
+            continue
+        if p["type"] in ("bed", "single_bed"):
+            cama_centro = elegido.get("_centro")
+        ocupado.append(elegido["_box"])
+        finales.append(elegido)
+    return finales
 
 
 def _amueblar_recamara(caja, libres, nombre, salteados) -> list[dict]:
@@ -641,6 +733,8 @@ def _amueblar_recamara(caja, libres, nombre, salteados) -> list[dict]:
                     c = centro + signo * (ancho / 2.0 + 0.225)
                     piezas.append(_pieza("nightstand", muro, caja, c,
                                          0.45, 0.45, size=0.45))
+                    # El buró va pegado a la cama, donde sea que ella quede.
+                    piezas[-1]["_rel"] = signo * (ancho / 2.0 + 0.225)
             # Closet contra otro muro libre.
             otros = [m for m in libres if m != muro]
             for m2 in otros:
@@ -658,7 +752,56 @@ def _amueblar_recamara(caja, libres, nombre, salteados) -> list[dict]:
     return piezas
 
 
-def _amueblar_bano(caja, libres, nombre, salteados) -> list[dict]:
+# Zonas de USO de un baño, no solo el tamaño de la pieza: el WC necesita
+# 0.375 m de su eje a lo que tenga al costado y 0.60 libres al frente; el
+# lavabo, 0.65 de ancho. Pegados a la regadera "entran", pero no se usan.
+ZONA_WC = 0.75
+ZONA_LAVABO = 0.65
+FONDO_REGADERA = 0.80
+FRENTE_LIBRE = 0.60
+
+
+def _bano_lineal(caja, barridos: list[tuple]) -> Optional[list[dict]]:
+    """Regadera a todo el ancho en el extremo LEJOS de la puerta y, en fila
+    sobre el muro largo, WC y lavabo con sus zonas de uso. Es el arreglo de
+    un baño compacto bien resuelto; None si el cuarto no da para él."""
+    x0, y0, x1, y1 = caja
+    ancho, fondo = x1 - x0, y1 - y0
+    largo, corto = max(ancho, fondo), min(ancho, fondo)
+    if (largo < FONDO_REGADERA + ZONA_WC + ZONA_LAVABO - 0.05
+            or corto < 0.60 + FRENTE_LIBRE + 0.20):
+        return None
+    if barridos:
+        px = sum((b[0] + b[2]) / 2.0 for b in barridos) / len(barridos)
+        py = sum((b[1] + b[3]) / 2.0 for b in barridos) / len(barridos)
+    else:
+        px, py = x0, y0
+    if ancho >= fondo:
+        extremo = "right" if px < (x0 + x1) / 2.0 else "left"
+        muro = "top" if py < (y0 + y1) / 2.0 else "bottom"
+        def a_lo_largo(d: float) -> float:
+            return x1 - d if extremo == "right" else x0 + d
+    else:
+        extremo = "top" if py < (y0 + y1) / 2.0 else "bottom"
+        muro = "right" if px < (x0 + x1) / 2.0 else "left"
+        def a_lo_largo(d: float) -> float:
+            return y1 - d if extremo == "top" else y0 + d
+    return [
+        _pieza("shower", extremo, caja, _centro_muro(extremo, caja), corto,
+               FONDO_REGADERA, width=corto, depth=FONDO_REGADERA),
+        _pieza("wc", muro, caja, a_lo_largo(FONDO_REGADERA + ZONA_WC / 2.0),
+               0.38, 0.60),
+        _pieza("lavatory", muro, caja,
+               a_lo_largo(FONDO_REGADERA + ZONA_WC + ZONA_LAVABO / 2.0),
+               0.60, 0.45, width=0.60, depth=0.45),
+    ]
+
+
+def _amueblar_bano(caja, libres, nombre, salteados,
+                   barridos: Optional[list[tuple]] = None) -> list[dict]:
+    lineal = _bano_lineal(caja, barridos or [])
+    if lineal:
+        return lineal
     piezas: list[dict[str, Any]] = []
     usados: set[str] = set()
     # WC y lavabo en muros distintos; la regadera en el muro mas largo que

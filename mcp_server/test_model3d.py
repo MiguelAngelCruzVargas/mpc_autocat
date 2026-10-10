@@ -135,8 +135,14 @@ def test_codigo_dentro_de_lo_que_el_filtro_deja() -> None:
           '$"' not in code)
     check("numeros con punto decimal, nunca coma",
           not re.search(r"\d,\d", code.replace(", ", ";")), "")
-    check("capas 3D propias",
-          '"3D-MUROS"' in code and '"3D-LOSA"' in code)
+    check("capas 3D propias (la cubierta en la suya)",
+          '"3D-MUROS"' in code and '"3D-LOSA_CUBIERTA"' in code)
+    # Regla del usuario: el 3D se mira sin techo. La cubierta se modela
+    # (remata los muros) pero su capa queda apagada.
+    check("la cubierta queda apagada por default", ".IsOff = true" in code)
+    visible = model3d.build(p["rooms"], p["doors"], p["windows"],
+                            roof_visible=True)["code"]
+    check("con roof_visible=True no se apaga", ".IsOff = true" not in visible)
 
 
 def test_resultado_con_motor() -> None:

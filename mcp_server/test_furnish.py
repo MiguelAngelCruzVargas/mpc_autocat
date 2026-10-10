@@ -117,15 +117,29 @@ def test_cocina_separa_estufa_y_fregadero() -> None:
     check("y no quedan pegados", sep >= 0.80, f"separacion {sep:.2f}")
 
 
-def test_bano_usa_muros_distintos() -> None:
+def test_bano_con_zonas_de_uso() -> None:
+    """Pasó de verdad: en un baño de 2.20 x 1.25 el WC y el lavabo quedaron
+    pegados a la regadera. No se pisaban, pero bañarse ahí era incómodo.
+    En un baño compacto el arreglo es lineal: regadera a todo el ancho en el
+    extremo lejos de la puerta, y WC y lavabo en fila con su zona de uso."""
     limpiar()
-    bano = [{"name": "BAÑO", "x0": 0, "y0": 0, "x1": 2.4, "y1": 2.2}]
-    r = fur.suggest_furniture(bano, [], draw=False)
-    tipos = [p["type"] for p in r["items"]]
-    check("pone wc y lavabo", {"wc", "lavatory"} <= set(tipos), str(tipos))
-    rots = {p["type"]: p["rotation_deg"] for p in r["items"]}
-    check("el wc y el lavabo no comparten muro",
-          rots.get("wc") != rots.get("lavatory"), str(rots))
+    bano = [{"name": "BAÑO", "x0": 0, "y0": 0, "x1": 2.35, "y1": 1.65}]
+    puerta = [{"from": "PASILLO", "to": "BAÑO", "width": 0.70, "x": 0.0, "y": 0.55}]
+    r = fur.suggest_furniture(bano, puerta, draw=False,
+                              exterior_thickness=0.15, interior_thickness=0.15)
+    cajas = {p["type"]: p["box"] for p in r["placements"]}
+    check("pone regadera, wc y lavabo", {"shower", "wc", "lavatory"} <= set(cajas),
+          str(r["skipped"]))
+    if {"shower", "wc", "lavatory"} <= set(cajas):
+        reg, wc, lav = cajas["shower"], cajas["wc"], cajas["lavatory"]
+        check("la regadera va al extremo lejos de la puerta", reg[0] > 1.0, str(reg))
+        eje_wc = (wc[0] + wc[2]) / 2.0
+        check("eje del wc a 0.375+ de la regadera",
+              reg[0] - eje_wc >= 0.375 - 1e-6, f"{reg[0] - eje_wc:.3f}")
+        check("eje del wc a 0.375+ del lavabo",
+              eje_wc - lav[2] >= 0.375 - 0.1 - 1e-6, f"{eje_wc - lav[2]:.3f}")
+        frente = 1.65 - 0.15 - (wc[3] - wc[1])
+        check("0.60+ libres al frente del wc", frente >= 0.60, f"{frente:.2f}")
 
 
 def test_todo_cae_dentro_de_su_recinto() -> None:
@@ -317,7 +331,7 @@ def main() -> int:
                test_cama_matrimonial_o_individual_segun_quepa,
                test_lo_que_no_entra_no_se_dibuja,
                test_cocina_separa_estufa_y_fregadero,
-               test_bano_usa_muros_distintos,
+               test_bano_con_zonas_de_uso,
                test_todo_cae_dentro_de_su_recinto,
                test_ningun_mueble_invade_el_muro,
                test_ningun_mueble_se_pisa_con_otro,

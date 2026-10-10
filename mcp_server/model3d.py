@@ -86,10 +86,15 @@ def _cajas_de_vanos(muros: list[dict[str, Any]], base_z: float,
             seg, _ = axis.segment_at(d)
             u = axis.dirs[seg]
             cx, cy = axis.point_at(d)
+            # Cada vano manda con su propio antepecho/alto (los trae de
+            # arch.plan_walls): la ventana alta del baño no es la de la sala.
             if tipo == "window":
-                z0, z1 = base_z + sill_height, base_z + window_head
+                z0 = base_z + float(h.get("sill", sill_height))
+                z1 = (z0 + float(h["height"]) if "height" in h
+                      else base_z + window_head)
             else:
-                z0, z1 = base_z, base_z + door_height
+                z0 = base_z
+                z1 = base_z + float(h.get("height", door_height))
             cajas.append({
                 "wall": i, "type": tipo,
                 "cx": cx, "cy": cy, "cz": (z0 + z1) / 2.0,
@@ -108,7 +113,9 @@ def _losa(rooms: list[dict[str, Any]], exterior_thickness: float,
           tol: float) -> list[list]:
     """Contorno de lo techado: los recintos que no son patio, hasta la cara
     exterior de sus muros. Cada recinto se agranda medio muro exterior y la
-    unión de esos rectángulos es exactamente el paño exterior."""
+    unión de esos rectángulos es exactamente el paño exterior. Un patio de
+    luz rodeado por la casa queda como HUECO de ese contorno: la losa no lo
+    tapa, que es lo que lo hace "a cielo abierto"."""
     e = exterior_thickness / 2.0
     piezas = [[(r["x0"] - e, r["y0"] - e), (r["x1"] + e, r["y0"] - e),
                (r["x1"] + e, r["y1"] + e), (r["x0"] - e, r["y1"] + e)]
@@ -117,6 +124,18 @@ def _losa(rooms: list[dict[str, Any]], exterior_thickness: float,
         return []
     lazos, _abiertas = wall_network.outline(piezas, [], tol)
     return lazos
+
+
+def _integral_y(poly: list) -> float:
+    """∫ y dA del polígono, con signo (los huecos horarios restan). Es lo que
+    da el volumen bajo una losa inclinada: altura media = la del centroide."""
+    n = len(poly)
+    total = 0.0
+    for i in range(n):
+        x0, y0 = poly[i]
+        x1, y1 = poly[(i + 1) % n]
+        total += (x0 * y1 - x1 * y0) * (y0 + y1)
+    return total / 6.0
 
 
 def build(rooms: list[dict[str, Any]],
@@ -128,22 +147,49 @@ def build(rooms: list[dict[str, Any]],
           slab: bool = True, offset: Optional[float] = None,
           exterior_thickness: float = 0.15,
           interior_thickness: float = 0.10,
-          window_width: float = 1.20) -> dict[str, Any]:
+          window_width: float = 1.20,
+          clear_height_front: Optional[float] = None,
+          clear_height_back: Optional[float] = None,
+          floor_thickness: float = 0.0,
+          walls_layer: str = LAYER_MUROS_3D,
+          slab_layer: str = LAYER_LOSA_3D,
+          visual_style: str = "Realistic",
+          roof_layer: Optional[str] = None,
+          roof_visible: bool = False) -> dict[str, Any]:
     """Todo lo que hace falta para el 3D, calculado en Python: el C# a
-    ejecutar y los volúmenes esperados. No toca AutoCAD."""
-    if wall_height <= 0:
-        raise ValueError("wall_height tiene que ser > 0.")
-    if not 0 < door_height <= wall_height:
+    ejecutar y los volúmenes esperados. No toca AutoCAD.
+
+    clear_height_front / clear_height_back: altura libre (de base_z a la
+    cara inferior de la losa) en la fachada de adelante (y mínima) y en la
+    de atrás (y máxima). Si vienen, la losa va INCLINADA entre las dos y
+    los muros terminan contra ella; mandan sobre wall_height.
+    floor_thickness: firme de piso bajo base_z (base_z es el N.P.T.).
+    roof_layer / roof_visible: la losa de CUBIERTA va en su propia capa
+    (por default slab_layer + '_CUBIERTA') y APAGADA: el 3D es para ver la
+    distribución por dentro, y el techo encima la tapa. Se modela igual
+    (remata los muros) y se ve prendiendo la capa o con roof_visible=True.
+    """
+    hf = wall_height if clear_height_front is None else float(clear_height_front)
+    hb = wall_height if clear_height_back is None else float(clear_height_back)
+    if min(hf, hb) <= 0:
         raise ValueError(
-            f"door_height ({door_height:g}) tiene que estar entre 0 y el "
-            f"alto del muro ({wall_height:g}).")
-    if not 0 <= sill_height < window_head <= wall_height:
+            "wall_height tiene que ser > 0." if clear_height_front is None
+            and clear_height_back is None
+            else "Las alturas libres (clear_height_front/back) tienen que ser > 0.")
+    h_min = min(hf, hb)
+    if not 0 < door_height <= h_min:
+        raise ValueError(
+            f"door_height ({door_height:g}) tiene que estar entre 0 y la "
+            f"altura libre más baja ({h_min:g}).")
+    if not 0 <= sill_height < window_head <= h_min:
         raise ValueError(
             f"La ventana va de sill_height ({sill_height:g}) a window_head "
             f"({window_head:g}): el antepecho tiene que quedar abajo del "
-            f"cabezal y el cabezal no puede pasar el muro ({wall_height:g}).")
+            f"cabezal y el cabezal no puede pasar el muro ({h_min:g}).")
     if slab and slab_thickness <= 0:
         raise ValueError("slab_thickness tiene que ser > 0 (o slab=False).")
+    if floor_thickness < 0:
+        raise ValueError("floor_thickness no puede ser negativo.")
 
     plan = arch.plan_walls(rooms, doors, windows,
                            exterior_thickness=exterior_thickness,
@@ -172,26 +218,57 @@ def build(rooms: list[dict[str, Any]],
                             window_head)
     for c in cajas:
         c["cx"] += dx
-    losa = ([(corrido(e), [corrido(h) for h in hs])
-             for e, hs in _agrupar(_losa(rooms, exterior_thickness, tol))]
+    contorno = _agrupar(_losa(rooms, exterior_thickness, tol))
+    losa = ([(corrido(e), [corrido(h) for h in hs]) for e, hs in contorno]
             if slab else [])
+    piso = ([(corrido(e), [corrido(h) for h in hs]) for e, hs in contorno]
+            if floor_thickness > 0 else [])
 
-    vol_muros = red["area"] * wall_height - sum(c["volumen"] for c in cajas)
-    area_losa = sum(
+    # La pendiente se mide de fachada a fachada de lo techado (y de lo
+    # construido, si no hay losa).
+    ys = [p[1] for e, _hs in (contorno or _agrupar(red["loops"])) for p in e]
+    y_frente, y_fondo = min(ys), max(ys)
+    pendiente = (hf - hb) / (y_fondo - y_frente) if y_fondo > y_frente else 0.0
+
+    def altura_en(y: float) -> float:
+        return hf - pendiente * (y - y_frente)
+
+    # Muro bajo losa inclinada: ∫ h(y) dA = hf·A − pendiente·(∫y dA − y_frente·A).
+    area_muros = red["area"]
+    iy = sum(_integral_y(l) for l in red["loops"])
+    vol_bruto = hf * area_muros - pendiente * (iy - y_frente * area_muros)
+    vol_muros = vol_bruto - sum(c["volumen"] for c in cajas)
+    # Con losa inclinada el volumen sigue siendo área × espesor: es un prisma
+    # vertical cortado por dos planos paralelos (espesor medido en vertical).
+    area_techada = sum(
         wall_network._signed_area(e) + sum(wall_network._signed_area(h)
                                            for h in hs)
-        for e, hs in losa)
+        for e, hs in contorno)
+
+    avisos_vanos = []
+    for c in cajas:
+        tope = altura_en(c["cy"]) + base_z
+        if c["cz"] + c["alto"] / 2.0 > tope + 1e-6:
+            avisos_vanos.append(
+                f"Un vano ({c['type']}) en ({c['cx'] - dx:.2f}, {c['cy']:.2f}) "
+                f"llega a {c['cz'] + c['alto'] / 2.0 - base_z:.2f} m y la losa "
+                f"ahí está a {tope - base_z:.2f} m: lo corta la losa.")
 
     return {
-        "code": _codigo(grupos, cajas, losa, base_z, wall_height,
-                        slab_thickness),
+        "code": _codigo(grupos, cajas, losa, piso, base_z, hf, hb,
+                        y_frente, y_fondo, slab_thickness, floor_thickness,
+                        walls_layer, slab_layer, visual_style,
+                        roof_layer or slab_layer + "_CUBIERTA", roof_visible),
+        "roofLayer": roof_layer or slab_layer + "_CUBIERTA",
         "offset": [dx, 0.0],
         "openings": len(cajas),
+        "slope": pendiente,
         "expectedMasonryVolume": vol_muros,
-        "expectedSlabVolume": area_losa * slab_thickness if slab else 0.0,
+        "expectedSlabVolume": area_techada * slab_thickness if losa else 0.0,
+        "expectedFloorVolume": area_techada * floor_thickness if piso else 0.0,
         "plan": {k: plan[k] for k in ("doorsPlaced", "doorsTotal",
                                       "windowsPlaced")},
-        "warnings": list(plan["warnings"]),
+        "warnings": list(plan["warnings"]) + avisos_vanos,
     }
 
 
@@ -236,8 +313,28 @@ System.Func<Extents3d, Extents3d, bool> tocan = delegate(Extents3d a, Extents3d 
         && a.MinPoint.Z < b.MaxPoint.Z && b.MinPoint.Z < a.MaxPoint.Z;
 };
 
+// La losa inclinada es un plano z = zFrente - pendiente·(y - yFrente). La
+// "cuchilla" es una caja enorme cuya cara cae justo en ese plano: restarla
+// deja el muro terminado contra la cara inferior de la losa, y dos (una por
+// arriba y otra por abajo) dejan la losa misma con su espesor.
+System.Func<double, bool, Solid3d> cuchilla = delegate(double zFrente, bool quitaArriba)
+{
+    var c = new Solid3d();
+    c.CreateBox(%CUCH_LX%, %CUCH_LY%, 50.0);
+    c.TransformBy(Matrix3d.Displacement(new Vector3d(0, 0, quitaArriba ? 25.0 : -25.0)));
+    c.TransformBy(Matrix3d.Rotation(-%CUCH_ANG%, Vector3d.XAxis, Point3d.Origin));
+    c.TransformBy(Matrix3d.Displacement(new Vector3d(%CUCH_CX%, %CUCH_YF%, zFrente)));
+    return c;
+};
+System.Action<Solid3d, Solid3d> recortar = delegate(Solid3d s, Solid3d c)
+{
+    s.BooleanOperation(BooleanOperationType.BoolSubtract, c);
+    c.Dispose();
+};
+
 var muros = new System.Collections.Generic.List<Solid3d>();
 %MUROS%
+%RECORTE%
 
 // Vanos: cada caja se resta del muro que toca. Si ninguno pierde volumen,
 // el vano no se restó y se avisa.
@@ -251,6 +348,8 @@ foreach (var m in muros)
 }
 
 %LOSA%
+%APAGAR_CUBIERTA%
+%PISO%
 
 %VISTA%
 return muros.Count;
@@ -279,8 +378,15 @@ _VANO = """vano++;
 
 _LOSA = """{{
     var losa = extruir({ext}, new double[][] {{ {huecos} }}, {z0}, {alto});
-    losa.Layer = "%CAPA_LOSA%";
+    {recorte}
+    losa.Layer = "%CAPA_CUBIERTA%";
     Print("@@LOSA|" + Add(losa) + "|" + losa.MassProperties.Volume.ToString(C));
+}}"""
+
+_PISO = """{{
+    var piso = extruir({ext}, new double[][] {{ {huecos} }}, {z0}, {alto});
+    piso.Layer = "%CAPA_LOSA%";
+    Print("@@PISO|" + Add(piso) + "|" + piso.MassProperties.Volume.ToString(C));
 }}"""
 
 # Vista isométrica SO (desde abajo a la izquierda, mirando al NE) con estilo
@@ -296,68 +402,122 @@ _VISTA = """try
     vista.Height = {alto};
     vista.Width = {ancho};
     var estilos = (DBDictionary)tr.GetObject(db.VisualStyleDictionaryId, OpenMode.ForRead);
-    foreach (var nombre in new string[] {{ "Realistic", "Realista" }})
+    foreach (var nombre in new string[] {{ {estilos} }})
         if (estilos.Contains(nombre)) {{ vista.VisualStyleId = estilos.GetAt(nombre); break; }}
     ed.SetCurrentView(vista);
     Print("@@VISTA|iso SO");
 }}
 catch (System.Exception ex) {{ Print("@@AVISO|vista: " + ex.Message); }}"""
 
+_APAGAR = """{
+    var tabla = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+    if (tabla.Has("%CAPA_CUBIERTA%"))
+        ((LayerTableRecord)tr.GetObject(tabla["%CAPA_CUBIERTA%"], OpenMode.ForWrite)).IsOff = true;
+}"""
 
-def _codigo(grupos: list, cajas: list, losa: list, base_z: float,
-            wall_height: float, slab_thickness: float) -> str:
+# El nombre del estilo visual puede venir traducido en un AutoCAD en
+# castellano: se prueban los dos.
+_ESTILOS = {
+    "realistic": ("Realistic", "Realista"),
+    "conceptual": ("Conceptual",),
+    "shaded with edges": ("Shaded with edges", "Sombreado con aristas"),
+    "shaded": ("Shaded", "Sombreado"),
+    "2d wireframe": ("2dWireframe", "Estructura alámbrica 2D"),
+}
+
+
+def _codigo(grupos: list, cajas: list, losa: list, piso: list,
+            base_z: float, hf: float, hb: float, y_frente: float,
+            y_fondo: float, slab_thickness: float, floor_thickness: float,
+            walls_layer: str, slab_layer: str, visual_style: str,
+            roof_layer: str = "", roof_visible: bool = True) -> str:
     def huecos(hs: list) -> str:
         return ", ".join(_arreglo(h) for h in hs)
 
+    inclinada = abs(hf - hb) > 1e-9
+    h_max, h_min = max(hf, hb), min(hf, hb)
+    pendiente = (hf - hb) / (y_fondo - y_frente) if y_fondo > y_frente else 0.0
+
+    todos = [p for e, _hs in grupos for p in e]
+    x0, x1 = min(p[0] for p in todos), max(p[0] for p in todos)
+    y0, y1 = min(p[1] for p in todos), max(p[1] for p in todos)
+
+    # Muros: hasta la losa en su punto más alto, y si es inclinada se
+    # recortan contra su cara inferior.
     muros_cs = "\n".join(
         _MURO.format(ext=_arreglo(e), huecos=huecos(hs), z0=_num(base_z),
-                     alto=_num(wall_height)) for e, hs in grupos)
+                     alto=_num(h_max)) for e, hs in grupos)
+    recorte_cs = ("foreach (var m in muros) recortar(m, cuchilla("
+                  f"{_num(base_z + hf)}, true));" if inclinada else "")
     vanos_cs = "\n".join(
         _VANO.format(largo=_num(c["largo"]), ancho=_num(c["ancho"]),
                      alto=_num(c["alto"]), ang=_num(c["angulo"]),
                      cx=_num(c["cx"]), cy=_num(c["cy"]), cz=_num(c["cz"]),
                      tipo=c["type"], px=f"{c['cx']:.2f}", py=f"{c['cy']:.2f}")
         for c in cajas)
-    losa_cs = "\n".join(
-        _LOSA.format(ext=_arreglo(e), huecos=huecos(hs),
-                     z0=_num(base_z + wall_height), alto=_num(slab_thickness))
-        for e, hs in losa)
 
-    todos = [p for e, _hs in grupos for p in e]
-    x0, x1 = min(p[0] for p in todos), max(p[0] for p in todos)
-    y0, y1 = min(p[1] for p in todos), max(p[1] for p in todos)
-    z1 = base_z + wall_height + (slab_thickness if losa else 0.0)
+    # Losa: plana, o un prisma que cubre todo el rango y se recorta entre
+    # el plano inferior y el mismo plano subido 'slab_thickness'.
+    if inclinada:
+        z0_losa, alto_losa = base_z + h_min - 0.05, h_max - h_min + slab_thickness + 0.10
+        recorte_losa = (f"recortar(losa, cuchilla({_num(base_z + hf + slab_thickness)}, true)); "
+                        f"recortar(losa, cuchilla({_num(base_z + hf)}, false));")
+    else:
+        z0_losa, alto_losa, recorte_losa = base_z + hf, slab_thickness, ""
+    losa_cs = "\n".join(
+        _LOSA.format(ext=_arreglo(e), huecos=huecos(hs), z0=_num(z0_losa),
+                     alto=_num(alto_losa), recorte=recorte_losa)
+        for e, hs in losa)
+    piso_cs = "\n".join(
+        _PISO.format(ext=_arreglo(e), huecos=huecos(hs),
+                     z0=_num(base_z - floor_thickness),
+                     alto=_num(floor_thickness))
+        for e, hs in piso)
+
+    z1 = base_z + h_max + (slab_thickness if losa else 0.0)
     lado = max(x1 - x0, y1 - y0, z1 - base_z)
+    nombres = _ESTILOS.get(visual_style.lower(), (visual_style,))
     vista_cs = _VISTA.format(cx=_num((x0 + x1) / 2), cy=_num((y0 + y1) / 2),
                              cz=_num((base_z + z1) / 2),
-                             alto=_num(lado * 1.4), ancho=_num(lado * 2.0))
+                             alto=_num(lado * 1.4), ancho=_num(lado * 2.0),
+                             estilos=", ".join('"' + n + '"' for n in nombres))
 
     return (_PLANTILLA.replace("%MUROS%", muros_cs)
+            .replace("%RECORTE%", recorte_cs)
             .replace("%VANOS%", vanos_cs)
             .replace("%LOSA%", losa_cs)
+            .replace("%PISO%", piso_cs)
             .replace("%VISTA%", vista_cs)
-            .replace("%CAPA_MUROS%", LAYER_MUROS_3D)
-            .replace("%CAPA_LOSA%", LAYER_LOSA_3D))
+            .replace("%CUCH_LX%", _num(x1 - x0 + 20.0))
+            .replace("%CUCH_LY%", _num(2.0 * (y1 - y0 + 20.0)))
+            .replace("%CUCH_ANG%", _num(math.atan(pendiente)))
+            .replace("%CUCH_CX%", _num((x0 + x1) / 2.0))
+            .replace("%CUCH_YF%", _num(y_frente))
+            .replace("%APAGAR_CUBIERTA%", "" if roof_visible or not losa else _APAGAR)
+            .replace("%CAPA_CUBIERTA%", roof_layer or slab_layer)
+            .replace("%CAPA_MUROS%", walls_layer)
+            .replace("%CAPA_LOSA%", slab_layer))
 
 
 # ----------------------------------------------------------- la tool
 
 def _leer_salida(output: Any) -> dict[str, Any]:
     """Las líneas '@@TIPO|...' que imprime el C#."""
-    muros, losas, avisos, vista = [], [], [], None
+    muros, losas, pisos, avisos, vista = [], [], [], [], None
     for linea in str(output or "").splitlines():
         if not linea.startswith("@@"):
             continue
         tipo, _, resto = linea[2:].partition("|")
-        if tipo in ("MURO", "LOSA"):
+        if tipo in ("MURO", "LOSA", "PISO"):
             handle, _, vol = resto.partition("|")
             item = {"handle": handle, "volume": float(vol or 0)}
-            (muros if tipo == "MURO" else losas).append(item)
+            {"MURO": muros, "LOSA": losas, "PISO": pisos}[tipo].append(item)
         elif tipo == "AVISO":
             avisos.append(resto)
         elif tipo == "VISTA":
             vista = resto
-    return {"walls": muros, "slabs": losas, "warnings": avisos, "view": vista}
+    return {"walls": muros, "slabs": losas, "floors": pisos,
+            "warnings": avisos, "view": vista}
 
 
 def create_3d_model(rooms: list[dict[str, Any]],
@@ -370,7 +530,15 @@ def create_3d_model(rooms: list[dict[str, Any]],
                     exterior_thickness: float = 0.15,
                     interior_thickness: float = 0.10,
                     window_width: float = 1.20,
-                    view: bool = True) -> dict[str, Any]:
+                    view: bool = True,
+                    clear_height_front: Optional[float] = None,
+                    clear_height_back: Optional[float] = None,
+                    floor_thickness: float = 0.0,
+                    walls_layer: str = LAYER_MUROS_3D,
+                    slab_layer: str = LAYER_LOSA_3D,
+                    visual_style: str = "Realistic",
+                    roof_layer: Optional[str] = None,
+                    roof_visible: bool = False) -> dict[str, Any]:
     """Levanta la planta en 3D con run_code. Ver build() y la spec §4."""
     import engine  # diferido: el motor puede no estar (o estar apagado)
 
@@ -380,15 +548,21 @@ def create_3d_model(rooms: list[dict[str, Any]],
                   base_z=base_z, slab=slab, offset=offset,
                   exterior_thickness=exterior_thickness,
                   interior_thickness=interior_thickness,
-                  window_width=window_width)
+                  window_width=window_width,
+                  clear_height_front=clear_height_front,
+                  clear_height_back=clear_height_back,
+                  floor_thickness=floor_thickness, walls_layer=walls_layer,
+                  slab_layer=slab_layer, visual_style=visual_style,
+                  roof_layer=roof_layer, roof_visible=roof_visible)
     codigo = datos["code"]
     if not view:
         inicio = codigo.index("try\n{\n    var vista")
         fin = codigo.index("return muros.Count;")
         codigo = codigo[:inicio] + codigo[fin:]
 
-    for capa, color in ((LAYER_MUROS_3D, COLOR_MUROS_3D),
-                        (LAYER_LOSA_3D, COLOR_LOSA_3D)):
+    for capa, color in ((walls_layer, COLOR_MUROS_3D),
+                        (slab_layer, COLOR_LOSA_3D),
+                        (datos["roofLayer"], COLOR_LOSA_3D)):
         layers.ensure(capa, color, 25)
 
     r = engine.run_code(codigo, description="create_3d_model: planta en 3D")
@@ -415,9 +589,11 @@ def create_3d_model(rooms: list[dict[str, Any]],
     avisos += salida["warnings"]
     vol_muros = sum(m["volume"] for m in salida["walls"])
     vol_losa = sum(s["volume"] for s in salida["slabs"])
+    vol_piso = sum(s["volume"] for s in salida["floors"])
     for nombre, medido, esperado in (
             ("mampostería", vol_muros, datos["expectedMasonryVolume"]),
-            ("losa", vol_losa, datos["expectedSlabVolume"])):
+            ("losa", vol_losa, datos["expectedSlabVolume"]),
+            ("firme", vol_piso, datos["expectedFloorVolume"])):
         if esperado > 0 and abs(medido - esperado) > TOLERANCIA_VOLUMEN * esperado:
             avisos.append(
                 f"El volumen de {nombre} que mide AutoCAD ({medido:.3f} m3) "
@@ -428,8 +604,11 @@ def create_3d_model(rooms: list[dict[str, Any]],
         "ok": True,
         "wallHandles": [m["handle"] for m in salida["walls"]],
         "slabHandles": [s["handle"] for s in salida["slabs"]],
+        "floorHandles": [s["handle"] for s in salida["floors"]],
         "masonryVolume": round(vol_muros, 4),
         "slabVolume": round(vol_losa, 4),
+        "floorVolume": round(vol_piso, 4),
+        "slope": round(datos["slope"], 5),
         "expectedMasonryVolume": round(datos["expectedMasonryVolume"], 4),
         "openingsTotal": datos["openings"],
         "view": salida["view"],

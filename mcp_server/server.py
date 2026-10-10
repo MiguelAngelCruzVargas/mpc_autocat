@@ -4439,7 +4439,14 @@ def create_3d_model(rooms: list[dict[str, Any]],
                     exterior_thickness: float = 0.15,
                     interior_thickness: float = 0.10,
                     window_width: float = 1.20,
-                    view: bool = True) -> dict[str, Any]:
+                    view: bool = True,
+                    clear_height_front: Optional[float] = None,
+                    clear_height_back: Optional[float] = None,
+                    floor_thickness: float = 0.0,
+                    walls_layer: str = "3D-MUROS",
+                    slab_layer: str = "3D-LOSA",
+                    visual_style: str = "Realistic",
+                    roof_visible: bool = False) -> dict[str, Any]:
     """La planta en 3D: los MISMOS rooms/doors/windows de draw_layout (o de
     suggest_layout) levantados como sólidos — muros extruidos a wall_height
     con los encuentros ya rematados, vanos de puerta y ventana restados y
@@ -4449,6 +4456,18 @@ def create_3d_model(rooms: list[dict[str, Any]],
 
     Devuelve los volúmenes medidos (masonryVolume, slabVolume) y avisa si
     difieren de lo que da la planta: un vano que no se restó se nota ahí.
+    Cada ventana usa su propio 'sill'/'height' si lo trae (los mismos dicts
+    de draw_layout). Losa INCLINADA: clear_height_front y clear_height_back
+    (altura libre de N.P.T. a cara inferior de losa en la fachada de
+    adelante y en la de atrás); los muros terminan contra ella. base_z es
+    el N.P.T. y floor_thickness el firme debajo. visual_style: 'Realistic',
+    'Conceptual', 'Shaded with edges'...
+
+    SIN TECHO por default (roof_visible=False): la losa de cubierta se
+    modela —remata los muros— pero en su capa (slab_layer + '_CUBIERTA')
+    apagada, para que se vea la distribución por dentro. Pedí el techo solo
+    si el usuario quiere ver el conjunto.
+
     Corre con run_code, así que necesita que el usuario lo haya activado;
     si está apagado lo dice y no dibuja nada."""
     return model3d_mod.create_3d_model(
@@ -4457,7 +4476,10 @@ def create_3d_model(rooms: list[dict[str, Any]],
         slab_thickness=slab_thickness, base_z=base_z, slab=slab, offset=offset,
         exterior_thickness=exterior_thickness,
         interior_thickness=interior_thickness, window_width=window_width,
-        view=view)
+        view=view, clear_height_front=clear_height_front,
+        clear_height_back=clear_height_back, floor_thickness=floor_thickness,
+        walls_layer=walls_layer, slab_layer=slab_layer,
+        visual_style=visual_style, roof_visible=roof_visible)
 
 
 if __name__ == "__main__":
