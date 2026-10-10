@@ -151,6 +151,24 @@ def ensure_text_style() -> Optional[str]:
     return ESTILO_TEXTO
 
 
+def current_text_style() -> Optional[str]:
+    """El estilo de texto activo, si NO es la fuente de fabrica (txt.shx).
+
+    Es el que tienen que usar las cotas: con el 'Standard' de fabrica los
+    numeros salian en txt.shx -- otra letra que el resto del plano, y sin
+    acentos ni el simbolo de diametro."""
+    ensure_text_style()
+    try:
+        estilos = acad.call("list_styles", {}).get("textStyles", [])
+    except (acad.AutoCadError, KeyError, TypeError, AttributeError):
+        return None
+    activo = next((e for e in estilos if e.get("isCurrent")), None)
+    if not activo:
+        return None
+    fuente = str(activo.get("font", "")).lower().replace(".shx", "")
+    return None if fuente == FUENTE_DEFECTO else activo.get("name")
+
+
 def _existing() -> set[str]:
     global _EXISTING
     if _EXISTING is None:

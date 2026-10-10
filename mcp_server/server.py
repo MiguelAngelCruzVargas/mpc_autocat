@@ -947,6 +947,7 @@ def create_sheet(
     width_mm: float = 0.0,
     height_mm: float = 0.0,
     orientation: str = "horizontal",
+    scale_label: str = "",
 ) -> dict[str, Any]:
     """PRIMER PASO DE TODO PLANO: dibuja el cajón (marco de la hoja con sus
     márgenes) y el cuadro de rotulación con los datos de la obra, y devuelve el
@@ -972,6 +973,10 @@ def create_sheet(
     (clave/número de lámina, p.ej. 'A-01'). Los que se dejen vacíos salen como
     celda en blanco para llenar a mano.
 
+    scale_label: el texto de la celda ESCALA. En un layout (cajón en mm de
+    papel, scale_denominator=1) OBLIGATORIO: la escala de las vistas ('1:75')
+    o 'INDICADA' si hay varias; si no, el rótulo dice 1:1, que es falso.
+
     Devuelve 'drawArea' con dos rectángulos: el conservador (x1,y1,x2,y2), que
     es la franja arriba del rótulo, y el completo (full_*), que además usa la
     banda a la izquierda del rótulo. Dibujá siempre dentro de alguno de los dos.
@@ -993,6 +998,7 @@ def create_sheet(
         width_mm=width_mm or None,
         height_mm=height_mm or None,
         orientation=orientation,
+        scale_label=scale_label or None,
     )
 
 

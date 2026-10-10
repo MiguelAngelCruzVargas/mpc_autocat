@@ -175,6 +175,19 @@ def test_tramo_apretado_avisa() -> None:
           str(list(r.keys())))
     check("dice cual", r.get("tightSegments", [{}])[0].get("length") == 0.1,
           str(r.get("tightSegments")))
+    # El numero no queda entre las flechas (encima del vecino): la cota va
+    # sin texto y el numero, en un renglon por fuera de la linea de cota.
+    cotas = [e for e in preview.DRAWN if e.get("cmd") == "create_text"
+             and e.get("text") == "0.10"]
+    check("el numero del tramo corto va en su renglon, afuera",
+          len(cotas) == 1 and cotas[0]["y"] < r["dimLineCoord"], str(cotas))
+    corto = ann.create_dimension_chain([0.0, 0.425, 9.0], "top", 20.0)
+    textos = [e.get("text") for e in preview.DRAWN if e.get("cmd") == "create_text"]
+    check("redondea como AutoCAD (0.425 -> 0.43)", "0.43" in textos, str(textos))
+    normal = ann.create_dimension_chain([0.0, 4.0, 9.0], "top", 40.0)
+    alto = lambda c: c["band"][3] - c["band"][1]  # noqa: E731
+    check("y reserva la franja del renglon de mas",
+          alto(corto) > alto(normal), f"{alto(corto)} vs {alto(normal)}")
 
 
 def test_offset_a_mano_se_respeta_y_se_reserva() -> None:

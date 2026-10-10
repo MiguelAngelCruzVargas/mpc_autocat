@@ -157,8 +157,14 @@ def create_sheet(
     width_mm: Optional[float] = None,
     height_mm: Optional[float] = None,
     orientation: str = "horizontal",
+    scale_label: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Dibuja el cajón y el cuadro de rotulación. Devuelve el área útil."""
+    """Dibuja el cajón y el cuadro de rotulación. Devuelve el área útil.
+
+    scale_label: lo que dice la celda ESCALA. Por default la escala de la
+    hoja, que en espacio papel (layout, en mm) es 1:1 — y "ESCALA 1:1" en un
+    plano a 1:75 es un dato falso. Ahí va la de las vistas ('1:75') o
+    'INDICADA' si cada vista tiene la suya."""
     if width_mm is not None and height_mm is not None:
         sheet_w, sheet_h = float(width_mm), float(height_mm)
         fmt_name = f"{sheet_w:g}x{sheet_h:g}mm"
@@ -222,7 +228,8 @@ def create_sheet(
         _line(tx1 + mm(x_mm), ty1, tx1 + mm(x_mm), ty1 + mm(ROW_FOOT_MM),
               LAYER_TITLE, LW_BOX)
 
-    scale_text = f"1:{scale_denominator:g}"
+    scale_text = (str(scale_label).strip() if scale_label
+                  else f"1:{scale_denominator:g}")
     foot = [("ESCALA", scale_text), ("FECHA", date), ("DIBUJÓ", drawn_by),
             ("REVISÓ", reviewed_by), ("LÁMINA", sheet_number)]
     desbordes = []

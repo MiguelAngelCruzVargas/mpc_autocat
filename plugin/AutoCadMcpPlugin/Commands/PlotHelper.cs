@@ -172,14 +172,28 @@ namespace AutoCadMcpPlugin.Commands
                     ps.CopyFrom(layout);
 
                     var psv = PlotSettingsValidator.Current;
+                    // Con media=null el dispositivo vuelve a SU papel por
+                    // defecto (A4/Letter): una lámina A2 ploteada 1:1 sobre esa
+                    // hoja salía cortada, con solo la esquina inferior izquierda.
+                    // Se conserva el papel de la lámina; solo si el dispositivo
+                    // no lo tiene se cae al default.
+                    string papel = ps.CanonicalMediaName;
                     try
                     {
-                        psv.SetPlotConfigurationName(ps, device, null);
+                        psv.SetPlotConfigurationName(ps, device,
+                            string.IsNullOrEmpty(papel) ? null : papel);
                     }
-                    catch (System.Exception ex)
+                    catch (System.Exception)
                     {
-                        throw new InvalidOperationException(
-                            $"No se pudo usar el dispositivo de impresión '{device}': {ex.Message}");
+                        try
+                        {
+                            psv.SetPlotConfigurationName(ps, device, null);
+                        }
+                        catch (System.Exception ex)
+                        {
+                            throw new InvalidOperationException(
+                                $"No se pudo usar el dispositivo de impresión '{device}': {ex.Message}");
+                        }
                     }
                     psv.RefreshLists(ps);
                     // La ventana se fija ANTES del tipo: SetPlotWindowArea

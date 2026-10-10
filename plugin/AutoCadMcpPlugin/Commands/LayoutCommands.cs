@@ -106,6 +106,11 @@ namespace AutoCadMcpPlugin.Commands
                     psv.SetCanonicalMediaName(ps, match);
                 }
 
+                // Rotación explícita: CreateLayout hereda la de la plantilla
+                // (90°, visto en vivo) y la hoja salía acostada respecto de la
+                // orientación que esta misma tool devuelve.
+                psv.SetPlotRotation(ps, PlotRotation.Degrees000);
+
                 layout.CopyFrom(ps);
             }
         }

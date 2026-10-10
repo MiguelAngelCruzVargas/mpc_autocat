@@ -12,6 +12,7 @@ Unidades: las del modelo (metros si dibujás en metros).
 from __future__ import annotations
 
 import math
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
 import autocad_client as acad
@@ -67,8 +68,14 @@ def ensure_dim_style(scale: float = 0.0, decimals: int = 2,
     if _DIM_CHECKED[0]:
         return ESTILO_COTAS
     _DIM_CHECKED[0] = True
+    params: dict[str, Any] = {}
+    texto = layers.current_text_style()
+    if texto:
+        # La misma letra que el resto del plano (ver current_text_style).
+        params["textStyle"] = texto
     try:
         acad.call("set_dim_style", {
+            **params,
             "name": ESTILO_COTAS,
             "textHeight": paper_mm,
             "arrowSize": paper_mm,
@@ -620,6 +627,8 @@ LINE_IN_BAND_MM = 4.0  # donde cae la linea de cota dentro de esa franja
 GAP_MM = 2.0         # aire entre una cadena y lo que ya estaba
 FIRST_GAP_MM = 6.0   # aire entre el dibujo y la primera cadena
 MIN_TRAMO_MM = 9.0   # abajo de esto el numero no entra entre las flechas
+DIM_TEXT_MM = 2.0    # alto del numero de cota en papel (ensure_dim_style)
+CHAR_W_COTA = 0.87   # ancho por caracter / alto, arial (ver preview.py)
 
 
 # Escalas para las que se genera un estilo de cota si no piden otras. Son las
@@ -834,19 +843,28 @@ def create_dimension_chain(
         p0, p1 = punto(a), punto(b)
         medio = (a + b) / 2.0
         dim_x, dim_y = (medio, coord_linea) if horizontal else (coord_linea, medio)
+        largo = b - a
+        tramos.append(round(largo, 3))
+        # El numero de un tramo corto no entra entre las flechas: AutoCAD lo
+        # tiraba afuera ENCIMA del vecino ("0.431.50"). Se dibuja la cota sin
+        # numero y el numero va a un renglon aparte, por fuera de la cadena,
+        # que es como lo resuelve un dibujante.
+        corto = largo < minimo
         handles.append(acad.call("create_dimension_rotated", {
             "x1": p0[0], "y1": p0[1], "x2": p1[0], "y2": p1[1],
             "dimLineX": dim_x, "dimLineY": dim_y, "angleDeg": angulo,
-            "layer": layer, "style": style, "scale": upm, "text": None,
+            "layer": layer, "style": style, "scale": upm,
+            "text": " " if corto else None,
             "lineweight": lineweight, "colorIndex": None,
         })["handle"])
-        largo = b - a
-        tramos.append(round(largo, 3))
-        if largo < minimo:
+        if corto:
             apretados.append({"from": round(a, 3), "to": round(b, 3),
                               "length": round(largo, 3)})
 
-    caja = space.band_box(side, reference, inicio, banda, cortes[0], cortes[-1])
+    renglones = _numeros_afuera(apretados, side, coord_linea, upm, layer)
+    extra = space.paper(RENGLON_MM * renglones + 1.0, upm) if renglones else 0.0
+    caja = space.band_box(side, reference, inicio, banda + extra,
+                          cortes[0], cortes[-1])
     banda_reservada = space.reserve(
         *caja, what=f"cotas {side} ({len(handles)} tramos)")
     banda_reservada["span"] = span
@@ -881,18 +899,67 @@ def create_dimension_chain(
             "extremos, o ponele su propia cota total a cada uno.")
 
     if apretados:
-        # No se falla: la cota se dibuja igual, porque el dato es correcto.
-        # Pero el numero no entra entre las flechas y AutoCAD lo va a tirar
-        # afuera pisando al vecino, asi que hay que decirlo.
+        # Ya no se pisan (van en su renglon), pero se informa: un tramo de
+        # pocos centimetros en una cadena de vanos suele ser un machon que
+        # conviene revisar en el proyecto.
         resultado["tightSegments"] = apretados
-        resultado["warning"] = (
+        aviso = (
             f"{len(apretados)} tramo(s) por debajo de {MIN_TRAMO_MM:g} mm de "
-            "papel: el numero no entra entre las flechas y va a salirse "
-            "encima de la cota de al lado ("
+            "papel: su numero va en un renglon aparte, por fuera de la cadena ("
             + ", ".join(f"{t['length']:.2f} entre {t['from']:.2f} y {t['to']:.2f}"
-                        for t in apretados)
-            + "). Sacalos a una cadena de detalle o resolvelos con un leader.")
+                        for t in apretados) + ").")
+        resultado["warning"] = ((resultado["warning"] + " ")
+                                if resultado.get("warning") else "") + aviso
     return resultado
+
+
+RENGLON_MM = 3.0     # separacion entre renglones de numeros sacados afuera
+
+
+def _numeros_afuera(apretados: list[dict[str, Any]], side: str,
+                    coord_linea: float, upm: float, layer: str) -> int:
+    """Escribe el numero de cada tramo corto en un renglon por fuera de la
+    linea de cota, centrado en su tramo. Si dos numeros se pisarian en el
+    mismo renglon, el segundo baja al siguiente. Devuelve cuantos renglones
+    hicieron falta (para reservar la franja)."""
+    if not apretados:
+        return 0
+    alto = space.paper(DIM_TEXT_MM, upm)
+    paso = space.paper(RENGLON_MM, upm)
+    horizontal = side in ("bottom", "top")
+    ocupado: list[list[tuple[float, float]]] = []
+    for t in apretados:
+        # Redondeo como el de AutoCAD (mitad hacia arriba): 0.425 es "0.43"
+        # en la cota, y el numero de afuera tiene que decir lo mismo.
+        texto = str(Decimal(repr(t["length"])).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP))
+        ancho = len(texto) * alto * CHAR_W_COTA
+        medio = (t["from"] + t["to"]) / 2.0
+        a0, a1 = medio - ancho / 2.0, medio + ancho / 2.0
+        r = 0
+        while r < len(ocupado) and any(a0 < b1 + alto * 0.5 and b0 < a1 + alto * 0.5
+                                       for b0, b1 in ocupado[r]):
+            r += 1
+        if r == len(ocupado):
+            ocupado.append([])
+        ocupado[r].append((a0, a1))
+        # Linea base del renglon r, siempre del lado de AFUERA de la linea
+        # de cota (el numero normal queda del otro lado o encima).
+        if side == "bottom":
+            base = coord_linea - space.paper(1.0, upm) - alto - r * paso
+        elif side == "top":
+            base = coord_linea + space.paper(3.6, upm) + r * paso
+        elif side == "left":
+            base = coord_linea - space.paper(3.6, upm) - r * paso
+        else:
+            base = coord_linea + space.paper(1.0, upm) + alto + r * paso
+        if horizontal:
+            _text(texto, a0, base, alto, layer)
+        else:
+            # Rotado 90: corre hacia +y y los glifos quedan a la izquierda
+            # de la linea base.
+            _text(texto, base, a0, alto, layer, rotation=90.0)
+    return len(ocupado)
 
 
 # ------------------------------------------------------- flecha de flujo
