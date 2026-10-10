@@ -38,3 +38,6 @@ mcp_server/plot.log
 autocad-ia.log
 
 agent/__pycache__/
+
+# Bytecode de los scripts de tools/ (coordinacion.py, run_code_acceso.py)
+tools/__pycache__/
