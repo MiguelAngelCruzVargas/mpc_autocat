@@ -85,6 +85,58 @@ def _areas(handles: list[str], label: str) -> list[float]:
     return out
 
 
+def _volumenes_solidos(handles: list[str], label: str) -> list[float]:
+    """Volumen REAL de cada sólido 3D, medido por AutoCAD (MassProperties)
+    a través de run_code, en modo solo lectura. Es lo que permite cuantificar
+    el block de los muros desde el modelo: el sólido ya tiene restados los
+    vanos y recortado el remate contra la losa inclinada, cosa que ningún
+    contorno 2D sabe."""
+    import re
+    import engine
+    for h in handles:
+        if not re.fullmatch(r"[0-9A-Fa-f]{1,16}", str(h)):
+            raise ValueError(f"'{label}': {h!r} no es un handle válido.")
+    lista = ", ".join('"%s"' % h for h in handles)
+    codigo = ("var r = new List<double>(); "
+              "foreach (var h in new string[] { " + lista + " }) { "
+              "var s = tr.GetObject(H(h), OpenMode.ForRead) as Solid3d; "
+              "if (s == null) throw new System.Exception(\"no es un sólido 3D: \" + h); "
+              "r.Add(s.MassProperties.Volume); } "
+              "return r;")
+    r = engine.run_code(codigo, description=f"calculate_quantities: volumen de '{label}'",
+                        force=True)
+    if (not r.get("compiled") or r.get("blocked") or r.get("exception")
+            or not isinstance(r.get("result"), list)):
+        raise ValueError(f"'{label}': no se pudieron medir los sólidos "
+                         f"({r.get('message') or r.get('exception')}).")
+    return [float(v) for v in r["result"]]
+
+
+def _areas_item(item: dict[str, Any], label: str) -> list[float]:
+    """Áreas del concepto: de contornos 2D ('handles') o, para muros, de
+    sólidos 3D ('solid_handles' + 'solid_thickness'): área neta de UNA cara
+    = volumen / espesor."""
+    if item.get("solid_handles"):
+        t = item.get("solid_thickness")
+        if not t or float(t) <= 0:
+            raise ValueError(f"'{label}': con 'solid_handles' hace falta "
+                             "'solid_thickness' (espesor del muro) para pasar "
+                             "de volumen a área de cara.")
+        return [v / float(t) for v in _volumenes_solidos(item["solid_handles"], label)]
+    return _areas(item.get("handles") or [], label)
+
+
+def _descontar(area: float, item: dict[str, Any], label: str) -> float:
+    """'deduct_area': m² que el paño medido incluye pero no lleva este
+    material (la cara de castillos y dalas dentro del muro no es block).
+    Tiene que venir de otro concepto ya medido, no de un número suelto."""
+    d = float(item.get("deduct_area", 0.0) or 0.0)
+    if d < 0 or d > area:
+        raise ValueError(f"'{label}': deduct_area ({d:g}) tiene que estar entre "
+                         f"0 y el área medida ({area:g}).")
+    return area - d
+
+
 def _perimeter(handle: str, label: str, what: str) -> float:
     try:
         return float(acad.call("get_entity", {"handle": handle})["length"])
@@ -222,14 +274,24 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
                 f"Item #{i + 1}: type tiene que ser uno de {VALID_TYPES}, no {tipo!r}.")
         label = str(item.get("label", f"Item {i + 1}"))
 
-        if tipo == "concrete_volume":
+        if tipo == "concrete_volume" and item.get("solid_handles")                 and not item.get("solid_thickness"):
+            waste_pct = float(item.get("waste_pct", 0.0))
+            vols = _volumenes_solidos(item["solid_handles"], label)
+            volumen = sum(vols) * (1 + waste_pct / 100.0)
+            filas.append({"label": label, "type": tipo,
+                          "solidVolumes": [round(v, 4) for v in vols],
+                          "wastePct": waste_pct,
+                          "volume": round(volumen, 4), "unit": "m3"})
+            _sumar("concreto_m3", volumen)
+
+        elif tipo == "concrete_volume":
             depth = item.get("depth")
             if not depth or depth <= 0:
                 raise ValueError(
                     f"'{label}': concrete_volume necesita 'depth' > 0 (la "
                     "profundidad real que esta vista no muestra).")
             waste_pct = float(item.get("waste_pct", 0.0))
-            areas = _areas(item.get("handles") or [], label)
+            areas = _areas_item(item, label)
             area = sum(areas)
             volumen = area * depth * (1 + waste_pct / 100.0)
             filas.append({"label": label, "type": tipo,
@@ -288,8 +350,8 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
             brick_h = float(item.get("brick_h", 0.07))
             joint = float(item.get("joint", 0.015))
             waste_pct = float(item.get("waste_pct", 5.0))
-            areas = _areas(item.get("handles") or [], label)
-            area = sum(areas)
+            areas = _areas_item(item, label)
+            area = _descontar(sum(areas), item, label)
             modulo = (brick_w + joint) * (brick_h + joint)
             piezas = math.ceil(area / modulo * (1 + waste_pct / 100.0))
             filas.append({"label": label, "type": tipo,
@@ -311,8 +373,8 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
             brick_depth = float(item.get("brick_depth", thickness))
             joint = float(item.get("joint", 0.015))
             waste_pct = float(item.get("waste_pct", 0.0))
-            areas = _areas(item.get("handles") or [], label)
-            area = sum(areas)
+            areas = _areas_item(item, label)
+            area = _descontar(sum(areas), item, label)
             wall_vol = area * thickness
             modulo = (brick_w + joint) * (brick_h + joint)
             piezas_sin_merma = area / modulo  # el mortero llena juntas reales, sin inflar por merma
@@ -409,12 +471,11 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
                                        "kg": round(kg_estribos, 2)}
 
             if mesh_kg_m2:
-                handles = item.get("handles")
-                if not handles:
+                if not (item.get("handles") or item.get("solid_handles")):
                     raise ValueError(
                         f"'{label}': mesh_kg_m2 necesita 'handles' del área de "
-                        "losa ya dibujada.")
-                areas = _areas(handles, label)
+                        "losa ya dibujada (o 'solid_handles' + 'solid_thickness').")
+                areas = _areas_item(item, label)
                 area = sum(areas)
                 kg_mesh = area * float(mesh_kg_m2)
                 peso += kg_mesh
@@ -447,7 +508,7 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
             depth = item.get("depth")
             if not depth or depth <= 0:
                 raise ValueError(f"'{label}': earthwork necesita 'depth' > 0.")
-            areas = _areas(item.get("handles") or [], label)
+            areas = _areas_item(item, label)
             area = sum(areas)
             excav_vol = area * depth
 
@@ -519,11 +580,15 @@ def calculate_quantities(items: list[dict[str, Any]]) -> dict[str, Any]:
                     f"'{label}': area_finish necesita 'material' (p.ej. "
                     "'aplanado', 'piso', 'pintura', 'impermeabilizante') para "
                     "totalizar por concepto.")
-            areas = _areas(item.get("handles") or [], label)
+            areas = _areas_item(item, label)
             area = sum(areas)
             coats = int(item.get("coats", 1) or 1)
             if coats <= 0:
                 raise ValueError(f"'{label}': 'coats' tiene que ser >= 1.")
+            # 'faces': cuántas caras del mismo paño se terminan (un aplanado
+            # en las dos caras de un muro es el doble del área de una cara).
+            caras = float(item.get("faces", 1) or 1)
+            area = area * caras
             waste_pct = float(item.get("waste_pct", 0.0))
             area_total = area * coats
             billable_area = area_total * (1 + waste_pct / 100.0)

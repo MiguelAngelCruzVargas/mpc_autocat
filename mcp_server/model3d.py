@@ -126,6 +126,92 @@ def _losa(rooms: list[dict[str, Any]], exterior_thickness: float,
     return lazos
 
 
+def _techado(x: float, y: float, contorno: list) -> bool:
+    """¿El punto cae bajo la losa? (dentro de un contorno y fuera de sus
+    huecos, como el patio de luz)."""
+    for ext, huecos in contorno:
+        if point_in_polygon(x, y, ext) and not any(
+                point_in_polygon(x, y, h) for h in huecos):
+            return True
+    return False
+
+
+def _bardas(muros: list[dict[str, Any]], contorno: list, fence: float,
+            hf: float, pendiente: float, y_frente: float, h_max: float,
+            tol: float) -> tuple[list[dict[str, Any]], float]:
+    """Los tramos de muro SIN techo de ningún lado (bardas de patio), como
+    cajas a restar por encima de 'fence', y el volumen que se va con ellas.
+
+    Un muro de colindancia corre de la calle al fondo en UN solo eje: el
+    tramo junto a la casa sigue a toda altura y el del patio baja a barda.
+    Por eso se recorre el eje en pasos de 5 cm y se mira a los dos costados,
+    en vez de clasificar el muro entero."""
+    cortes: list[dict[str, Any]] = []
+    rects: list[list] = []
+    for m in muros:
+        (x0, y0), (x1, y1) = m["points"][0], m["points"][-1]
+        largo = math.hypot(x1 - x0, y1 - y0)
+        if largo < 1e-9:
+            continue
+        ux, uy = (x1 - x0) / largo, (y1 - y0) / largo
+        t = float(m["thickness"])
+        sonda = t / 2.0 + 0.05
+
+        def sin_techo(d: float) -> bool:
+            px, py = x0 + ux * d, y0 + uy * d
+            return not (_techado(px - uy * sonda, py + ux * sonda, contorno)
+                        or _techado(px + uy * sonda, py - ux * sonda, contorno))
+
+        def borde(a: float, b: float) -> float:
+            # a y b de distinto lado: bisección hasta el borde exacto.
+            ea = sin_techo(a)
+            for _ in range(40):
+                c = (a + b) / 2.0
+                if sin_techo(c) == ea:
+                    a = c
+                else:
+                    b = c
+            return (a + b) / 2.0
+
+        pasos = max(2, int(largo / 0.05))
+        ds = [largo * k / pasos for k in range(pasos + 1)]
+        estado = [sin_techo(d) for d in ds]
+        k = 0
+        while k <= pasos:
+            if not estado[k]:
+                k += 1
+                continue
+            j = k
+            while j + 1 <= pasos and estado[j + 1]:
+                j += 1
+            a = 0.0 if k == 0 else borde(ds[k - 1], ds[k])
+            b = largo if j == pasos else borde(ds[j], ds[j + 1])
+            # En una punta libre o una esquina de bardas la caja sigue medio
+            # muro, para llevarse el cuadrito de la esquina; donde empieza
+            # el techo, corta justo en la cara.
+            a -= t / 2.0 if k == 0 else 0.0
+            b += t / 2.0 if j == pasos else 0.0
+            if b - a > 1e-6:
+                cortes.append({"cx": x0 + ux * (a + b) / 2.0,
+                               "cy": y0 + uy * (a + b) / 2.0,
+                               "largo": b - a, "ancho": t + 2 * HOLGURA_VANO,
+                               "alto": h_max - fence + 1.0 + abs(pendiente) * 100.0,
+                               "angulo": math.atan2(uy, ux)})
+                px0, py0 = x0 + ux * a, y0 + uy * a
+                px1, py1 = x0 + ux * b, y0 + uy * b
+                nx, ny = -uy * t / 2.0, ux * t / 2.0
+                rects.append([(px0 - nx, py0 - ny), (px1 - nx, py1 - ny),
+                              (px1 + nx, py1 + ny), (px0 + nx, py0 + ny)])
+            k = j + 1
+
+    if not cortes:
+        return [], 0.0
+    lazos, _abiertas = wall_network.outline(rects, [], tol)
+    area = sum(wall_network._signed_area(l) for l in lazos)
+    iy = sum(_integral_y(l) for l in lazos)
+    return cortes, (hf - fence) * area - pendiente * (iy - y_frente * area)
+
+
 def _integral_y(poly: list) -> float:
     """∫ y dA del polígono, con signo (los huecos horarios restan). Es lo que
     da el volumen bajo una losa inclinada: altura media = la del centroide."""
@@ -155,7 +241,8 @@ def build(rooms: list[dict[str, Any]],
           slab_layer: str = LAYER_LOSA_3D,
           visual_style: str = "Realistic",
           roof_layer: Optional[str] = None,
-          roof_visible: bool = False) -> dict[str, Any]:
+          roof_visible: bool = False,
+          fence_height: Optional[float] = None) -> dict[str, Any]:
     """Todo lo que hace falta para el 3D, calculado en Python: el C# a
     ejecutar y los volúmenes esperados. No toca AutoCAD.
 
@@ -164,6 +251,9 @@ def build(rooms: list[dict[str, Any]],
     de atrás (y máxima). Si vienen, la losa va INCLINADA entre las dos y
     los muros terminan contra ella; mandan sobre wall_height.
     floor_thickness: firme de piso bajo base_z (base_z es el N.P.T.).
+    fence_height: alto de las BARDAS (muros sin techo de ningún lado, p.ej.
+    los del patio). Sin esto suben hasta el plano de la losa, que es una
+    barda de casi 3 m que nadie pidió y que infla los m² de block.
     roof_layer / roof_visible: la losa de CUBIERTA va en su propia capa
     (por default slab_layer + '_CUBIERTA') y APAGADA: el 3D es para ver la
     distribución por dentro, y el techo encima la tapa. Se modela igual
@@ -238,6 +328,15 @@ def build(rooms: list[dict[str, Any]],
     iy = sum(_integral_y(l) for l in red["loops"])
     vol_bruto = hf * area_muros - pendiente * (iy - y_frente * area_muros)
     vol_muros = vol_bruto - sum(c["volumen"] for c in cajas)
+
+    bardas = []
+    if fence_height is not None and contorno:
+        bardas, vol_quitado = _bardas(muros, contorno, float(fence_height),
+                                      hf, pendiente, y_frente, max(hf, hb), tol)
+        vol_muros -= vol_quitado
+        for b in bardas:
+            b["cx"] += dx
+            b["cz"] = base_z + float(fence_height) + b["alto"] / 2.0
     # Con losa inclinada el volumen sigue siendo área × espesor: es un prisma
     # vertical cortado por dos planos paralelos (espesor medido en vertical).
     area_techada = sum(
@@ -258,7 +357,9 @@ def build(rooms: list[dict[str, Any]],
         "code": _codigo(grupos, cajas, losa, piso, base_z, hf, hb,
                         y_frente, y_fondo, slab_thickness, floor_thickness,
                         walls_layer, slab_layer, visual_style,
-                        roof_layer or slab_layer + "_CUBIERTA", roof_visible),
+                        roof_layer or slab_layer + "_CUBIERTA", roof_visible,
+                        bardas),
+        "fences": len(bardas),
         "roofLayer": roof_layer or slab_layer + "_CUBIERTA",
         "offset": [dx, 0.0],
         "openings": len(cajas),
@@ -335,6 +436,7 @@ System.Action<Solid3d, Solid3d> recortar = delegate(Solid3d s, Solid3d c)
 var muros = new System.Collections.Generic.List<Solid3d>();
 %MUROS%
 %RECORTE%
+%BARDAS%
 
 // Vanos: cada caja se resta del muro que toca. Si ninguno pierde volumen,
 // el vano no se restó y se avisa.
@@ -356,6 +458,19 @@ return muros.Count;
 """
 
 _MURO = "muros.Add(extruir({ext}, new double[][] {{ {huecos} }}, {z0}, {alto}));"
+
+# Barda: lo que sobra por encima de su alto se quita con una caja; una caja
+# nueva por muro, porque restar consume el sólido que se resta.
+_BARDA = """foreach (var m in muros)
+{{
+    var corte = new Solid3d();
+    corte.CreateBox({largo}, {ancho}, {alto});
+    corte.TransformBy(Matrix3d.Rotation({ang}, Vector3d.ZAxis, Point3d.Origin));
+    corte.TransformBy(Matrix3d.Displacement(new Vector3d({cx}, {cy}, {cz})));
+    if (tocan(m.GeometricExtents, corte.GeometricExtents))
+        m.BooleanOperation(BooleanOperationType.BoolSubtract, corte);
+    corte.Dispose();
+}}"""
 
 _VANO = """vano++;
 {{
@@ -430,7 +545,8 @@ def _codigo(grupos: list, cajas: list, losa: list, piso: list,
             base_z: float, hf: float, hb: float, y_frente: float,
             y_fondo: float, slab_thickness: float, floor_thickness: float,
             walls_layer: str, slab_layer: str, visual_style: str,
-            roof_layer: str = "", roof_visible: bool = True) -> str:
+            roof_layer: str = "", roof_visible: bool = True,
+            bardas: Optional[list] = None) -> str:
     def huecos(hs: list) -> str:
         return ", ".join(_arreglo(h) for h in hs)
 
@@ -449,6 +565,11 @@ def _codigo(grupos: list, cajas: list, losa: list, piso: list,
                      alto=_num(h_max)) for e, hs in grupos)
     recorte_cs = ("foreach (var m in muros) recortar(m, cuchilla("
                   f"{_num(base_z + hf)}, true));" if inclinada else "")
+    bardas_cs = "\n".join(
+        _BARDA.format(largo=_num(b["largo"]), ancho=_num(b["ancho"]),
+                      alto=_num(b["alto"]), ang=_num(b["angulo"]),
+                      cx=_num(b["cx"]), cy=_num(b["cy"]), cz=_num(b["cz"]))
+        for b in (bardas or []))
     vanos_cs = "\n".join(
         _VANO.format(largo=_num(c["largo"]), ancho=_num(c["ancho"]),
                      alto=_num(c["alto"]), ang=_num(c["angulo"]),
@@ -484,6 +605,7 @@ def _codigo(grupos: list, cajas: list, losa: list, piso: list,
 
     return (_PLANTILLA.replace("%MUROS%", muros_cs)
             .replace("%RECORTE%", recorte_cs)
+            .replace("%BARDAS%", bardas_cs)
             .replace("%VANOS%", vanos_cs)
             .replace("%LOSA%", losa_cs)
             .replace("%PISO%", piso_cs)
@@ -538,7 +660,8 @@ def create_3d_model(rooms: list[dict[str, Any]],
                     slab_layer: str = LAYER_LOSA_3D,
                     visual_style: str = "Realistic",
                     roof_layer: Optional[str] = None,
-                    roof_visible: bool = False) -> dict[str, Any]:
+                    roof_visible: bool = False,
+                    fence_height: Optional[float] = None) -> dict[str, Any]:
     """Levanta la planta en 3D con run_code. Ver build() y la spec §4."""
     import engine  # diferido: el motor puede no estar (o estar apagado)
 
@@ -553,7 +676,8 @@ def create_3d_model(rooms: list[dict[str, Any]],
                   clear_height_back=clear_height_back,
                   floor_thickness=floor_thickness, walls_layer=walls_layer,
                   slab_layer=slab_layer, visual_style=visual_style,
-                  roof_layer=roof_layer, roof_visible=roof_visible)
+                  roof_layer=roof_layer, roof_visible=roof_visible,
+                  fence_height=fence_height)
     codigo = datos["code"]
     if not view:
         inicio = codigo.index("try\n{\n    var vista")

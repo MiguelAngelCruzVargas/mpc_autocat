@@ -871,6 +871,119 @@ def _informar_huecos(resultado: dict[str, Any], holes: list[dict[str, Any]],
             + ". Corre el hueco o llevalo hasta la esquina.")
 
 
+# ------------------------------------------------------------ castillos
+
+LAYER_CASTILLOS = "CASTILLOS"
+
+
+def plan_castillos(rooms: list[dict[str, Any]],
+                   doors: Optional[list[dict[str, Any]]] = None,
+                   windows: Optional[list[dict[str, Any]]] = None,
+                   exterior_thickness: float = 0.15,
+                   interior_thickness: float = 0.10,
+                   max_spacing: float = 3.0,
+                   tol: float = 0.02) -> dict[str, Any]:
+    """Dónde van los castillos de una muraria confinada, SIN dibujar.
+
+    Criterio de mampostería confinada: en cada esquina, cruce, T y punta
+    libre de muro; a los dos lados de cada ventana y de cada puerta en muro
+    exterior (el vano debilita el muro justo ahí); y si un tramo entre dos
+    castillos pasa 'max_spacing', se intercalan los que hagan falta,
+    repartidos parejo. Parte de la misma muraria que draw_layout
+    (plan_walls), así que caen exactamente en los muros dibujados."""
+    plan = plan_walls(rooms, doors, windows,
+                      exterior_thickness=exterior_thickness,
+                      interior_thickness=interior_thickness)
+    puntos: list[tuple[Point, bool]] = []   # (punto, es esquina/cruce/punta)
+
+    def sumar(p: Point, fijo: bool) -> None:
+        puntos.append(((round(p[0], 4), round(p[1], 4)), fijo))
+
+    for m in plan["walls"]:
+        (x0, y0), (x1, y1) = m["points"][0], m["points"][-1]
+        largo = math.hypot(x1 - x0, y1 - y0)
+        if largo < 1e-9:
+            continue
+        ux, uy = (x1 - x0) / largo, (y1 - y0) / largo
+        t = float(m["thickness"])
+        ext = abs(t - exterior_thickness) < 1e-9 and exterior_thickness != interior_thickness
+        en = lambda d: (x0 + ux * d, y0 + uy * d)
+        # Extremos del muro (esquinas, T, cruces, puntas libres).
+        marcas = [0.0, largo]
+        for o in m.get("openings", []):
+            tipo = str(o.get("type", "door")).lower()
+            if tipo == "window" or (tipo == "door" and (ext or exterior_thickness == interior_thickness)):
+                a = o["distance"] - o["width"] / 2.0 - t / 2.0
+                b = o["distance"] + o["width"] / 2.0 + t / 2.0
+                marcas += [d for d in (a, b) if t / 2.0 < d < largo - t / 2.0]
+        marcas = sorted(set(round(d, 4) for d in marcas))
+        # Separación máxima: se intercalan parejo, salteando los vanos.
+        final = [marcas[0]]
+        for d in marcas[1:]:
+            hueco = d - final[-1]
+            dentro_de_vano = any(
+                final[-1] >= o["distance"] - o["width"] / 2.0 - t
+                and d <= o["distance"] + o["width"] / 2.0 + t
+                for o in m.get("openings", []))
+            if hueco > max_spacing and not dentro_de_vano:
+                n = math.ceil(hueco / max_spacing)
+                final += [final[-1] + hueco * k / n for k in range(1, n)]
+            final.append(d)
+        for d in final:
+            sumar(en(min(max(d, 0.0), largo)), d in (0.0, round(largo, 4)) or d <= 1e-9
+                  or d >= largo - 1e-9)
+
+    # Dos castillos a menos de dos anchos son uno solo en obra (el machón de
+    # 0.35 entre una ventana y una puerta lleva UN castillo, no dos pegados).
+    # Si en el grupo hay una esquina/cruce/punta, el castillo queda AHÍ: el
+    # nudo de muros es lo que confina, el de la jamba se suma a él.
+    fundir = 2.0 * 0.15
+    grupos: list[list[tuple[Point, bool]]] = []
+    for p, fijo in puntos:
+        g = next((g for g in grupos if any(math.dist(p, q) < fundir for q, _f in g)), None)
+        if g is None:
+            grupos.append([(p, fijo)])
+        else:
+            g.append((p, fijo))
+    finales = []
+    for g in grupos:
+        base = [q for q, f in g if f] or [q for q, _f in g]
+        finales.append((round(sum(q[0] for q in base) / len(base), 4),
+                        round(sum(q[1] for q in base) / len(base), 4)))
+    return {"points": [[p[0], p[1]] for p in finales], "count": len(finales),
+            "maxSpacing": max_spacing}
+
+
+def create_castillos(rooms: list[dict[str, Any]],
+                     doors: Optional[list[dict[str, Any]]] = None,
+                     windows: Optional[list[dict[str, Any]]] = None,
+                     exterior_thickness: float = 0.15,
+                     interior_thickness: float = 0.10,
+                     size: float = 0.15, max_spacing: float = 3.0,
+                     layer: str = LAYER_CASTILLOS) -> dict[str, Any]:
+    """Dibuja los castillos de plan_castillos: un cuadro de 'size' relleno
+    sólido en cada punto, que es como se ven en planta. Devuelve los handles
+    de los cuadros: calculate_quantities los mide (área × alto) para el
+    concreto, en vez de contarlos a mano."""
+    r = plan_castillos(rooms, doors, windows, exterior_thickness,
+                       interior_thickness, max_spacing)
+    _ensure_layer(layer, 8, LW_WALL)
+    h = size / 2.0
+    handles = []
+    for x, y in r["points"]:
+        pl = _polyline([(x - h, y - h), (x + h, y - h), (x + h, y + h), (x - h, y + h)],
+                       layer, LW_WALL, closed=True)
+        handles.append(pl)
+        try:
+            acad.call("create_hatch", {"boundaryHandle": pl, "pattern": "SOLID",
+                                       "scale": 1.0, "angleDeg": 0.0, "layer": layer,
+                                       "lineweight": None, "colorIndex": None})
+        except acad.AutoCadError:
+            pass  # sin relleno el castillo igual se lee y se mide
+    r.update({"handles": handles, "size": size, "layer": layer})
+    return r
+
+
 # ------------------------------------------------- red de muros, una vez
 
 def create_wall_network(

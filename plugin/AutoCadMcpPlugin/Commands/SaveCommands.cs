@@ -55,7 +55,19 @@ namespace AutoCadMcpPlugin.Commands
                     $"Ya existe '{path}'. Pasá overwrite=true si querés reemplazarlo.");
             }
 
-            db.SaveAs(path, DwgVersion.Current);
+            // Guardar sobre el MISMO archivo del que se abrió el dibujo: con
+            // SaveAs(path, version) AutoCAD tira eFilerError, porque el .dwg
+            // está tomado por esta misma base de datos. Hay que pedirle que
+            // lo pase a .bak y renombre (la sobrecarga con bBakAndRename), que
+            // es lo que hace QSAVE. Sin esto, el ciclo de corrección —abrir
+            // un plano, corregir, guardar— fallaba justo en el último paso.
+            bool mismoArchivo = !string.IsNullOrEmpty(db.Filename)
+                && string.Equals(Path.GetFullPath(db.Filename), path,
+                                 StringComparison.OrdinalIgnoreCase);
+            if (mismoArchivo)
+                db.SaveAs(path, true, DwgVersion.Current, db.SecurityParameters);
+            else
+                db.SaveAs(path, DwgVersion.Current);
 
             return new JsonObject
             {

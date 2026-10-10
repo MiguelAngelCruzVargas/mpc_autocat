@@ -1166,6 +1166,29 @@ def draw_layout(rooms: list[dict[str, Any]],
 
 
 @mcp.tool()
+def create_castillos(rooms: list[dict[str, Any]],
+                     doors: Optional[list[dict[str, Any]]] = None,
+                     windows: Optional[list[dict[str, Any]]] = None,
+                     exterior_thickness: float = 0.15,
+                     interior_thickness: float = 0.10,
+                     size: float = 0.15, max_spacing: float = 3.0,
+                     layer: str = "CASTILLOS") -> dict[str, Any]:
+    """Castillos de la muraria confinada, ubicados y dibujados solos: en
+    esquinas, cruces, T y puntas libres; a los dos lados de cada ventana y
+    de cada puerta de muro exterior; e intercalados donde un tramo supere
+    'max_spacing'. Dos a menos de dos anchos se funden en uno (el de la
+    esquina manda). Mismos rooms/doors/windows de draw_layout.
+
+    Devuelve 'handles' de los cuadros: pasalos a calculate_quantities
+    (concrete_volume con depth = alto del castillo) para cuantificarlos
+    medidos, y 'count' para el acero (steel_weight count)."""
+    return arch_mod.create_castillos(
+        rooms, doors, windows, exterior_thickness=exterior_thickness,
+        interior_thickness=interior_thickness, size=size,
+        max_spacing=max_spacing, layer=layer)
+
+
+@mcp.tool()
 def suggest_furniture(rooms: list[dict[str, Any]],
                       doors: Optional[list[dict[str, Any]]] = None,
                       draw: bool = True,
@@ -4446,7 +4469,8 @@ def create_3d_model(rooms: list[dict[str, Any]],
                     walls_layer: str = "3D-MUROS",
                     slab_layer: str = "3D-LOSA",
                     visual_style: str = "Realistic",
-                    roof_visible: bool = False) -> dict[str, Any]:
+                    roof_visible: bool = False,
+                    fence_height: Optional[float] = None) -> dict[str, Any]:
     """La planta en 3D: los MISMOS rooms/doors/windows de draw_layout (o de
     suggest_layout) levantados como sólidos — muros extruidos a wall_height
     con los encuentros ya rematados, vanos de puerta y ventana restados y
@@ -4462,6 +4486,9 @@ def create_3d_model(rooms: list[dict[str, Any]],
     adelante y en la de atrás); los muros terminan contra ella. base_z es
     el N.P.T. y floor_thickness el firme debajo. visual_style: 'Realistic',
     'Conceptual', 'Shaded with edges'...
+
+    fence_height: alto de las bardas (muros sin techo de ningún lado, como
+    los del patio): sin él suben hasta la losa. Es dato del proyecto.
 
     SIN TECHO por default (roof_visible=False): la losa de cubierta se
     modela —remata los muros— pero en su capa (slab_layer + '_CUBIERTA')
@@ -4479,7 +4506,8 @@ def create_3d_model(rooms: list[dict[str, Any]],
         view=view, clear_height_front=clear_height_front,
         clear_height_back=clear_height_back, floor_thickness=floor_thickness,
         walls_layer=walls_layer, slab_layer=slab_layer,
-        visual_style=visual_style, roof_visible=roof_visible)
+        visual_style=visual_style, roof_visible=roof_visible,
+        fence_height=fence_height)
 
 
 if __name__ == "__main__":
