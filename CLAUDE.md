@@ -885,6 +885,11 @@ nadie los pida:
 3. **`export_pdf`** de cada lámina, al lado del DWG.
 4. **`save_drawing`.**
 5. **Cerrar el dibujo.** AutoCAD queda como estaba antes.
+6. **`package_deliverables`.** Crea una carpeta con el NOMBRE DEL PROYECTO y
+   reparte los archivos por tipo: `DWG/` (para abrir en AutoCAD), `PDF/`
+   (una lámina por archivo) y `XLSX/`. Además une el juego completo en UN
+   PDF, `<proyecto> - JUEGO COMPLETO.pdf`, ordenado A, E, IE, IH, IS, IG, C.
+   No se borra nada: los individuales quedan y lo que ya existe no se pisa.
 
 Dos trampas que salieron al hacerlo en vivo:
 

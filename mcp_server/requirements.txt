@@ -11,3 +11,4 @@ openpyxl>=3.1,<4
 
 # Para correr la bateria: `python run_tests.py`. No hace falta pytest --
 # los tests son scripts sueltos con su propio main().
+pypdf>=4.0   # package_deliverables: une el juego de láminas en un PDF

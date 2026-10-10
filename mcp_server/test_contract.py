@@ -71,7 +71,9 @@ def main() -> int:
                  "inst_mod.",
                  # examen de edificio: revisar_proyecto (sin AutoCAD) y
                  # revisar_juego (lee el dibujo).
-                 "exam_mod.")
+                 "exam_mod.",
+                 # entregables: carpeta del proyecto y juego en un PDF (sin AutoCAD).
+                 "ent_mod.")
     patron = "|".join(re.escape(d) for d in delegados)
     silent = sorted(t for t in exposed if not re.search(
         r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|" + patron + ")",

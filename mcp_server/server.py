@@ -1877,6 +1877,25 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
 
 
 @mcp.tool()
+def package_deliverables(project: str, base_dir: str, files: list[str],
+                         move: bool = True, combine_pdf: bool = True,
+                         sheet_order: Optional[list[str]] = None) -> dict[str, Any]:
+    """ENTREGA de un proyecto, el último paso después de export_pdf: una
+    carpeta con el NOMBRE DEL PROYECTO y adentro una subcarpeta por tipo —
+    DWG (para abrir en AutoCAD, con su .bak), PDF (cada lámina), XLSX
+    (catálogo, cuantificación) — y el juego completo en UN solo PDF
+    ('<proyecto> - JUEGO COMPLETO.pdf'), ordenado por disciplina (A, E, IE,
+    IH, IS, IG, C) o por sheet_order.
+
+    Nada se borra: los archivos se mueven a su subcarpeta (move=False los
+    copia) y los PDF individuales quedan además del unido. Si ya existe un
+    archivo con ese nombre no se pisa: se avisa en 'warnings'. Cerrá el
+    dibujo antes (el DWG abierto en AutoCAD no se puede mover)."""
+    import entregables as ent_mod
+    return ent_mod.package_deliverables(project, base_dir, files, move, combine_pdf, sheet_order)
+
+
+@mcp.tool()
 def check_building_project(project: dict[str, Any]) -> dict[str, Any]:
     """EXAMEN de un edificio de vivienda, parte 1: los NÚMEROS de norma sobre
     lo diseñado, ANTES de dibujar (corre sin AutoCAD). Referencia CDMX:

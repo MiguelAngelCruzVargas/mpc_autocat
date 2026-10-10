@@ -81,13 +81,32 @@ namespace AutoCadMcpPlugin.Commands
                 {
                     psv.RefreshLists(ps);
                     var media = psv.GetCanonicalMediaNameList(ps);
+                    // Primero el nombre ENTERO: "A0" no puede ser parte de
+                    // "2A0" (1189x1682), que en la lista viene antes y era el
+                    // que se elegía -- una lámina pedida en A0 salió del doble
+                    // (visto en un edificio). Contener el texto queda de
+                    // respaldo, para nombres como "ARCH D".
+                    var entero = new System.Text.RegularExpressions.Regex(
+                        "(?<![A-Za-z0-9])" + System.Text.RegularExpressions.Regex.Escape(paperSize) +
+                        "(?![A-Za-z0-9])", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                     string match = null;
                     foreach (string m in media)
                     {
-                        if (m.IndexOf(paperSize, StringComparison.OrdinalIgnoreCase) >= 0)
+                        if (entero.IsMatch(m))
                         {
                             match = m;
                             break;
+                        }
+                    }
+                    if (match == null)
+                    {
+                        foreach (string m in media)
+                        {
+                            if (m.IndexOf(paperSize, StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                match = m;
+                                break;
+                            }
                         }
                     }
                     if (match == null)
