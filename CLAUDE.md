@@ -870,6 +870,31 @@ Ponele `group` a cada item: las partidas se ordenan solas en orden de obra.
 | Superficie de un espacio sin muros (cochera) descontando medio muro | `label_rooms` descuenta solo donde hay muro; esquiva las cotas |
 | "145.57 m² × 0.15 = 17.85 m³" (la cuenta no cierra) | La medición escribe el área neta y las caras con que se calculó |
 
+## 8.quater Cierre de TODO plano: lámina → check_all → PDF → guardar → cerrar
+
+Un plano no está terminado hasta que pasa por estos pasos, **siempre**, aunque
+nadie los pida:
+
+1. **La lámina.** Un layout con nombre por lámina (`IE-01`, `A-01`...) con
+   `compose_layout(..., sheet={"project", "location", "client", "content",
+   "drawn_by", "reviewed_by", "date", "sheet_number"})`. Dibuja el cajón y
+   el rótulo al tamaño real de la hoja y deja las vistas a escala, adentro
+   del cajón y a la izquierda del rótulo. Si falta un dato, la celda queda
+   en blanco (`blankFields`), nunca con un dato inventado.
+2. **`check_all`.**
+3. **`export_pdf`** de cada lámina, al lado del DWG.
+4. **`save_drawing`.**
+5. **Cerrar el dibujo.** AutoCAD queda como estaba antes.
+
+Dos trampas que salieron al hacerlo en vivo:
+
+- **AutoCAD crea su PROPIO viewport la primera vez que se activa un layout**
+  (`LAYOUTCREATEVIEWPORT`). Muestra el modelo entero a una escala cualquiera
+  y quedaba debajo del nuestro: dos plantas encimadas en la lámina, con
+  todos los checks en verde. `compose_layout` ahora lo borra solo.
+- **Layout1/Layout2 se borran DESPUÉS de crear las láminas propias.** Si se
+  borra el último layout de papel, AutoCAD crea otro `Layout1`.
+
 ## 9. Verificar antes de dar por terminado
 
 `check_all` corre todos los checks de cierre en una llamada, incluidos los

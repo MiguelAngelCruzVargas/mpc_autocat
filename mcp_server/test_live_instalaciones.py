@@ -11,9 +11,12 @@ Trabaja sobre UN SOLO dibujo, el plano de prueba
 si ya está abierto usa esa pestaña, si no lo abre, y solo si no existe
 arranca uno nuevo. Si la base arquitectónica ya está dibujada NO la rehace:
 borra únicamente las capas de instalaciones y las vuelve a dibujar, como se
-corrige un plano. Al final lo guarda y lo deja abierto — nunca deja
-pestañas sueltas (pasó: cada corrida abría un Drawing nuevo y quedaban
-cuatro pestañas en AutoCAD).
+corrige un plano. Nunca deja pestañas sueltas (pasó: cada corrida abría un
+Drawing nuevo y quedaban cuatro pestañas en AutoCAD).
+
+Cierra como se cierra todo plano: una LÁMINA por instalación (cajón,
+rótulo, vista a escala), check_all, PDF de cada lámina al lado del DWG,
+guardado y el dibujo CERRADO.
 
 Uso (con AutoCAD abierto):  python test_live_instalaciones.py
 """
@@ -82,8 +85,11 @@ def _registrar_base(rooms, doors) -> None:
             space.track(x0 - t, y0 - t, x1 + t, y1 + t, "muro MUROS")
     for m in furniture.suggest_furniture(rooms, doors, draw=False)["items"]:
         a = math.radians(m.get("rotation_deg", 0.0))
+        # Las piezas de medida fija (WC, buró) no traen width/depth.
+        w = m.get("width") or m.get("size") or ins.geo.ANCHO_MUEBLE.get(m["type"], 0.6)
+        d = m.get("depth") or m.get("size") or 0.7
         esq = [(u * math.cos(a) - v * math.sin(a), u * math.sin(a) + v * math.cos(a))
-               for u, v in ((0, 0), (m["width"], 0), (m["width"], m["depth"]), (0, m["depth"]))]
+               for u, v in ((0, 0), (w, 0), (w, d), (0, d))]
         xs = [m["x"] + e[0] for e in esq]
         ys = [m["y"] + e[1] for e in esq]
         space.track(min(xs), min(ys), max(xs), max(ys), f"mueble {m['type']}")
@@ -140,6 +146,83 @@ def _borrar_instalaciones() -> int:
     if handles:
         server.delete_entities(handles=handles)
     return len(handles)
+
+
+LAMINAS = (("IE-01", "INSTALACIÓN ELÉCTRICA"),
+           ("IH-01", "INSTALACIÓN HIDRÁULICA"),
+           ("IS-01", "INSTALACIÓN SANITARIA"))
+
+
+def _laminas(cajas: list[list[float]]) -> None:
+    """Todo plano terminado se entrega en su lámina: un layout por
+    instalación con cajón, rótulo y la vista adentro. Se rehacen en cada
+    corrida (en el mismo dibujo), no se apilan."""
+    import compose
+    existentes = {l["name"] for l in acad.call("list_layouts", {})["layouts"]}
+    for nombre, _ in LAMINAS:
+        if nombre in existentes:
+            acad.call("delete_layout", {"name": nombre})
+    for (nombre, contenido), caja in zip(LAMINAS, cajas):
+        r = compose.compose_layout(
+            nombre, views=[{"name": "planta", "box": caja, "scale_denominator": 75}],
+            model_units="m", paper_size="A1", draw_titles=False,
+            sheet={"project": "PRUEBA: CASA HABITACIÓN 8 x 20 m",
+                   "content": f"{contenido} (PLANTA, SIMBOLOGÍA Y NOTAS)",
+                   "sheet_number": nombre})
+        check(f"lámina {nombre}: la vista entra en la hoja", bool(r.get("fits", True)),
+              str(r.get("warnings")))
+        check(f"lámina {nombre}: con viewport", len(r.get("viewports", [])) == 1)
+        hoja = r.get("sheet") or {}
+        check(f"lámina {nombre}: rótulo dibujado, escala 1:75",
+              bool(hoja.get("titleBlockHandle")) and hoja.get("scaleLabel") == "1:75",
+              str(hoja))
+        # Una sola ventana al modelo: AutoCAD crea otra por su cuenta al
+        # activar el layout y quedaban dos plantas encimadas en la lámina.
+        acad.call("set_current_layout", {"name": nombre})
+        vps = []
+        for e in acad.call("list_entities", {"limit": 100000})["entities"]:
+            if e["type"] == "Viewport":
+                bb = acad.call("get_entity", {"handle": e["handle"]}).get("bbox", [0, 0, 0, 0])
+                if bb[0] >= 0 and bb[1] >= 0:
+                    vps.append(e["handle"])
+        check(f"lámina {nombre}: UNA sola vista del modelo (sin la automática)",
+              len(vps) == 1, f"{len(vps)} viewports: {vps}")
+        pb = r["viewports"][0]["paperBox"]
+        ancho, alto = r["paper"]
+        import sheet as sheet_mod
+        check(f"lámina {nombre}: la vista no pisa el rótulo ni el margen",
+              pb[0] >= sheet_mod.MARGIN_LEFT_MM
+              and pb[2] <= ancho - sheet_mod.MARGIN_MM - sheet_mod.TITLE_W_MM,
+              f"vista {pb} en hoja {ancho}x{alto}")
+    # Las de fábrica (Layout1/Layout2) sobran en un plano entregado: pestañas
+    # sin nombre que no dicen nada. Recién ahora: si se borran antes, cuando
+    # todavía son las únicas, AutoCAD crea otro Layout1.
+    for l in acad.call("list_layouts", {})["layouts"]:
+        if l["name"] in ("Layout1", "Layout2"):
+            acad.call("delete_layout", {"name": l["name"]})
+    nombres = {l["name"] for l in acad.call("list_layouts", {})["layouts"]}
+    check("sin pestañas de fábrica (Layout1/Layout2)",
+          not nombres & {"Layout1", "Layout2"}, str(sorted(nombres)))
+    # Volver al modelo: ahí sigue trabajando el resto.
+    acad.call("set_current_layout", {"name": "Model"})
+
+
+def _entregar() -> None:
+    """Cierre de todo plano: revisión, PDF de cada lámina, guardado y CERRAR
+    el dibujo. AutoCAD queda como estaba antes de la prueba."""
+    try:
+        rev = server.check_all()
+        print(f"  check_all: {len(rev.get('problems', []))} observaciones")
+    except Exception as exc:                            # noqa: BLE001
+        print(f"  check_all no corrió: {exc!r}")
+    carpeta = os.path.dirname(PLANO)
+    for nombre, _ in LAMINAS:
+        pdf = os.path.join(carpeta, f"instalaciones_{nombre}.pdf")
+        if os.path.exists(pdf):
+            os.remove(pdf)
+        server.export_pdf(layout=nombre, path=pdf)
+        tam = os.path.getsize(pdf) if os.path.exists(pdf) else 0
+        check(f"PDF de la lámina {nombre} exportado", tam > 10_000, f"{tam} bytes")
 
 
 def _por_capa(capa: str) -> list[dict[str, Any]]:
@@ -347,6 +430,7 @@ def main() -> int:
         print(f"  {_borrar_instalaciones()} entidades de instalaciones borradas; "
               "la base arquitectónica se conserva")
     plan = rules.suggest_layout(ANCHO_LOTE, FONDO_LOTE, bedrooms=3, bathrooms=2)
+    cajas: list[list] = []
     for i, (titulo, probar) in enumerate((
             ("INSTALACION ELECTRICA", probar_electrica),
             ("INSTALACION HIDRAULICA", probar_hidraulica),
@@ -362,14 +446,47 @@ def main() -> int:
             else:
                 _base(rooms, doors, plan["windows"] and
                       [dict(w) for w in plan["windows"]], titulo)
-            probar(rooms, doors)
+            res = probar(rooms, doors)
+            ley = (res or {}).get("legend", {}).get("box")
+            cajas.append([min(x["x0"] for x in rooms) - 0.6, None,
+                          (ley[2] if ley else max(x["x1"] for x in rooms)) + 0.6, None])
         except Exception as exc:                        # noqa: BLE001
             FAILED.append(f"{probar.__name__}: {exc!r}")
             print(" FALLA " + probar.__name__ + " -- " + repr(exc))
             traceback.print_exc()
     server.set_active_document(name=activo)
+    if len(cajas) == 3:
+        # Las tres vistas a la misma altura: del pie del cuadro de cargas al
+        # título de la vista.
+        ext = server.get_extents()
+        for c in cajas:
+            c[1], c[3] = ext["minY"] - 0.6, ext["maxY"] + 0.6
+        try:
+            _laminas(cajas)
+        except Exception as exc:                        # noqa: BLE001
+            FAILED.append(f"laminas: {exc!r}")
+            print(" FALLA laminas -- " + repr(exc))
+            traceback.print_exc()
     server.save_drawing(path=PLANO, overwrite=True)
-    print(f"  plano guardado en {PLANO} (queda abierto, una sola pestaña)")
+    print(f"  plano guardado en {PLANO}")
+    if len(cajas) == 3:
+        try:
+            _entregar()
+        except Exception as exc:                        # noqa: BLE001
+            FAILED.append(f"entrega: {exc!r}")
+            print(" FALLA entrega -- " + repr(exc))
+            traceback.print_exc()
+    server.save_drawing(path=PLANO, overwrite=True)
+    # Guardado y CERRADO. Si era el único dibujo, AutoCAD no puede quedarse
+    # sin ninguno: queda uno en blanco, como al abrir el programa.
+    abiertos = acad.call("list_documents", {})["documents"]
+    if len(abiertos) == 1:
+        server.new_document()
+    acad.call("close_document", {"name": os.path.basename(PLANO), "save": False,
+                                 "discardUnsaved": True})
+    quedan = [d["name"] for d in acad.call("list_documents", {})["documents"]]
+    check("el plano quedó guardado y cerrado",
+          os.path.basename(PLANO) not in quedan, str(quedan))
     if FAILED:
         print(f"\n{len(FAILED)} FALLAS:")
         for f in FAILED:

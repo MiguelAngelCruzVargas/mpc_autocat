@@ -2761,7 +2761,8 @@ def compose_layout(name: str,
                     create: bool = True,
                     locked: bool = True,
                     draw_titles: bool = True,
-                    dry_run: bool = False) -> dict[str, Any]:
+                    dry_run: bool = False,
+                    sheet: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Arma una lámina en ESPACIO PAPEL: un viewport por vista, a su escala.
 
     ES EL FLUJO CORRECTO cuando el proyecto tiene varias láminas — que es casi
@@ -2790,6 +2791,15 @@ def compose_layout(name: str,
     OJO: crear el PRIMER layout de un dibujo puede disparar un diálogo modal
     de AutoCAD que bloquea el socket. Si se cuelga, mirá la pantalla.
 
+    sheet: los datos de la LÁMINA — {"project", "location", "client",
+    "content", "drawn_by", "reviewed_by", "date", "sheet_number",
+    "scale_label"?}. Con él dibuja además el cajón y el rótulo en el papel
+    del layout, a su tamaño real, y deja las vistas adentro del cajón y a la
+    izquierda del rótulo. TODO PLANO TERMINADO VA ASÍ: sin lámina no se
+    entrega. Lo que no se sepa va vacío (celda en blanco, se avisa en
+    'blankFields'); nunca inventado. La escala del rótulo sale sola: la de
+    las vistas si es una, 'INDICADA' si son varias.
+
     Probá con dry_run=True primero y revisá 'fits'."""
     return compose_mod.compose_layout(
         name=name, views=views, model_units=model_units,
@@ -2797,7 +2807,7 @@ def compose_layout(name: str,
         title_block_mm=title_block_mm, reserved_right_mm=reserved_right_mm,
         padding_mm=padding_mm, align=align, distribute=distribute,
         plot_config=plot_config, paper_size=paper_size, create=create,
-        locked=locked, draw_titles=draw_titles, dry_run=dry_run)
+        locked=locked, draw_titles=draw_titles, dry_run=dry_run, sheet=sheet)
 
 
 @mcp.tool()

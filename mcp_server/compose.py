@@ -494,6 +494,7 @@ def compose_layout(name: str,
                    distribute: str = "center",
                    plot_config: Optional[str] = None,
                    paper_size: Optional[str] = None,
+                   sheet: Optional[dict[str, Any]] = None,
                    create: bool = True,
                    locked: bool = True,
                    draw_titles: bool = True,
@@ -552,8 +553,19 @@ def compose_layout(name: str,
             "_modelo": (x0, y0, x1, y1), "_denom": denom,
         })
 
-    area = [margin_mm, margin_mm,
-            ancho_hoja - margin_mm - reserved_right_mm, alto_hoja - margin_mm]
+    if sheet is not None:
+        # Con lámina, las vistas quedan ADENTRO del cajón (25 mm a la
+        # izquierda para encuadernar, 10 en los demás lados) y a la izquierda
+        # de la columna del rótulo. Con los márgenes parejos de siempre la
+        # primera vista caía sobre la franja de encuadernación.
+        import sheet as sheet_mod
+        izq = max(margin_mm, sheet_mod.MARGIN_LEFT_MM + gutter_mm / 2.0)
+        otro = max(margin_mm, sheet_mod.MARGIN_MM + gutter_mm / 2.0)
+        der = max(reserved_right_mm, sheet_mod.TITLE_W_MM + gutter_mm / 2.0)
+        area = [izq, otro, ancho_hoja - otro - der, alto_hoja - otro]
+    else:
+        area = [margin_mm, margin_mm,
+                ancho_hoja - margin_mm - reserved_right_mm, alto_hoja - margin_mm]
 
     # scale=1.0 porque acá TODO ya está en milímetros de papel: es el espacio
     # papel, no el modelo. space.paper(mm, 1.0) devuelve los mismos mm.
@@ -591,6 +603,8 @@ def compose_layout(name: str,
         # ACTIVO, asi que hay que pararse ahi y volver al terminar.
         previo = acad.call("list_layouts", {}).get("current")
         acad.call("set_current_layout", {"name": name})
+        plan["autoViewportsRemoved"] = _sin_viewport_automatico(
+            {v["handle"] for v in viewports if v.get("handle")})
         try:
             for p in plan["placements"]:
                 if not p.get("title") or not p.get("titlePoint"):
@@ -609,4 +623,75 @@ def compose_layout(name: str,
     plan["applied"] = True
     plan["viewports"] = viewports
     plan["titlesDrawn"] = titulos
+    if sheet is not None:
+        plan["sheet"] = _lamina_en_papel(name, ancho_hoja, alto_hoja, sheet,
+                                         [v["_denom"] for v in en_papel],
+                                         {v["handle"] for v in viewports if v.get("handle")})
     return plan
+
+
+def _sin_viewport_automatico(propios: set[str]) -> list[str]:
+    """Borra el viewport que AutoCAD crea SOLO al activar un layout por
+    primera vez (LAYOUTCREATEVIEWPORT=1). Va con el layout ya activo.
+
+    Ese viewport muestra el modelo entero a una escala cualquiera (salió a
+    1:85 en una lámina a 1:75) y queda debajo del propio: en la lámina se
+    veían dos plantas encimadas y ningún check lo notaba. Se respeta el
+    viewport de papel (el que envuelve la hoja, con bbox más grande que
+    ella) y los que creó compose_layout."""
+    borrados = []
+    for e in acad.call("list_entities", {"limit": 100000}).get("entities", []):
+        if e.get("type") != "Viewport" or e["handle"] in propios:
+            continue
+        d = acad.call("get_entity", {"handle": e["handle"]})
+        bb = d.get("bbox") or [0, 0, 0, 0]
+        if bb[0] < 0 or bb[1] < 0:
+            continue                    # el viewport de papel, no se toca
+        borrados.append(e["handle"])
+    if borrados:
+        acad.call("delete_entities", {"handles": borrados, "ignoreMissing": True})
+    return borrados
+
+
+def _lamina_en_papel(layout: str, ancho: float, alto: float,
+                     datos: dict[str, Any], escalas: list[float],
+                     propios: set[str]) -> dict[str, Any]:
+    """Cajón y rótulo en el espacio papel del layout, al tamaño REAL de su
+    hoja. Un plano terminado sin lámina no se puede entregar: no dice qué
+    obra es, de quién, quién lo dibujó ni a qué escala."""
+    import sheet as sheet_mod
+    campos = ("project", "location", "client", "content", "drawn_by",
+              "reviewed_by", "date", "sheet_number")
+    desconocidos = sorted(set(datos) - set(campos) - {"scale_label"})
+    if desconocidos:
+        raise ValueError("Datos de lámina desconocidos: %s. Van: %s"
+                         % (desconocidos, ", ".join(campos)))
+    distintas = sorted(set(escalas))
+    etiqueta = datos.get("scale_label") or (
+        "1:%g" % distintas[0] if len(distintas) == 1 else "INDICADA")
+    previo = acad.call("list_layouts", {}).get("current")
+    escala_previa = space.units_per_paper_mm()
+    acad.call("set_current_layout", {"name": layout})
+    _sin_viewport_automatico(propios)
+    try:
+        r = sheet_mod.create_sheet(
+            scale_denominator=1.0, model_units="mm",
+            width_mm=ancho, height_mm=alto, scale_label=etiqueta,
+            **{k: str(datos.get(k, "") or "") for k in campos})
+    finally:
+        if previo:
+            acad.call("set_current_layout", {"name": previo})
+        # create_sheet deja registrada la escala del PAPEL (1 mm = 1 unidad):
+        # al volver al modelo tiene que regir otra vez la del dibujo, o el
+        # próximo texto sale mil veces más chico.
+        space.set_scale(escala_previa)
+    vacios = [k for k in campos if not datos.get(k)]
+    salida = {"scaleLabel": etiqueta, "format": r.get("format"),
+              "titleBlockHandle": r.get("titleBlockHandle")}
+    if vacios:
+        salida["blankFields"] = vacios
+        salida["note"] = ("Celdas en blanco para llenar a mano: " + ", ".join(vacios)
+                          + ". Mejor en blanco que con un dato inventado.")
+    if r.get("warning"):
+        salida["warning"] = r["warning"]
+    return salida
