@@ -84,7 +84,7 @@ async function actualizarEstadoAutoCAD() {
     } else {
       badge.className = 'status-badge acad-off';
       badge.textContent = '🔌 AutoCAD: sin conectar';
-      badge.title = datos.detalle || 'Abrí AutoCAD con el plugin cargado.';
+      badge.title = datos.detalle || 'Abre AutoCAD con el plugin cargado.';
     }
   } catch {
     badge.className = 'status-badge acad-off';
@@ -114,6 +114,95 @@ async function actualizarEntregables() {
       return `<a class="entregable" href="${url}" download="${escaparHtml(a.nombre)}">` +
              `<span>${escaparHtml(a.nombre)}</span><small>${kb}</small></a>`;
     }).join('');
+  } catch {}
+}
+
+// ==========================================================================
+// LÁMINAS, REVISIÓN E HISTORIAL
+// ==========================================================================
+function laminaElegida() {
+  const sel = document.getElementById('select-layout');
+  return sel && sel.value !== 'Model' ? sel.value : null;
+}
+
+// Las láminas (layouts) del dibujo, para verlas en el visor tal como se
+// imprimen: el espacio modelo no es el entregable.
+async function cargarLaminas() {
+  const sel = document.getElementById('select-layout');
+  if (!sel) return;
+  try {
+    const res = await fetch('/api/layouts');
+    if (!res.ok) return;
+    const { layouts } = await res.json();
+    const actual = sel.value;
+    sel.innerHTML = '<option value="Model">Modelo</option>' +
+      (layouts || []).map(l => `<option value="${escaparHtml(l)}">${escaparHtml(l)}</option>`).join('');
+    if ([...sel.options].some(o => o.value === actual)) sel.value = actual;
+  } catch {}
+}
+
+// check_all directo, sin pasar por el modelo: no gasta tokens y en segundos
+// dice si el plano tiene problemas (cotas encimadas, muros al aire, dibujo
+// fuera del cajón, xrefs rotos…).
+async function revisarPlano() {
+  const btn = document.getElementById('btn-revisar');
+  if (btn) btn.disabled = true;
+  limpiarVacio();
+  agregarAvisoChat('Revisando el plano (check_all, sin gastar tokens)…');
+  try {
+    const res = await fetch('/api/revisar', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const r = await res.json();
+    if (!res.ok) {
+      agregarAvisoChat(r.error || 'No se pudo revisar el plano.');
+      return;
+    }
+    const cont = $('#chat-messages');
+    const div = document.createElement('div');
+    div.className = 'revision-card ' + (r.ok ? 'revision-ok' : 'revision-mal');
+    const filas = (r.problems || []).map(p => `
+      <li><b>${escaparHtml(p.check || '')}</b> — ${escaparHtml(p.problem || '')}
+      ${p.fix ? `<br><small>→ ${escaparHtml(p.fix)}</small>` : ''}</li>`).join('');
+    div.innerHTML = r.ok
+      ? `<div class="revision-titulo">✓ Plano sin problemas</div>
+         <small>Revisado: ${escaparHtml((r.checks || []).join(', '))}</small>`
+      : `<div class="revision-titulo">✕ ${r.count} problema(s) en el plano</div>
+         <ul>${filas}</ul>
+         <button class="btn btn-sm btn-primary revision-corregir">Pedirle al agente que los corrija</button>`;
+    cont.appendChild(div);
+    const corregir = div.querySelector('.revision-corregir');
+    if (corregir) corregir.onclick = () => {
+      const inChat = $('#chat-input');
+      if (inChat) {
+        inChat.value = 'Corre check_all y corrige los problemas que encuentre, uno por uno, sin rehacer el plano entero.';
+        inChat.focus();
+      }
+    };
+    scrollAbajo();
+  } catch (e) {
+    agregarAvisoChat('No se pudo revisar el plano: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// La conversación sobrevive a recargar la página y a reiniciar el panel:
+// el servidor la guarda y acá se vuelve a pintar tal como se vio.
+async function restaurarHistorial() {
+  try {
+    const res = await fetch('/api/historial');
+    if (!res.ok) return;
+    const { eventos } = await res.json();
+    if (!eventos || !eventos.length) return;
+    limpiarVacio();
+    for (const ev of eventos) {
+      if (ev.tipo === 'usuario') {
+        agregarBurbuja('Tú', ev.texto || '(imagen adjunta)', true);
+      } else {
+        despacharEvento(ev);
+      }
+    }
+    agregarAvisoChat('Conversación anterior restaurada. «Nueva Sesión» la borra.');
   } catch {}
 }
 
@@ -155,6 +244,13 @@ async function init() {
   registrarEventos();
   actualizarEstadoAutoCAD();
   actualizarEntregables();
+  restaurarHistorial();
+  const btnRevisar = document.getElementById('btn-revisar');
+  if (btnRevisar) btnRevisar.onclick = revisarPlano;
+  const selLayout = document.getElementById('select-layout');
+  if (selLayout) selLayout.onchange = () => capturarPlano();
+  const btnPlano = document.getElementById('btn-toggle-plan');
+  if (btnPlano) btnPlano.addEventListener('click', cargarLaminas);
   const btnEntregables = document.getElementById('btn-refrescar-entregables');
   if (btnEntregables) btnEntregables.onclick = actualizarEntregables;
   setInterval(actualizarEstadoAutoCAD, 15000);
@@ -648,7 +744,7 @@ async function enviarMensaje() {
 
   const p = getProveedorActual();
   if (!p.clave && p.id !== 'local') {
-    showToast(`Configurá tu API key de ${p.id} antes de continuar`, 'error');
+    showToast(`Configura tu API key de ${p.id} antes de continuar`, 'error');
     return;
   }
 
@@ -809,7 +905,7 @@ async function capturarPlano(zona = null) {
   // visor tarda el doble. El servidor también lo frena, pero mejor ni
   // pedirlo.
   if (AppState.capturando) {
-    showToast('Ya hay una captura en curso, esperá a que termine', 'info');
+    showToast('Ya hay una captura en curso, espera a que termine', 'info');
     return;
   }
   AppState.capturando = true;
@@ -831,7 +927,7 @@ async function capturarPlano(zona = null) {
     const res = await fetch('/api/captura', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ zona }),
+      body: JSON.stringify({ zona, layout: laminaElegida() }),
     });
     const data = await res.json();
     pararCronometro();
@@ -991,17 +1087,15 @@ async function ejecutarDiagnosticos() {
   // 3. AutoCAD MCP
   setDiag('diag-light-cad', null, 'diag-text-cad', 'Verificando plugin de AutoCAD…');
   try {
-    const res = await fetch('/api/captura', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    });
+    // Un ping (~1 s), no una captura: plotear la vista para saber si el
+    // plugin responde tardaba ~7 s y dejaba el asistente congelado.
+    const res = await fetch('/api/autocad_estado');
     const data = await res.json();
-    if (data.ok) {
-      setDiag('diag-light-cad', true, 'diag-text-cad', 'Plugin conectado y dibujo abierto');
-      mostrarPlano(data);
+    if (data.conectado) {
+      setDiag('diag-light-cad', true, 'diag-text-cad',
+        `Plugin ${data.pluginVersion || ''} conectado · ${data.activeDocument || 'sin dibujo abierto'}`);
     } else {
-      setDiag('diag-light-cad', false, 'diag-text-cad', (data.error || '').slice(0, 70));
+      setDiag('diag-light-cad', false, 'diag-text-cad', (data.detalle || '').slice(0, 70));
     }
   } catch (e) {
     setDiag('diag-light-cad', false, 'diag-text-cad', e.message);
@@ -1081,7 +1175,7 @@ function registrarEventos() {
   if (btnSaveKey) {
     btnSaveKey.onclick = async () => {
       const c = inKey ? inKey.value.trim() : '';
-      if (!c) return showToast('Ingresá una clave', 'error');
+      if (!c) return showToast('Ingresa una clave', 'error');
       if (await guardarClave(c)) {
         if (inKey) inKey.value = '';
       }

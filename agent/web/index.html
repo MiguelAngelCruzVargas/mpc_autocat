@@ -51,7 +51,7 @@
       <!-- Paso 0: Proveedor -->
       <div class="wizard-step-pane active" data-wizard-step="0">
         <h2>Seleccionar Proveedor</h2>
-        <p>Elegí el servicio que procesará tus comandos de dibujo técnico.</p>
+        <p>Elige el servicio que procesará tus comandos de dibujo técnico.</p>
         
         <div class="form-group">
           <label for="wizard-provider">Proveedor</label>
@@ -219,7 +219,7 @@
           <div class="section-title">Plantillas Rápidas</div>
           <div class="quick-prompts-list">
             <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Cuantifica lo que está dibujado en el plano abierto (agrupado por partida) y genera el catálogo de conceptos para el presupuesto en .xlsx, sin precios. Lo que la obra necesite y el plano no mida, ponlo POR CUANTIFICAR.">Presupuesto (Catálogo de Conceptos)</button>
-            <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Dibuja una casa de 2 plantas de 7x15m con 3 recámaras, 2.5 baños, sala, cocina y cochera.">Casa 2 Plantas (7×15m)</button>
+            <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Proyecto completo de una casa de 3 recámaras y 2 baños en un lote de 8x20 m: distribución validada, muros, cotas, mobiliario, lámina A-01 con rótulo, modelo 3D, cuantificación y catálogo de conceptos (.xlsx) sin precios. Antes de dibujar, pregúntame los datos del rótulo que falten.">Casa completa: plano, 3D y presupuesto</button>
             <button class="quick-prompt-btn" data-perfil="estructura" data-prompt="Dibuja una zapata aislada Z-1 de 1.20x1.20m con dado de 30x30cm y armado de varilla #4 @ 15cm.">Zapata Aislada Z-1</button>
             <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Verifica las capas del dibujo actual, lista los bloques insertados y acota todos los muros principales.">Acotar & Revisar Capas</button>
             <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Inserta distribución eléctrica básica con luminarias LED empotradas y contactos dobles a 0.30m.">Instalación Eléctrica</button>
@@ -263,6 +263,10 @@
             <b id="total-tokens">0</b> tokens · <span id="total-turns">0</span> v.
           </div>
           
+          <button class="btn btn-sm btn-ghost" id="btn-revisar" title="Revisar el plano con check_all (sin gastar tokens)">
+            <span class="btn-text">Revisar plano</span>
+          </button>
+
           <button class="btn btn-sm btn-accent" id="btn-toggle-plan" title="Abrir visor de dibujo">
             <span class="btn-text">Ver Plano</span>
           </button>
@@ -292,27 +296,27 @@
             </div>
           </div>
           <h2>¿Qué vamos a diseñar hoy?</h2>
-          <p>Asegurate de tener AutoCAD abierto con el plugin cargado. Podés pedirme distribuciones completas, cotas, muebles o consultar entidades existentes.</p>
+          <p>Asegúrate de tener AutoCAD abierto con el plugin cargado. Puedes pedirme distribuciones completas, cotas, muebles, el modelo 3D o el catálogo de conceptos para el presupuesto.</p>
           
           <div class="preset-cards-grid">
             <button class="preset-card" data-perfil="arquitectura">
               <div class="preset-info">
                 <strong>Distribución Arquitectónica</strong>
-                <span class="preset-text">Dibujá una casa de 3 recámaras y 2 baños en un lote de 8×16 m, amueblada y acotada</span>
+                <span class="preset-text">Dibuja una casa de 3 recámaras y 2 baños en un lote de 8×16 m, amueblada y acotada</span>
               </div>
             </button>
 
             <button class="preset-card" data-perfil="basico">
               <div class="preset-info">
                 <strong>Diagnóstico y Capas</strong>
-                <span class="preset-text">Hacé ping al plugin de AutoCAD y decime qué versión y capas están cargadas</span>
+                <span class="preset-text">Haz ping al plugin de AutoCAD y dime qué versión y capas están cargadas</span>
               </div>
             </button>
 
             <button class="preset-card" data-perfil="estructura">
               <div class="preset-info">
                 <strong>Detalle Estructural</strong>
-                <span class="preset-text">Dibujá el detalle de cimentación con zapatas aisladas de 1.50x1.50m con trabes de liga</span>
+                <span class="preset-text">Dibuja el detalle de cimentación con zapatas aisladas de 1.50x1.50m con trabes de liga</span>
               </div>
             </button>
           </div>
@@ -327,7 +331,7 @@
             <input type="file" id="input-file" accept="image/*" multiple hidden>
             <button class="btn btn-icon btn-ghost btn-attach" id="btn-attach"
                     title="Adjuntar croquis o foto">📎</button>
-            <textarea id="chat-input" rows="1" placeholder="Describí lo que querés que dibuje en AutoCAD…"></textarea>
+            <textarea id="chat-input" rows="1" placeholder="Describe lo que quieres que dibuje en AutoCAD…"></textarea>
             <button class="btn btn-primary btn-send" id="btn-send" title="Enviar instrucción (Enter)">
               <span>Enviar</span>
             </button>
@@ -347,6 +351,9 @@
           <span>Visor de Plano DWG</span>
         </div>
         <div class="viewer-toolbar">
+          <select id="select-layout" class="custom-select viewer-select" title="Qué ver: el modelo o una lámina tal como se imprime">
+            <option value="Model">Modelo</option>
+          </select>
           <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-in" title="Acercar (+)">＋</button>
           <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-out" title="Alejar (-)">－</button>
           <button class="btn-icon btn-ghost btn-sm" id="btn-zoom-reset" title="Ajustar escala al 100%">1:1</button>

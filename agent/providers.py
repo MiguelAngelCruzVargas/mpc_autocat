@@ -371,7 +371,7 @@ def construir(proveedor: str, modelo: Optional[str] = None,
     if preset is None and not url:
         raise ErrorProveedor(
             f"Proveedor '{proveedor}' desconocido. Conocidos: "
-            f"{', '.join(sorted(PRESETS))}. O pasá --url con un endpoint "
+            f"{', '.join(sorted(PRESETS))}. O pasa --url con un endpoint "
             "compatible con OpenAI.")
     preset = preset or {}
     base = url or preset.get("url", "")
@@ -390,7 +390,7 @@ def construir(proveedor: str, modelo: Optional[str] = None,
             f"Falta la API key de '{proveedor}'. Guardala una sola vez con:\n"
             f"    python -m agent.cli config set {proveedor}\n"
             f"(te la pide sin mostrarla en pantalla y queda cifrada). "
-            f"O usá la variable {preset.get('env', 'API_KEY')}.")
+            f"O usa la variable {preset.get('env', 'API_KEY')}.")
 
     if proveedor == "anthropic":
         return ProveedorAnthropic(base, clave, nombre_modelo,

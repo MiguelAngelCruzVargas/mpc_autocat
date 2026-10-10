@@ -32,15 +32,83 @@ _HTML = os.path.join(_WEB_DIR, "index.html")
 
 
 class Sesion:
-    """La conversación en curso. Una sola: esto es una app local."""
+    """La conversación en curso. Una sola: esto es una app local.
+
+    Se guarda en disco después de cada vuelta: antes vivía solo en memoria,
+    así que recargar la página dejaba el chat en blanco (aunque el agente
+    siguiera recordando todo) y apagar el panel perdía la conversación
+    entera. 'eventos' es lo que se vio en pantalla, para reconstruirla tal
+    cual; 'mensajes' es el contexto del modelo, para seguir donde quedó.
+    """
+
+    ARCHIVO = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                           "AutoCadMcp", "conversacion.json")
+    MAX_EVENTOS = 600
 
     def __init__(self) -> None:
         self.mensajes: list[dict[str, Any]] = []
+        self.eventos: list[dict[str, Any]] = []
         self.lock = threading.Lock()
         self.cancelar = threading.Event()
+        # Un chat por vez: dos pestañas mandando a la vez mezclaban sus
+        # mensajes en la misma conversación del modelo.
+        self.ocupada = threading.Lock()
+        self._cargar()
 
     def reiniciar(self, system: str) -> None:
         self.mensajes = [{"role": "system", "content": system}]
+
+    def borrar(self) -> None:
+        with self.lock:
+            self.mensajes, self.eventos = [], []
+        try:
+            os.remove(self.ARCHIVO)
+        except OSError:
+            pass
+
+    def anotar(self, evento: dict[str, Any]) -> None:
+        if evento.get("tipo") in ("usuario", "texto", "tool", "resultado", "aviso"):
+            # Lo que la pantalla muestra de una tool son ~200 caracteres:
+            # guardar el resultado entero (listas de handles, rooms...)
+            # inflaba el archivo sin que nadie lo fuera a ver.
+            if evento.get("tipo") == "resultado":
+                evento = {**evento, "texto": str(evento.get("texto", ""))[:400]}
+            if evento.get("tipo") == "tool":
+                args = json.dumps(evento.get("args"), ensure_ascii=False)
+                if len(args) > 400:
+                    evento = {**evento, "args": args[:397] + "…"}
+            with self.lock:
+                self.eventos.append(evento)
+                del self.eventos[:-self.MAX_EVENTOS]
+
+    def guardar(self) -> None:
+        def sin_imagenes(m: dict[str, Any]) -> dict[str, Any]:
+            # Las imágenes van en base64 (megas): al disco va solo el texto.
+            if isinstance(m.get("content"), list):
+                partes = [b.get("text", "") for b in m["content"]
+                          if isinstance(b, dict) and b.get("type") == "text"]
+                return {**m, "content": " ".join(partes) + " [imagen adjunta]"}
+            return m
+        try:
+            os.makedirs(os.path.dirname(self.ARCHIVO), exist_ok=True)
+            with self.lock:
+                datos = {"mensajes": [sin_imagenes(m) for m in self.mensajes],
+                         "eventos": self.eventos}
+            tmp = self.ARCHIVO + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(datos, fh, ensure_ascii=False)
+            os.replace(tmp, self.ARCHIVO)
+        except (OSError, TypeError, ValueError):
+            pass        # el historial es una comodidad: no tumba el chat
+
+    def _cargar(self) -> None:
+        try:
+            with open(self.ARCHIVO, encoding="utf-8") as fh:
+                datos = json.load(fh)
+            self.mensajes = list(datos.get("mensajes") or [])
+            self.eventos = list(datos.get("eventos") or [])
+        except (OSError, ValueError):
+            pass
 
 
 SESION = Sesion()
@@ -406,6 +474,21 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(cuerpo)
             return
 
+        if self.path == "/api/ping":
+            # Liviano a propósito: no toca el MCP ni AutoCAD. Lo usa un
+            # segundo arranque para saber si el puerto lo tiene este panel.
+            self._json({"app": "autocad-ia"})
+            return
+
+        if self.path == "/api/historial":
+            with SESION.lock:
+                self._json({"eventos": list(SESION.eventos)})
+            return
+
+        if self.path == "/api/layouts":
+            self._layouts()
+            return
+
         if self.path == "/api/entregables":
             self._json({"carpeta": ENTREGABLES,
                         "archivos": _listar_entregables()})
@@ -519,9 +602,9 @@ class Handler(BaseHTTPRequestHandler):
                 "soportaImagenes": puede,
                 "motivo": ("" if puede else
                            f"'{modelo}' es un modelo de solo texto: no puede "
-                           "ver imágenes. Si le adjuntás un croquis, o lo "
+                           "ver imágenes. Si le adjuntas un croquis, o lo "
                            "ignora en silencio o rechaza el pedido entero. "
-                           "Para trabajar con imágenes usá uno multimodal "
+                           "Para trabajar con imágenes usa uno multimodal "
                            "(gpt-4o, claude-3.5+, gemini, qwen-vl, "
                            "llama-3.2-vision…)."),
             })
@@ -540,9 +623,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/reset":
-            with SESION.lock:
-                SESION.mensajes = []
+            SESION.borrar()
             self._json({"ok": True})
+            return
+
+        if self.path == "/api/revisar":
+            self._revisar()
             return
 
         if self.path == "/api/cancelar":
@@ -580,16 +666,23 @@ class Handler(BaseHTTPRequestHandler):
         os.makedirs(CAPTURAS, exist_ok=True)
         destino = os.path.join(CAPTURAS, "vista.png")
         zona = datos.get("zona") or {}
-        params: dict[str, Any] = {"path": destino, "layout": None}
+        # Una lámina (layout) se captura entera, como va a imprimirse: es el
+        # entregable, y antes el visor solo mostraba el espacio modelo.
+        lamina = str(datos.get("layout") or "").strip()
+        if lamina.lower() in ("model", "modelo"):
+            lamina = ""
+        params: dict[str, Any] = {"path": destino, "layout": lamina or None}
         if all(k in zona for k in ("minX", "minY", "maxX", "maxY")):
             params.update({k: float(zona[k]) for k in
                            ("minX", "minY", "maxX", "maxY")})
 
         async def trabajo(mcp: ConexionMcp) -> dict[str, Any]:
-            if not zona:
+            if not zona and not lamina:
                 await mcp.ejecutar("zoom_extents", {})
             salida, error = await mcp.ejecutar("capture_viewport", params)
-            extension, _ = await mcp.ejecutar("get_extents", {})
+            extension = None
+            if not lamina:
+                extension, _ = await mcp.ejecutar("get_extents", {})
             return {"error": error, "salida": salida,
                     "extension": extension}
 
@@ -611,6 +704,61 @@ class Handler(BaseHTTPRequestHandler):
         # vez de mostrar la anterior de su caché.
         self._json({"ok": True, "url": f"/vista.png?t={os.path.getmtime(destino)}",
                     "extension": extension})
+
+    # ----------------------------------------------- láminas y revisión
+
+    def _herramienta(self, nombre: str, args: dict[str, Any]) -> Any:
+        """Corre UNA tool del servidor MCP directo, sin pasar por el modelo:
+        no gasta tokens y contesta en segundos."""
+        async def trabajo(mcp: ConexionMcp) -> tuple[str, bool]:
+            return await mcp.ejecutar(nombre, args)
+        salida, error = MOTOR.usar(trabajo)
+        if error:
+            raise RuntimeError(salida)
+        try:
+            return json.loads(salida)
+        except (ValueError, TypeError):
+            return salida
+
+    def _sin_autocad(self) -> bool:
+        """Con AutoCAD cerrado la tool tarda ~13 s en rendirse (reintentos
+        de conexión): el ping directo lo sabe en 1.5 s."""
+        estado = _verificar_autocad()
+        if estado.get("conectado"):
+            return False
+        self._json({"error": "AutoCAD no está conectado: "
+                             + str(estado.get("detalle", ""))}, 503)
+        return True
+
+    def _layouts(self) -> None:
+        if self._sin_autocad():
+            return
+        try:
+            r = self._herramienta("list_layouts", {})
+        except Exception as exc:                        # noqa: BLE001
+            self._json({"error": f"No se pudieron leer las láminas: {exc}"}, 500)
+            return
+        filas = r.get("layouts", []) if isinstance(r, dict) else []
+        nombres = [f.get("name") for f in filas
+                   if f.get("name") and f.get("name") != "Model"]
+        self._json({"layouts": nombres})
+
+    def _revisar(self) -> None:
+        """check_all sin el modelo: el semáforo del plano en un clic."""
+        if self._sin_autocad():
+            return
+        try:
+            r = self._herramienta("check_all", {})
+        except Exception as exc:                        # noqa: BLE001
+            self._json({"error": f"No se pudo revisar el plano: {exc}"}, 500)
+            return
+        if not isinstance(r, dict):
+            self._json({"error": str(r)}, 500)
+            return
+        self._json({"ok": r.get("ok"), "count": r.get("count", 0),
+                    "problems": r.get("problems", [])[:60],
+                    "checks": sorted((r.get("checks") or {}).keys()),
+                    "skipped": r.get("skipped", [])})
 
     # ------------------------------------------------------------ chat
 
@@ -645,8 +793,8 @@ class Handler(BaseHTTPRequestHandler):
         if imagenes and not providers.soporta_imagenes(proveedor.modelo):
             self._json({"error":
                         f"'{proveedor.modelo}' no puede ver imágenes. "
-                        "Elegí un modelo multimodal (gpt-4o, claude-3.5+, "
-                        "gemini, qwen-vl…) o mandá el pedido sin adjuntos."},
+                        "Elige un modelo multimodal (gpt-4o, claude-3.5+, "
+                        "gemini, qwen-vl…) o manda el pedido sin adjuntos."},
                        400)
             return
 
@@ -656,6 +804,22 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"Perfil desconocido: {perfil}"}, 400)
             return
 
+        if not SESION.ocupada.acquire(blocking=False):
+            self._json({"error": "Ya hay un pedido en curso (¿otra pestaña "
+                                 "abierta?). Espera a que termine o "
+                                 "cancélalo."}, 409)
+            return
+        try:
+            self._chat_en_curso(datos, pedido, imagenes, proveedor, incluir)
+        finally:
+            SESION.ocupada.release()
+            SESION.guardar()
+
+    def _chat_en_curso(self, datos: dict[str, Any], pedido: str,
+                       imagenes: list[str], proveedor: Any,
+                       incluir: Any) -> None:
+        SESION.anotar({"tipo": "usuario", "texto": pedido,
+                       "imagenes": len(imagenes)})
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -673,6 +837,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         def emitir(tipo: str, cuerpo: dict) -> None:
+            SESION.anotar({"tipo": tipo, **cuerpo})
             try:
                 paquete = json.dumps({"tipo": tipo, **cuerpo},
                                      ensure_ascii=False)
@@ -696,7 +861,7 @@ class Handler(BaseHTTPRequestHandler):
                     formato = getattr(proveedor, "formato", "openai")
                     bloques: list[dict[str, Any]] = [
                         {"type": "text",
-                         "text": pedido or "Mirá esta imagen."}]
+                         "text": pedido or "Mira esta imagen."}]
                     bloques += [providers.bloque_imagen(i, formato)
                                 for i in imagenes]
                     SESION.mensajes.append({"role": "user",
@@ -721,6 +886,22 @@ class Handler(BaseHTTPRequestHandler):
 _SERVIDOR: Optional[ThreadingHTTPServer] = None
 
 
+class _ServidorExclusivo(ThreadingHTTPServer):
+    """Un puerto, un panel. HTTPServer trae allow_reuse_address=True y en
+    Windows eso es SO_REUSEADDR: un SEGUNDO panel se enlazaba al mismo
+    puerto sin error y los pedidos caían en uno u otro al azar (visto en
+    prueba: el segundo arranque se quedaba escuchando en vez de detectar
+    al primero)."""
+
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET,
+                                   socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def _apagar_en_hilo_aparte() -> None:
     """servidor.shutdown() bloquea hasta que serve_forever() para — llamarlo
     desde el mismo hilo que está corriendo serve_forever() (el del pedido
@@ -734,11 +915,38 @@ def _apagar_en_hilo_aparte() -> None:
         _SERVIDOR.shutdown()
 
 
+def _es_este_panel(puerto: int) -> bool:
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://127.0.0.1:{puerto}/api/ping",
+                                    timeout=3) as r:
+            return json.loads(r.read().decode("utf-8")).get("app") == "autocad-ia"
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
 def iniciar(puerto: int = 8770, abrir: bool = True) -> None:
     global _SERVIDOR
     # 127.0.0.1 y no 0.0.0.0: nadie más en la red puede llegar acá, que es
     # lo que corresponde para algo que tiene tus API keys.
-    servidor = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
+    servidor = None
+    for intento in range(puerto, puerto + 10):
+        try:
+            servidor = _ServidorExclusivo(("127.0.0.1", intento), Handler)
+            puerto = intento
+            break
+        except OSError:
+            # Puerto tomado. Si es ESTE panel ya abierto (doble clic dos
+            # veces en el lanzador), se abre ese en vez de un segundo; si es
+            # otro programa, se prueba el siguiente. Antes se caía sin aviso
+            # y, lanzado sin consola, no quedaba ni el error a la vista.
+            if _es_este_panel(intento):
+                print(f"  Ya hay un panel abierto en http://127.0.0.1:{intento}/")
+                if abrir:
+                    webbrowser.open(f"http://127.0.0.1:{intento}/")
+                return
+    if servidor is None:
+        raise SystemExit(f"No hay un puerto libre entre {puerto} y {puerto + 9}.")
     _SERVIDOR = servidor
     # El MCP se levanta YA, de fondo, mientras el navegador todavía está
     # abriendo: así la primera captura no arranca pagando el subproceso.

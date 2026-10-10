@@ -140,6 +140,17 @@ apagarlo: el botón "Apagar" dentro de la interfaz — no queda ninguna
 ventana que cerrar. Si algo no arranca, `autocad-ia.log` tiene lo que
 antes se veía en la consola negra.
 
+### Lo que el panel hace además del chat
+
+| Función | Para qué |
+|---|---|
+| **Revisar plano** (botón arriba) | Corre `check_all` directo, sin pasar por el modelo: no gasta tokens y en segundos dice qué problemas tiene el plano. Un clic deja escrito el pedido de corrección. |
+| **Visor: Modelo / láminas** | El selector del visor muestra el espacio modelo o cualquier layout (A-01…) tal como se imprime: el entregable, no solo el dibujo. |
+| **Entregables** (barra lateral) | Lo que el agente deja en `entregables/` (PDF, catálogo de conceptos .xlsx, CSV) se descarga con un clic. Solo nombres de esa carpeta: ninguna ruta `../`. |
+| **Historial** | La conversación se guarda en `%LOCALAPPDATA%\AutoCadMcp\conversacion.json` (sin las imágenes) y vuelve al recargar o al reabrir el panel. «Nueva Sesión» la borra. |
+| **Un pedido por vez** | Dos pestañas mandando a la vez mezclaban la conversación: la segunda recibe un aviso claro. |
+| **Puerto ocupado** | Abrir el lanzador dos veces abre el panel que ya corre; si el puerto lo tiene otro programa, usa el siguiente libre. |
+
 ## Lo que todavía no hace
 
 - No hay confirmación antes de dibujar. El agente modifica el DWG abierto

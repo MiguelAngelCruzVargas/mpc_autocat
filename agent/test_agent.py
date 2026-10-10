@@ -297,11 +297,39 @@ def test_la_web_rechaza_paginas_ajenas() -> None:
                                 "Origin": "http://127.0.0.1:3000"}, 8770, True))
 
 
+def test_la_conversacion_sobrevive() -> None:
+    """Recargar la pagina dejaba el chat en blanco y apagar el panel perdia
+    la conversacion: ahora se guarda en disco, sin las imagenes (base64 de
+    megas) y con los resultados de tools recortados."""
+    import os
+    import tempfile
+    from .web import Sesion
+    with tempfile.TemporaryDirectory() as d:
+        Sesion.ARCHIVO = os.path.join(d, "conversacion.json")
+        s = Sesion()
+        s.mensajes = [{"role": "user", "content": [
+            {"type": "text", "text": "mira el croquis"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 50000}}]}]
+        s.anotar({"tipo": "usuario", "texto": "mira el croquis"})
+        s.anotar({"tipo": "resultado", "nombre": "x", "texto": "y" * 9000})
+        s.anotar({"tipo": "uso", "total": 10})     # no se guarda: no se ve
+        s.guardar()
+        tam = os.path.getsize(Sesion.ARCHIVO)
+        check("el archivo no carga la imagen", tam < 5000, str(tam))
+        otra = Sesion()
+        check("se recupera desde disco", len(otra.eventos) == 2, str(otra.eventos))
+        check("el resultado va recortado", len(otra.eventos[1]["texto"]) == 400,
+              str(len(otra.eventos[1]["texto"])))
+        otra.borrar()
+        check("Nueva Sesion lo borra", not os.path.exists(Sesion.ARCHIVO))
+
+
 def main() -> int:
     for fn in (test_aplanar_schema, test_recortar, test_bucle_openai,
                test_bucle_anthropic, test_un_error_de_tool_no_corta_la_sesion,
                test_json_invalido_no_revienta, test_tope_de_vueltas,
-               test_la_web_rechaza_paginas_ajenas):
+               test_la_web_rechaza_paginas_ajenas,
+               test_la_conversacion_sobrevive):
         print(fn.__name__)
         fn()
     print("_con_conexion")
