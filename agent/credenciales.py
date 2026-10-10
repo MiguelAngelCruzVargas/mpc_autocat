@@ -196,7 +196,11 @@ ARCHIVO_PREFS = os.path.join(DIRECTORIO, "preferencias.json")
 # Solo estas claves se guardan: una lista blanca evita que la interfaz
 # escriba cualquier cosa en el disco del usuario.
 PREFS_VALIDAS = ("proveedor", "modelo", "perfil", "temperatura",
-                 "conReglas", "configurado", "autoPlano", "modelos")
+                 "conReglas", "configurado", "autoPlano", "modelos",
+                 # Precio por millón de tokens que escribe el usuario para
+                 # los proveedores que no lo publican, el tope por pedido
+                 # y los presets guardados (ver app.js).
+                 "precios", "topeUSD", "presets")
 
 
 def leer_preferencias() -> dict[str, Any]:

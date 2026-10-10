@@ -25,12 +25,12 @@ PRESETS: dict[str, dict[str, str]] = {
     "openrouter": {
         "url": "https://openrouter.ai/api/v1",
         "env": "OPENROUTER_API_KEY",
-        "modelo": "anthropic/claude-3.5-sonnet",
+        "modelo": "anthropic/claude-sonnet-5.5",
     },
     "openai": {
         "url": "https://api.openai.com/v1",
         "env": "OPENAI_API_KEY",
-        "modelo": "gpt-4o",
+        "modelo": "gpt-6.1-sol",
     },
     "groq": {
         "url": "https://api.groq.com/openai/v1",
@@ -60,7 +60,7 @@ PRESETS: dict[str, dict[str, str]] = {
     "anthropic": {
         "url": "https://api.anthropic.com/v1",
         "env": "ANTHROPIC_API_KEY",
-        "modelo": "claude-sonnet-4-5",
+        "modelo": "claude-sonnet-5-5",
     },
 }
 
@@ -120,13 +120,27 @@ PATRONES_VISION = (
     "llama-3.2-11b", "llama-3.2-90b", "llama-4", "vision",
     "grok-2-vision", "grok-4", "phi-3-vision", "phi-4-multimodal",
     "deepseek-vl", "mistral-small-3", "step-1v", "yi-vision",
+    # Familias nuevas (2026) que la lista no conocía; igual, el dato vivo
+    # de VISION manda sobre esto.
+    "gpt-6", "grok-4.", "mistral-large-4", "mistral-medium-3", "qwen3.8",
+    "omni",
 )
 
 
 def soporta_imagenes(modelo: str) -> bool:
-    """¿Este modelo puede MIRAR una imagen que se le adjunte?"""
+    """¿Este modelo puede MIRAR una imagen que se le adjunte?
+
+    Primero lo que publica el proveedor (VISION, dato vivo); la lista de
+    nombres es el respaldo para los que no lo publican."""
     if not modelo:
         return False
+    if modelo in VISION:
+        return VISION[modelo]
+    # El mismo modelo con o sin prefijo de proveedor ("openai/gpt-6.1-sol"
+    # en OpenRouter, "gpt-6.1-sol" en la API directa).
+    sufijo = [v for k, v in VISION.items() if k.split("/", 1)[-1] == modelo]
+    if sufijo:
+        return sufijo[0]
     n = modelo.lower()
     # 'gpt-oss' contiene 'gpt' pero es de solo texto: se descarta primero
     # para que ningún patrón amplio lo dé por multimodal.
@@ -292,6 +306,82 @@ class ProveedorAnthropic(ContadorUso):
         return datos
 
 
+# Precio por MILLÓN de tokens en US$, {"entrada": x, "salida": y}, de los
+# modelos cuyo proveedor lo publica en /models (OpenRouter lo hace con
+# 'pricing' por token). Para los demás lo escribe el usuario en el panel.
+PRECIOS: dict[tuple[str, str], dict[str, float]] = {}
+
+
+def _precio_publicado(m: dict[str, Any]) -> Optional[dict[str, float]]:
+    p = m.get("pricing") if isinstance(m, dict) else None
+    if not isinstance(p, dict):
+        return None
+    try:
+        entrada = float(p.get("prompt")) * 1e6
+        salida = float(p.get("completion")) * 1e6
+    except (TypeError, ValueError):
+        return None
+    if entrada < 0 or salida < 0:
+        return None       # OpenRouter marca con -1 los de precio variable
+    return {"entrada": round(entrada, 4), "salida": round(salida, 4)}
+
+
+# Si cada modelo acepta imágenes, según lo PUBLICA su proveedor (OpenRouter
+# lo da en architecture.input_modalities). Va por id de modelo: es el dato
+# vivo, y manda sobre la lista de nombres de abajo, que se queda atrás con
+# cada familia nueva (gpt-6, deepseek-v4, qwen3.8... no estaban).
+VISION: dict[str, bool] = {}
+_CATALOGO_OR = {"cargado": False}
+
+
+def _vision_publicada(m: dict[str, Any]) -> Optional[bool]:
+    arq = m.get("architecture") if isinstance(m, dict) else None
+    if not isinstance(arq, dict):
+        return None
+    entrada = arq.get("input_modalities")
+    if isinstance(entrada, list):
+        return "image" in entrada
+    modalidad = str(arq.get("modality") or "")
+    return ("image" in modalidad.split("->")[0]) if modalidad else None
+
+
+def catalogo_openrouter() -> None:
+    """Una sola consulta a la lista PÚBLICA de OpenRouter (no necesita
+    clave): precios y modalidades de todos sus modelos, en caché."""
+    if _CATALOGO_OR["cargado"]:
+        return
+    _CATALOGO_OR["cargado"] = True
+    try:
+        base = PRESETS["openrouter"]["url"].rstrip("/")
+        r = httpx.get(f"{base}/models", timeout=15.0)
+        for m in r.json().get("data", []):
+            if not m.get("id"):
+                continue
+            precio = _precio_publicado(m)
+            if precio:
+                PRECIOS[("openrouter", m["id"])] = precio
+            vision = _vision_publicada(m)
+            if vision is not None:
+                VISION[m["id"]] = vision
+    except (httpx.HTTPError, ValueError, KeyError):
+        pass
+
+
+def precio_de(proveedor: str, modelo: str) -> Optional[dict[str, float]]:
+    """El precio publicado del modelo, si se conoce."""
+    if (proveedor, modelo) not in PRECIOS and proveedor == "openrouter":
+        catalogo_openrouter()
+    return PRECIOS.get((proveedor, modelo))
+
+
+def costo_usd(uso: dict[str, Any], precio: Optional[dict[str, float]]) -> Optional[float]:
+    """Lo que costó lo gastado hasta ahora, en US$, o None sin precio."""
+    if not precio:
+        return None
+    return (float(uso.get("entrada", 0)) * float(precio.get("entrada", 0))
+            + float(uso.get("salida", 0)) * float(precio.get("salida", 0))) / 1e6
+
+
 def modelos_disponibles(proveedor: str, api_key: Optional[str] = None,
                         url: Optional[str] = None,
                         probar: bool = False) -> list[dict[str, Any]]:
@@ -329,7 +419,16 @@ def modelos_disponibles(proveedor: str, api_key: Optional[str] = None,
     salida: list[dict[str, Any]] = []
     for m in crudos:
         nombre = m.get("id") or m.get("name") or str(m)
-        salida.append({"modelo": nombre, "estado": "?"})
+        fila: dict[str, Any] = {"modelo": nombre, "estado": "?"}
+        precio = _precio_publicado(m)
+        if precio:
+            fila["precio"] = precio
+            PRECIOS[(proveedor, nombre)] = precio
+        vision = _vision_publicada(m)
+        if vision is not None:
+            VISION[nombre] = vision
+        fila["imagenes"] = soporta_imagenes(nombre)
+        salida.append(fila)
 
     if not probar:
         return salida

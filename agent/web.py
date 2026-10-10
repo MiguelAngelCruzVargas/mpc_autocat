@@ -27,6 +27,17 @@ from .loop import conversar
 from .mcp_link import ConexionMcp, SERVIDOR_DEFECTO
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
+_MCP_DIR = os.path.join(os.path.dirname(_AQUI), "mcp_server")
+
+
+def _estandar_mod() -> Any:
+    """estandar.py vive con el servidor MCP (lo usa check_all): se importa
+    de ahí para que el panel valide y guarde con las MISMAS reglas."""
+    import sys
+    if _MCP_DIR not in sys.path:
+        sys.path.insert(0, _MCP_DIR)
+    import estandar
+    return estandar
 _WEB_DIR = os.path.join(_AQUI, "web")
 _HTML = os.path.join(_WEB_DIR, "index.html")
 
@@ -485,6 +496,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"eventos": list(SESION.eventos)})
             return
 
+        if self.path == "/api/estandar":
+            est = _estandar_mod()
+            try:
+                datos = est.cargar()
+                error = None
+            except ValueError as exc:
+                datos, error = est.MINIMO, str(exc)
+            self._json({"estandar": datos, "archivo": est.ARCHIVO,
+                        "existe": os.path.exists(est.ARCHIVO), "error": error})
+            return
+
         if self.path == "/api/layouts":
             self._layouts()
             return
@@ -596,6 +618,8 @@ class Handler(BaseHTTPRequestHandler):
             # ¿El modelo elegido puede MIRAR una imagen? La interfaz lo
             # usa para habilitar o no el adjuntar, y para decir por qué.
             modelo = str(datos.get("modelo", ""))
+            if str(datos.get("proveedor", "")) == "openrouter":
+                providers.catalogo_openrouter()
             puede = providers.soporta_imagenes(modelo)
             self._json({
                 "modelo": modelo,
@@ -604,9 +628,8 @@ class Handler(BaseHTTPRequestHandler):
                            f"'{modelo}' es un modelo de solo texto: no puede "
                            "ver imágenes. Si le adjuntas un croquis, o lo "
                            "ignora en silencio o rechaza el pedido entero. "
-                           "Para trabajar con imágenes usa uno multimodal "
-                           "(gpt-4o, claude-3.5+, gemini, qwen-vl, "
-                           "llama-3.2-vision…)."),
+                           "Para trabajar con imágenes elige uno marcado con "
+                           "📷 en la lista de modelos (botón Listar)."),
             })
             return
 
@@ -625,6 +648,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/reset":
             SESION.borrar()
             self._json({"ok": True})
+            return
+
+        if self.path == "/api/estandar":
+            est = _estandar_mod()
+            try:
+                ruta = est.guardar(datos.get("estandar"))
+            except (ValueError, OSError) as exc:
+                self._json({"error": str(exc)}, 400)
+                return
+            self._json({"ok": True, "archivo": ruta})
             return
 
         if self.path == "/api/revisar":
@@ -790,11 +823,13 @@ class Handler(BaseHTTPRequestHandler):
         # Se corta ACÁ y no se manda: un modelo de solo texto con una
         # imagen adjunta o la ignora sin decir nada -- y entonces contesta
         # sobre algo que no vio -- o devuelve un 400 incomprensible.
+        if imagenes and str(datos.get("proveedor", "")) == "openrouter":
+            providers.catalogo_openrouter()
         if imagenes and not providers.soporta_imagenes(proveedor.modelo):
             self._json({"error":
                         f"'{proveedor.modelo}' no puede ver imágenes. "
-                        "Elige un modelo multimodal (gpt-4o, claude-3.5+, "
-                        "gemini, qwen-vl…) o manda el pedido sin adjuntos."},
+                        "Elige uno marcado con 📷 en la lista de modelos "
+                        "o manda el pedido sin adjuntos."},
                        400)
             return
 
@@ -820,6 +855,17 @@ class Handler(BaseHTTPRequestHandler):
                        incluir: Any) -> None:
         SESION.anotar({"tipo": "usuario", "texto": pedido,
                        "imagenes": len(imagenes)})
+        # Costo en vivo: precio que puso el usuario para este modelo, o el
+        # que publica el proveedor. Con tope, la corrida se detiene sola al
+        # pasarlo -- un plano son decenas de vueltas y un modelo caro con el
+        # perfil 'todo' se come el presupuesto sin que nadie lo note.
+        precio = _precio_manual(datos) or providers.precio_de(
+            str(datos.get("proveedor", "")), proveedor.modelo)
+        try:
+            tope = float(datos.get("topeUSD") or 0)
+        except (TypeError, ValueError):
+            tope = 0.0
+        topado = {"ya": False}
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -837,6 +883,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         def emitir(tipo: str, cuerpo: dict) -> None:
+            if tipo == "uso":
+                costo = providers.costo_usd(cuerpo, precio)
+                if costo is not None:
+                    cuerpo = {**cuerpo, "costoUSD": round(costo, 5)}
+                    if tope > 0 and costo >= tope and not topado["ya"]:
+                        topado["ya"] = True
+                        SESION.cancelar.set()
+                        emitir("aviso", {"texto": (
+                            f"Se alcanzó el tope de US${tope:g} por pedido "
+                            f"(van US${costo:.4f}): la corrida se detiene "
+                            "al terminar esta vuelta. Lo dibujado se queda; "
+                            "sube el tope en el panel si hace falta seguir.")})
             SESION.anotar({"tipo": tipo, **cuerpo})
             try:
                 paquete = json.dumps({"tipo": tipo, **cuerpo},
@@ -854,9 +912,16 @@ class Handler(BaseHTTPRequestHandler):
                               "modelo": proveedor.modelo})
             with SESION.lock:
                 if not SESION.mensajes:
-                    SESION.reiniciar(_system_prompt(
+                    sistema = _system_prompt(
                         bool(datos.get("conReglas", True)),
-                        int(datos.get("limiteReglas") or 0)))
+                        int(datos.get("limiteReglas") or 0))
+                    # El contexto fijo del preset (formato, escala,
+                    # reglamento...) entra una vez, al empezar la sesión.
+                    contexto = str(datos.get("contexto") or "").strip()[:2000]
+                    if contexto:
+                        sistema += ("\n\n--- Contexto fijo de este proyecto "
+                                    "(lo definió la persona) ---\n" + contexto)
+                    SESION.reiniciar(sistema)
                 if imagenes:
                     formato = getattr(proveedor, "formato", "openai")
                     bloques: list[dict[str, Any]] = [
@@ -913,6 +978,19 @@ def _apagar_en_hilo_aparte() -> None:
     time.sleep(0.3)
     if _SERVIDOR is not None:
         _SERVIDOR.shutdown()
+
+
+def _precio_manual(datos: dict[str, Any]) -> Optional[dict[str, float]]:
+    p = datos.get("precio")
+    if not isinstance(p, dict):
+        return None
+    try:
+        entrada, salida = float(p.get("entrada") or 0), float(p.get("salida") or 0)
+    except (TypeError, ValueError):
+        return None
+    if entrada <= 0 and salida <= 0:
+        return None
+    return {"entrada": entrada, "salida": salida}
 
 
 def _es_este_panel(puerto: int) -> bool:

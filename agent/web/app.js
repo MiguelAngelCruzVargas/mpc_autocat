@@ -18,6 +18,8 @@ let AppState = {
   soportaImagenes: false, // Si el modelo elegido puede verlas
   cronometro: null,       // Segundero mientras AutoCAD plotea la captura
   capturando: false,      // Hay un plot en curso: no pedir otro
+  costoPedido: 0,         // US$ del pedido en curso (último 'uso')
+  costoSesion: 0,         // US$ acumulado de los pedidos ya terminados
 };
 
 const $ = (s) => document.querySelector(s);
@@ -36,7 +38,15 @@ let PREFS = {};
 function pref(clave, porDefecto = null) {
   if (PREFS[clave] !== undefined && PREFS[clave] !== null) return PREFS[clave];
   const local = localStorage.getItem('autocad_ia_' + clave);
-  return local !== null ? local : porDefecto;
+  if (local === null) return porDefecto;
+  // Si el default es un objeto, lo guardado tiene que serlo también.
+  if (porDefecto !== null && typeof porDefecto === 'object') {
+    try {
+      const v = JSON.parse(local);
+      return v && typeof v === 'object' ? v : porDefecto;
+    } catch { return porDefecto; }
+  }
+  return local;
 }
 
 /** El modelo elegido para cada proveedor, dentro de las preferencias. */
@@ -49,7 +59,12 @@ function guardarModeloDe(proveedor, modelo) {
 let _guardadoPendiente = null;
 function guardarPref(clave, valor) {
   PREFS[clave] = valor;
-  try { localStorage.setItem('autocad_ia_' + clave, valor); } catch {}
+  // Los objetos (precios, presets, modelos) van como JSON: setItem de un
+  // objeto guardaba "[object Object]" y al leerlo de vuelta se rompía.
+  try {
+    localStorage.setItem('autocad_ia_' + clave,
+      typeof valor === 'object' && valor !== null ? JSON.stringify(valor) : valor);
+  } catch {}
   // Se agrupan los cambios: mover el slider de temperatura dispararía una
   // escritura por pixel.
   clearTimeout(_guardadoPendiente);
@@ -206,6 +221,175 @@ async function restaurarHistorial() {
   } catch {}
 }
 
+// ==========================================================================
+// COSTO Y PRESETS
+// ==========================================================================
+AppState.preciosPublicados = {};
+
+function claveModelo() {
+  const p = getProveedorActual();
+  const inModel = $('#input-model');
+  return `${p.id}:${inModel ? inModel.value.trim() : ''}`;
+}
+
+function precioManual() {
+  const e = parseFloat(($('#input-precio-entrada') || {}).value);
+  const s = parseFloat(($('#input-precio-salida') || {}).value);
+  if (!(e > 0) && !(s > 0)) return null;
+  return { entrada: e || 0, salida: s || 0 };
+}
+
+// El precio guardado para este modelo (el que escribió el usuario) o el
+// publicado por el proveedor al listar; si no hay, quedan en "auto" y el
+// servidor usa el publicado si lo conoce.
+function cargarPrecioDelModelo() {
+  const guardados = pref('precios', {}) || {};
+  const pr = guardados[claveModelo()] || AppState.preciosPublicados[claveModelo()] || null;
+  const inE = $('#input-precio-entrada'), inS = $('#input-precio-salida');
+  if (inE) inE.value = pr ? pr.entrada : '';
+  if (inS) inS.value = pr ? pr.salida : '';
+}
+
+function guardarPrecioDelModelo() {
+  const guardados = { ...(pref('precios', {}) || {}) };
+  const pr = precioManual();
+  if (pr) guardados[claveModelo()] = pr; else delete guardados[claveModelo()];
+  guardarPref('precios', guardados);
+}
+
+function pintarCosto() {
+  const el = $('#total-costo');
+  if (!el) return;
+  const total = AppState.costoSesion + AppState.costoPedido;
+  el.textContent = total > 0
+    ? ` · ≈ US$${total < 0.01 ? total.toFixed(4) : total.toFixed(2)}`
+    : '';
+  el.title = `Este pedido: US$${AppState.costoPedido.toFixed(4)} · ` +
+             `sesión: US$${total.toFixed(4)} (con el precio por millón de tokens del panel)`;
+}
+
+// Presets: proveedor, modelo, perfil, temperatura, reglas, tope y un
+// contexto fijo del proyecto, guardados con nombre para no reconfigurar
+// todo cada vez que se cambia de tipo de trabajo.
+function presets() { return pref('presets', {}) || {}; }
+
+function pintarPresets(elegido = '') {
+  const sel = $('#select-preset');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Sin preset —</option>' +
+    Object.keys(presets()).sort().map(n =>
+      `<option value="${escaparHtml(n)}">${escaparHtml(n)}</option>`).join('');
+  sel.value = elegido;
+}
+
+function guardarPresetActual() {
+  const nombre = (prompt('Nombre del preset (p.ej. "Vivienda Oaxaca 1:75")') || '').trim();
+  if (!nombre) return;
+  const inModel = $('#input-model'), selProf = $('#select-profile');
+  const chk = $('#check-rules'), inTemp = $('#input-temp');
+  const todos = { ...presets() };
+  todos[nombre] = {
+    proveedor: getProveedorActual().id,
+    modelo: inModel ? inModel.value.trim() : '',
+    perfil: selProf ? selProf.value : 'arquitectura',
+    temperatura: inTemp ? parseFloat(inTemp.value) : 0.2,
+    conReglas: chk ? chk.checked : true,
+    topeUSD: parseFloat(($('#input-tope') || {}).value) || 0,
+    contexto: (($('#input-contexto') || {}).value || '').trim(),
+  };
+  guardarPref('presets', todos);
+  pintarPresets(nombre);
+  showToast(`Preset "${nombre}" guardado`, 'success');
+}
+
+function aplicarPreset(nombre) {
+  const pr = presets()[nombre];
+  if (!pr) return;
+  const selProv = $('#select-provider');
+  if (selProv && pr.proveedor && [...selProv.options].some(o => o.value === pr.proveedor)) {
+    selProv.value = pr.proveedor;
+    if (selProv.onchange) selProv.onchange();
+  }
+  const inModel = $('#input-model');
+  if (inModel && pr.modelo) { inModel.value = pr.modelo; guardarModeloDe(pr.proveedor, pr.modelo); }
+  const selProf = $('#select-profile');
+  if (selProf && pr.perfil) { selProf.value = pr.perfil; guardarPref('perfil', pr.perfil); }
+  const inTemp = $('#input-temp');
+  if (inTemp && pr.temperatura !== undefined) {
+    inTemp.value = pr.temperatura;
+    const salida = $('#temp-val');
+    if (salida) salida.textContent = parseFloat(pr.temperatura).toFixed(1);
+  }
+  const chk = $('#check-rules');
+  if (chk && pr.conReglas !== undefined) chk.checked = !!pr.conReglas;
+  const inTope = $('#input-tope');
+  if (inTope) inTope.value = pr.topeUSD || '';
+  const inCtx = $('#input-contexto');
+  if (inCtx) inCtx.value = pr.contexto || '';
+  cargarPrecioDelModelo();
+  actualizarSubtitulo();
+  showToast(`Preset "${nombre}" aplicado. El contexto entra desde la próxima Nueva Sesión.`, 'info');
+}
+
+function borrarPreset() {
+  const sel = $('#select-preset');
+  if (!sel || !sel.value) return showToast('Elige un preset primero', 'error');
+  const todos = { ...presets() };
+  delete todos[sel.value];
+  guardarPref('presets', todos);
+  pintarPresets('');
+}
+
+// Estándar de oficina: el panel lo lee y lo guarda en el MISMO archivo
+// que usa check_all, validado con las mismas reglas.
+async function cargarEstandar() {
+  const ta = $('#input-estandar');
+  if (!ta) return;
+  try {
+    const r = await (await fetch('/api/estandar')).json();
+    ta.value = JSON.stringify(r.estandar, null, 2);
+    if (r.error) showToast(r.error, 'error');
+  } catch {}
+}
+
+async function guardarEstandar() {
+  const ta = $('#input-estandar');
+  if (!ta) return;
+  let obj;
+  try { obj = JSON.parse(ta.value); }
+  catch (e) { return showToast('El JSON no es válido: ' + e.message, 'error'); }
+  const res = await fetch('/api/estandar', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ estandar: obj }) });
+  const r = await res.json();
+  if (!res.ok) return showToast(r.error || 'No se pudo guardar', 'error');
+  showToast('Estándar guardado: «Revisar plano» ya lo aplica', 'success');
+}
+
+function conectarCostoYPresets() {
+  cargarEstandar();
+  const btnEst = $('#btn-guardar-estandar');
+  if (btnEst) btnEst.onclick = guardarEstandar;
+  const tope = pref('topeUSD');
+  const inTope = $('#input-tope');
+  if (inTope && tope) inTope.value = tope;
+  if (inTope) inTope.onchange = () => guardarPref('topeUSD', parseFloat(inTope.value) || 0);
+  for (const id of ['#input-precio-entrada', '#input-precio-salida']) {
+    const el = $(id);
+    if (el) el.onchange = guardarPrecioDelModelo;
+  }
+  const inModel = $('#input-model');
+  if (inModel) inModel.addEventListener('change', cargarPrecioDelModelo);
+  cargarPrecioDelModelo();
+  pintarPresets('');
+  const sel = $('#select-preset');
+  if (sel) sel.onchange = () => sel.value && aplicarPreset(sel.value);
+  const btnG = $('#btn-preset-guardar');
+  if (btnG) btnG.onclick = guardarPresetActual;
+  const btnB = $('#btn-preset-borrar');
+  if (btnB) btnB.onclick = borrarPreset;
+}
+
 async function init() {
   try {
     const res = await fetch('/api/estado');
@@ -245,6 +429,7 @@ async function init() {
   actualizarEstadoAutoCAD();
   actualizarEntregables();
   restaurarHistorial();
+  conectarCostoYPresets();
   const btnRevisar = document.getElementById('btn-revisar');
   if (btnRevisar) btnRevisar.onclick = revisarPlano;
   const selLayout = document.getElementById('select-layout');
@@ -497,19 +682,41 @@ async function listarModelos(probar = false) {
       const isOk = m.estado.startsWith('OK');
       const isErr = /bloquead|error|sin respuesta|no/.test(m.estado.toLowerCase());
       const isSelected = m.modelo === modeloActual;
+      if (m.precio) AppState.preciosPublicados[`${p.id}:${m.modelo}`] = m.precio;
+      const precio = m.precio
+        ? `<span class="model-precio" title="US$ por millón de tokens: entrada / salida">$${m.precio.entrada}/${m.precio.salida}</span>`
+        : '';
+      const ojo = m.imagenes ? '<span title="Acepta imágenes (croquis, fotos)">📷</span>' : '';
       return `
-        <div class="model-item ${isOk ? 'ok' : isErr ? 'err' : ''} ${isSelected ? 'selected' : ''}" data-model="${m.modelo}">
-          <span>${m.modelo}</span>
-          <span class="model-badge">${m.estado === '?' ? 'disponible' : m.estado}</span>
+        <div class="model-item ${isOk ? 'ok' : isErr ? 'err' : ''} ${isSelected ? 'selected' : ''}" data-model="${escaparHtml(m.modelo)}" data-buscar="${escaparHtml(m.modelo.toLowerCase())}">
+          <span class="model-nombre">${ojo} ${escaparHtml(m.modelo)}</span>
+          ${precio}
+          <span class="model-badge">${m.estado === '?' ? 'disponible' : escaparHtml(m.estado)}</span>
         </div>
       `;
     }).join('');
+    // Con cientos de modelos (OpenRouter tiene más de 450) la lista sin
+    // buscador no sirve: se filtra mientras se escribe.
+    c.insertAdjacentHTML('afterbegin',
+      `<input id="filtro-modelos" class="filtro-modelos" placeholder="Buscar entre ${data.modelos.length} modelos… (p.ej. claude, gpt, 📷)">`);
+    const filtro = $('#filtro-modelos');
+    if (filtro) filtro.oninput = () => {
+      const q = filtro.value.trim().toLowerCase();
+      const soloImg = q.includes('📷');
+      const texto = q.replace('📷', '').trim();
+      $$('.model-item').forEach(el => {
+        const ok = (!texto || el.dataset.buscar.includes(texto)) &&
+                   (!soloImg || el.querySelector('[title^="Acepta"]'));
+        el.style.display = ok ? '' : 'none';
+      });
+    };
 
     $$('.model-item').forEach(el => {
       el.onclick = () => {
         const m = el.dataset.model;
         if (inModel) inModel.value = m;
         guardarModeloDe(p.id, m);
+        cargarPrecioDelModelo();
         $$('.model-item').forEach(x => x.classList.remove('selected'));
         el.classList.add('selected');
         actualizarSubtitulo();
@@ -676,7 +883,7 @@ async function refrescarSoporteImagenes() {
     const r = await (await fetch('/api/vision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ modelo }),
+      body: JSON.stringify({ modelo, proveedor: getProveedorActual().id }),
     })).json();
 
     AppState.soportaImagenes = !!r.soportaImagenes;
@@ -783,6 +990,9 @@ async function enviarMensaje() {
         perfil: selProf ? selProf.value : 'arquitectura',
         conReglas: chkRules ? chkRules.checked : true,
         temperatura: inTemp ? parseFloat(inTemp.value) : 0.2,
+        precio: precioManual(),
+        topeUSD: parseFloat(($('#input-tope') || {}).value) || 0,
+        contexto: (($('#input-contexto') || {}).value || '').trim(),
       }),
     });
 
@@ -790,7 +1000,11 @@ async function enviarMensaje() {
       const err = await res.json().catch(() => ({}));
       agregarAvisoChat(err.error || `El servidor respondió con código ${res.status}`);
     } else {
+      AppState.costoPedido = 0;
       huboDibujo = await procesarSSE(res);
+      AppState.costoSesion += AppState.costoPedido;
+      AppState.costoPedido = 0;
+      pintarCosto();
       actualizarEntregables();
     }
   } catch (err) {
@@ -858,6 +1072,10 @@ function despacharEvento(ev) {
     if (tokenPill) tokenPill.style.display = 'flex';
     if (totTokens) totTokens.textContent = ev.total.toLocaleString('es');
     if (totTurns) totTurns.textContent = ev.vueltas;
+    if (typeof ev.costoUSD === 'number') {
+      AppState.costoPedido = ev.costoUSD;
+      pintarCosto();
+    }
   } else if (ev.tipo === 'texto') {
     agregarBurbuja('AutoCAD IA', ev.texto, false);
   } else if (ev.tipo === 'tool') {

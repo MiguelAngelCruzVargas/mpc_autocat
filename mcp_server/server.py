@@ -797,6 +797,20 @@ def check_column(axial_load: float,
 
 
 @mcp.tool()
+def check_office_standard(standard: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Revisa la FORMA del dibujo contra el estándar de la oficina: capas
+    obligatorias, color y tipo de línea de cada capa, nada en la capa 0,
+    ninguna fuente txt.shx, ninguna capa en uso con colores puros 1-6.
+
+    standard: el estándar como objeto ({"capas": {"MUROS": {"color": 7}},
+    "capas_obligatorias": [...], ...}). Sin él se usa el de la oficina
+    (%LOCALAPPDATA%/AutoCadMcp/estandar_oficina.json, se edita desde el
+    panel web) o, si no existe, el mínimo. check_all ya lo incluye."""
+    import estandar as estandar_mod
+    return estandar_mod.revisar(standard)
+
+
+@mcp.tool()
 def check_all(rooms: Optional[list[dict[str, Any]]] = None,
               doors: Optional[list[dict[str, Any]]] = None,
               windows: Optional[list[dict[str, Any]]] = None,
@@ -856,6 +870,13 @@ def check_all(rooms: Optional[list[dict[str, Any]]] = None,
         skipped.append("sheet (no se pudo medir la extensión)")
 
     checks["annotations"] = check_annotations(items=annotation_items)
+    # La FORMA, contra el estándar de la oficina (o el mínimo si no hay):
+    # capa 0, txt.shx, colores puros, capas y colores obligatorios.
+    try:
+        import estandar as estandar_mod
+        checks["office_standard"] = estandar_mod.revisar()
+    except (acad.AutoCadError, ValueError) as exc:
+        skipped.append(f"office_standard ({exc})")
     checks["hygiene"] = check_drawing_hygiene(
         sample_limit=hygiene_sample_limit,
         max_duplicate_check=hygiene_max_duplicate_check)

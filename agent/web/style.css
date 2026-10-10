@@ -1535,3 +1535,78 @@ main.chat-main {
   font-size: 12px;
   margin-right: 4px;
 }
+
+/* ---- Costo y presets ---- */
+.section-subtitle {
+  margin: 12px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.cost-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.cost-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cost-grid label:last-child { grid-column: 1 / -1; }
+.cost-grid input { width: 100%; padding: 5px 8px; font-size: 12px; }
+.preset-contexto {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- Lista de modelos: buscador, precio, imágenes ---- */
+.filtro-modelos {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.model-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.model-precio {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+/* ---- Estándar de oficina ---- */
+.estandar-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-main);
+  margin-bottom: 6px;
+}
+.estandar-json {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}

@@ -324,12 +324,37 @@ def test_la_conversacion_sobrevive() -> None:
         check("Nueva Sesion lo borra", not os.path.exists(Sesion.ARCHIVO))
 
 
+def test_costo_y_modelos_vivos() -> None:
+    """El costo sale del precio por millon de tokens (publicado o el que
+    escribe el usuario), y si un modelo acepta imagenes manda el dato que
+    publica el proveedor sobre la lista de nombres."""
+    from . import providers
+    from .web import _precio_manual
+    precio = {"entrada": 2.0, "salida": 10.0}
+    costo = providers.costo_usd({"entrada": 100000, "salida": 5000}, precio)
+    check("100k entrada + 5k salida a 2/10 = US$0.25",
+          abs(costo - 0.25) < 1e-9, str(costo))
+    check("sin precio no se inventa un costo",
+          providers.costo_usd({"entrada": 1, "salida": 1}, None) is None)
+    check("precio manual vacio = usar el publicado",
+          _precio_manual({"precio": {"entrada": 0, "salida": 0}}) is None)
+    providers.VISION["prueba/modelo-nuevo-2027"] = True
+    providers.VISION["prueba/modelo-texto"] = False
+    check("dato vivo: un modelo nuevo que la lista no conoce",
+          providers.soporta_imagenes("prueba/modelo-nuevo-2027"))
+    check("dato vivo manda aunque el nombre 'parezca' multimodal",
+          not providers.soporta_imagenes("prueba/modelo-texto"))
+    check("mismo modelo sin prefijo de proveedor",
+          providers.soporta_imagenes("modelo-nuevo-2027"))
+
+
 def main() -> int:
     for fn in (test_aplanar_schema, test_recortar, test_bucle_openai,
                test_bucle_anthropic, test_un_error_de_tool_no_corta_la_sesion,
                test_json_invalido_no_revienta, test_tope_de_vueltas,
                test_la_web_rechaza_paginas_ajenas,
-               test_la_conversacion_sobrevive):
+               test_la_conversacion_sobrevive,
+               test_costo_y_modelos_vivos):
         print(fn.__name__)
         fn()
     print("_con_conexion")

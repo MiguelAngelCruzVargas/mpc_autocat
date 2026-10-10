@@ -27,7 +27,7 @@ pide. Eso es lo que hay acá.
 setx OPENROUTER_API_KEY "sk-or-..."
 
 # 2. Con AutoCAD abierto y el plugin cargado:
-python -m agent.cli --proveedor openrouter --modelo anthropic/claude-3.5-sonnet
+python -m agent.cli --proveedor openrouter --modelo anthropic/claude-sonnet-5.5
 
 # Una sola instrucción, sin conversación:
 python -m agent.cli --proveedor deepseek -p "dibujá una casa de 3 recámaras en un lote de 8x16"
@@ -150,6 +150,10 @@ antes se veía en la consola negra.
 | **Historial** | La conversación se guarda en `%LOCALAPPDATA%\AutoCadMcp\conversacion.json` (sin las imágenes) y vuelve al recargar o al reabrir el panel. «Nueva Sesión» la borra. |
 | **Un pedido por vez** | Dos pestañas mandando a la vez mezclaban la conversación: la segunda recibe un aviso claro. |
 | **Puerto ocupado** | Abrir el lanzador dos veces abre el panel que ya corre; si el puerto lo tiene otro programa, usa el siguiente libre. |
+| **Costo en vivo y tope** | Costo del pedido y de la sesión en US$ junto al contador de tokens. OpenRouter publica sus precios y se llenan solos; para otros proveedores se escriben una vez por modelo. Con "Tope por pedido", la corrida se detiene sola al pasarlo. |
+| **Modelos vigentes** | "Listar" trae el catálogo actual del proveedor (OpenRouter: 450+), con buscador, precio por millón y 📷 en los que aceptan imágenes, según lo que publica el proveedor y no una lista fija de nombres. |
+| **Presets** | Proveedor, modelo, perfil, temperatura, reglas, tope y un *contexto fijo del proyecto* (formato, escala, reglamento…) guardados con nombre. |
+| **Estándar de oficina** | Capas obligatorias, color y tipo de línea por capa, nada en la capa 0, sin `txt.shx`, sin colores puros: se edita en el panel (`%LOCALAPPDATA%\AutoCadMcp\estandar_oficina.json`) y «Revisar plano» lo aplica (`check_office_standard`, incluido en `check_all`). |
 
 ## Lo que todavía no hace
 

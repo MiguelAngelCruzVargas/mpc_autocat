@@ -1,6 +1,6 @@
 """Interfaz de consola para dibujar en AutoCAD con el modelo que quieras.
 
-    python -m agent.cli --proveedor openrouter --modelo anthropic/claude-3.5-sonnet
+    python -m agent.cli --proveedor openrouter --modelo anthropic/claude-sonnet-5.5
     python -m agent.cli --proveedor local --modelo qwen2.5-coder-32b
     python -m agent.cli --proveedor deepseek -p "dibujá una casa de 3 recámaras en 8x16"
 

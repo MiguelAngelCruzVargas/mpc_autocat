@@ -173,7 +173,7 @@
         <section class="sidebar-section">
           <div class="section-title">Modelo & Parámetros</div>
           <div class="form-group">
-            <input id="input-model" placeholder="ej. anthropic/claude-3.5-sonnet" autocomplete="off">
+            <input id="input-model" placeholder="ej. anthropic/claude-sonnet-5.5" autocomplete="off">
           </div>
           <div class="button-group-row">
             <button class="btn btn-sm" id="btn-list-models">Listar</button>
@@ -187,6 +187,27 @@
               <span id="temp-val" class="slider-val">0.2</span>
             </div>
             <input type="range" id="input-temp" min="0" max="1" step="0.1" value="0.2" class="custom-slider">
+          </div>
+
+          <div class="section-subtitle">Costo</div>
+          <div class="cost-grid">
+            <label>US$ / 1M entrada<input id="input-precio-entrada" type="number" min="0" step="0.01" placeholder="auto"></label>
+            <label>US$ / 1M salida<input id="input-precio-salida" type="number" min="0" step="0.01" placeholder="auto"></label>
+            <label>Tope por pedido US$<input id="input-tope" type="number" min="0" step="0.05" placeholder="sin tope"></label>
+          </div>
+          <small class="field-help">OpenRouter publica sus precios y se llenan solos. Para otros proveedores escríbelos una vez (quedan guardados por modelo). Con tope, el pedido se detiene al pasarlo.</small>
+        </section>
+
+        <!-- PRESETS -->
+        <section class="sidebar-section">
+          <div class="section-title">Presets</div>
+          <div class="form-group">
+            <select id="select-preset" class="custom-select"><option value="">— Sin preset —</option></select>
+          </div>
+          <textarea id="input-contexto" rows="3" class="preset-contexto" placeholder="Contexto fijo del proyecto (opcional): formato y escala de lámina, reglamento municipal, sistema constructivo… Se le da al agente al empezar cada sesión."></textarea>
+          <div class="button-group-row">
+            <button class="btn btn-sm" id="btn-preset-guardar" type="button">Guardar como…</button>
+            <button class="btn btn-sm btn-danger" id="btn-preset-borrar" type="button">Borrar</button>
           </div>
         </section>
 
@@ -203,6 +224,17 @@
               <small>Envía criterios de muros, vanos y cotas (+11k tokens)</small>
             </span>
           </label>
+        </section>
+
+        <!-- ESTÁNDAR DE OFICINA -->
+        <section class="sidebar-section">
+          <div class="section-title">Estándar de oficina</div>
+          <details class="estandar-details">
+            <summary>Editar (capas, colores, fuentes)</summary>
+            <textarea id="input-estandar" rows="12" class="estandar-json" spellcheck="false"></textarea>
+            <small class="field-help">JSON. Claves: <b>capas</b> {"MUROS": {"color": 7, "linetype": "Continuous"}}, <b>capas_obligatorias</b> [...], <b>prohibir_capa_0</b>, <b>fuentes_prohibidas</b>, <b>colores_prohibidos</b>. «Revisar plano» lo aplica.</small>
+            <button class="btn btn-sm btn-primary" id="btn-guardar-estandar" type="button">Guardar estándar</button>
+          </details>
         </section>
 
         <!-- ENTREGABLES: lo que el agente deja para descargar -->
@@ -260,7 +292,7 @@
 
         <div class="chat-header-actions">
           <div id="token-counter" class="token-counter-pill" style="display: none;">
-            <b id="total-tokens">0</b> tokens · <span id="total-turns">0</span> v.
+            <b id="total-tokens">0</b> tokens · <span id="total-turns">0</span> v.<span id="total-costo"></span>
           </div>
           
           <button class="btn btn-sm btn-ghost" id="btn-revisar" title="Revisar el plano con check_all (sin gastar tokens)">
