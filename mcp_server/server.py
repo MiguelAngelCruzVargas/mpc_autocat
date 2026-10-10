@@ -1877,6 +1877,54 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
 
 
 @mcp.tool()
+def check_building_project(project: dict[str, Any]) -> dict[str, Any]:
+    """EXAMEN de un edificio de vivienda, parte 1: los NÚMEROS de norma sobre
+    lo diseñado, ANTES de dibujar (corre sin AutoCAD). Referencia CDMX:
+    RCDF 2024, NTC Proyecto Arquitectónico 2024 y NTC Concreto 2023; cada
+    falla trae su regla y su artículo.
+
+    Revisa: área/lado/altura de cada local (Tabla 2.2.1.1), ancho de puertas
+    (0.80 cocina y baño, 0.90 las demás), iluminación (vano ≥ 17.5 % del área,
+    15 % en complementarios; la cocina abierta se revisa junto con la sala),
+    ventanas en colindancia, patios de iluminación (1/3 o 1/4 de la altura,
+    mínimo 2.50), escalera (peralte 10-18, huella ≥ 25, descanso ≥ 1.20 y ≥
+    ancho, ≤ 2.70 entre descansos), circulación común ≥ 1.10, elevador (más de
+    5 niveles sobre PB o 15 m), cajones, calentador solar (> 3 viviendas),
+    f'c ≥ 250, zona y coeficiente sísmico declarados y estudio de mecánica de
+    suelos (sin él la capacidad de carga es un supuesto y el examen lo dice).
+
+    project: {"levels": [{"name", "floor_to_floor", "slab", "rooms", "doors",
+    "windows"}], "lot", "dwellings", "parking", "parking_size", "stair":
+    {"riser", "tread", "width", "landing", "rise_per_flight"}, "patios":
+    [{"name", "min_side", "wall_height", "serves"}], "structure": {"fc", "fy",
+    "seismic_zone", "seismic_coefficient", "soil_study"}, "equipment": [...],
+    "levels_total", "height"}. Las ventanas con 'width' y 'height'."""
+    import examen_edificio as exam_mod
+    return exam_mod.revisar_proyecto(project)
+
+
+@mcp.tool()
+def check_drawing_set() -> dict[str, Any]:
+    """EXAMEN de un edificio de vivienda, parte 2: ¿el JUEGO DE PLANOS del
+    dibujo activo está completo para el trámite (RCDF art. 53)? Lee todos los
+    textos —modelo y láminas— y busca cada pieza: localización, conjunto,
+    plantas, azotea, dos cortes (uno por la escalera), fachadas, cuadro de
+    áreas, norte; cimentación, planta estructural, detalles de zapata,
+    columna y trabe, f'c y fy, carga viva, coeficiente sísmico; hidráulica
+    con isométrico, cisterna, tinacos y calentador solar; sanitaria con
+    albañal; bajadas pluviales; eléctrica con cuadro de cargas y unifilar;
+    gas; cuadro de volúmenes; rótulo con DRO y cédula; y que haya láminas.
+
+    Devuelve 'missing' (qué falta, de qué disciplina y qué artículo lo pide),
+    'present' y 'score'. Es una revisión de PRESENCIA: que el corte esté, no
+    que esté bien dibujado — para eso están los check_* de cada cosa."""
+    import examen_edificio as exam_mod
+    textos = exam_mod.textos_del_dibujo(acad)
+    layouts = [l["name"] for l in acad.call("list_layouts", {}).get("layouts", [])]
+    return exam_mod.revisar_juego(textos, layouts)
+
+
+@mcp.tool()
 def create_installation_legend(kind: str, x: float, y: float,
                                notes: Optional[list[str]] = None,
                                norm_notes: bool = True) -> dict[str, Any]:

@@ -6,7 +6,21 @@ namespace AutoCadMcpPlugin.Commands
 {
     public static class ListEntitiesCommand
     {
-        private static JsonObject TodosLosEspacios(Document doc, string typeFilter, int limit)
+        /// <summary>El contenido de un texto, para no tener que pedir
+        /// get_entity uno por uno (~0.5 s cada viaje): revisar los textos de
+        /// un juego de planos pasaba de minutos a una llamada.</summary>
+        private static void AgregarTexto(JsonObject o, Entity ent, bool incluir)
+        {
+            if (!incluir)
+                return;
+            if (ent is DBText t)
+                o["text"] = t.TextString;
+            else if (ent is MText m)
+                o["text"] = m.Text;
+        }
+
+        private static JsonObject TodosLosEspacios(Document doc, string typeFilter, int limit,
+                                                   bool incluirTexto)
         {
             var db = doc.Database;
             var arr = new JsonArray();
@@ -29,13 +43,15 @@ namespace AutoCadMcpPlugin.Commands
                         // El viewport general de cada lámina no es dibujo.
                         if (ent is Viewport vp && vp.Number == 1)
                             continue;
-                        arr.Add(new JsonObject
+                        var o = new JsonObject
                         {
                             ["handle"] = ent.Handle.ToString(),
                             ["type"] = typeName,
                             ["layer"] = ent.Layer,
                             ["space"] = layout.LayoutName
-                        });
+                        };
+                        AgregarTexto(o, ent, incluirTexto);
+                        arr.Add(o);
                     }
                 }
                 tr.Commit();
@@ -43,7 +59,9 @@ namespace AutoCadMcpPlugin.Commands
             return new JsonObject { ["entities"] = arr, ["count"] = arr.Count, ["allSpaces"] = true };
         }
 
-        /// <summary>params: [type] (p.ej. "Line", "Polyline"), [limit] (default 200)</summary>
+        /// <summary>params: [type] (p.ej. "Line", "Polyline"), [limit] (default 200),
+        /// [allSpaces], [includeText]: devuelve también el contenido de cada
+        /// DBText/MText.</summary>
         public static JsonObject Run(Document doc, JsonObject pars)
         {
             string typeFilter = pars.ContainsKey("type") ? pars["type"]?.GetValue<string>() : null;
@@ -52,8 +70,9 @@ namespace AutoCadMcpPlugin.Commands
             // dibujo (estándar de oficina) que mira solo el espacio activo
             // no ve lo que hay en el modelo mientras hay una lámina abierta.
             bool todos = pars["allSpaces"] != null && pars["allSpaces"].GetValue<bool>();
+            bool incluirTexto = pars["includeText"] != null && pars["includeText"].GetValue<bool>();
             if (todos)
-                return TodosLosEspacios(doc, typeFilter, limit);
+                return TodosLosEspacios(doc, typeFilter, limit, incluirTexto);
 
             var db = doc.Database;
             var arr = new JsonArray();
@@ -78,12 +97,14 @@ namespace AutoCadMcpPlugin.Commands
                         !typeName.Equals(typeFilter, System.StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    arr.Add(new JsonObject
+                    var o = new JsonObject
                     {
                         ["handle"] = ent.Handle.ToString(),
                         ["type"] = typeName,
                         ["layer"] = ent.Layer
-                    });
+                    };
+                    AgregarTexto(o, ent, incluirTexto);
+                    arr.Add(o);
                     count++;
                 }
                 tr.Commit();

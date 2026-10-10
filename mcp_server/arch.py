@@ -1270,7 +1270,10 @@ def create_axis_grid(
     # dibujo. Si se acoto antes (lo recomendable), el eje se estira hasta
     # pasar las cadenas de cota y el globo sale afuera, que es como se dibuja
     # de verdad: la linea de eje CRUZA las cotas, la burbuja no.
-    if not extension:
+    # 'extension' es un MINIMO, no una orden: pasandola, antes se salteaba
+    # esta busqueda y los globos quedaban sentados sobre las cotas (visto en
+    # la planta de un edificio).
+    if True:
         lados = []
         if xs:
             a0, a1 = xs[0] - radius, xs[-1] + radius
@@ -1298,12 +1301,12 @@ def create_axis_grid(
             "x": center[0], "y": center[1], "z": 0.0, "radius": radius,
             "layer": layer, "lineweight": LW_GRID, "colorIndex": None,
         })["handle"])
-        # DBText se ancla abajo a la izquierda: corremos el texto para que
-        # quede ópticamente centrado en el globo.
+        # Centrado por AutoCAD (justify), con la forma real de cada letra.
+        # Antes se corria a ojo con un ancho estimado: el "1", angosto,
+        # quedaba pegado a la izquierda del globo.
         handles.append(acad.call("create_text", {
-            "text": label,
-            "x": center[0] - height * 0.3 * len(label),
-            "y": center[1] - height * 0.5,
+            "text": label, "x": center[0], "y": center[1],
+            "justify": "middle_center",
             "z": 0.0, "height": height, "layer": layer,
             "rotationDeg": 0.0, "lineweight": LW_GRID, "colorIndex": None,
         })["handle"])

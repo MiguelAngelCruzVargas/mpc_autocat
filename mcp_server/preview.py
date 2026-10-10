@@ -269,10 +269,15 @@ def to_svg(entities: list[dict[str, Any]], width_px: int = 1200,
         elif e["cmd"] == "create_text":
             txt = (e["text"].replace("&", "&amp;").replace("<", "&lt;")
                    .replace(">", "&gt;"))
+            just = str(e.get("justify") or "left")
+            ancla = ("middle" if just.endswith("center") else
+                     "end" if just.endswith("right") else "start")
+            base = (' dominant-baseline="central"' if just.startswith("middle") else "")
             out.append(
                 f'<g transform="translate({e["x"]},{e["y"]}) scale(1,-1)">'
                 f'<text x="0" y="0" font-family="Arial, Helvetica, sans-serif" '
-                f'font-size="{e["height"]}" fill="{col}">{txt}</text></g>')
+                f'font-size="{e["height"]}" fill="{col}" text-anchor="{ancla}"{base}>'
+                f'{txt}</text></g>')
 
     out.append("</g></svg>")
     return "\n".join(out)

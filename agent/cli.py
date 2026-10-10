@@ -56,6 +56,7 @@ PERFILES: dict[str, list[str]] = {
         "place_devices", "create_conduit",
         "suggest_electrical", "suggest_hydraulic", "suggest_sanitary",
         "create_installation_legend",
+        "check_building_project", "check_drawing_set",
         # Muros rematados, 3D y presupuesto: sin esto el panel web (que usa
         # este perfil por default) dibujaba la casa pero no podia levantarla
         # en 3D, cuantificarla ni sacar el catalogo de conceptos.
