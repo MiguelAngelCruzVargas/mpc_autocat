@@ -870,6 +870,7 @@ def create_footing_section(
     mark: str = "",
     scale: float = 0.0,
     layer: Optional[str] = None,
+    support: str = "muro",
 ) -> dict[str, Any]:
     """Corte TRANSVERSAL de la cimentación de un muro corrido -- barda,
     muro de carga liviano -- de la excavación hacia arriba. Es una
@@ -983,9 +984,17 @@ def create_footing_section(
             f"denominador. Para 1:{scale:g} en metros pasá {scale / 1000.0:g}, "
             "o 0 para tomar la escala de la lámina.")
     upm = scale if scale > 0 else space.units_per_paper_mm()
+    # support='columna': el mismo corte sirve para una zapata AISLADA bajo
+    # columna (en corte es la misma geometría), pero con su nombre: rotular
+    # "ZAPATA CORRIDA / MURO / CADENA" un detalle de columna es dar un dato
+    # falso (pasó en un edificio). Y la contratrabe puede ser más angosta que
+    # la columna: la regla de abajo es de muro sobre cadena.
+    if support not in ("muro", "columna"):
+        raise ValueError("support tiene que ser 'muro' o 'columna'.")
+    columna = support == "columna"
     gb_width = (grade_beam_width if grade_beam_width and grade_beam_width > 0
                 else wall_thickness)
-    if gb_width < wall_thickness:
+    if gb_width < wall_thickness and not columna:
         raise ValueError(
             f"grade_beam_width ({gb_width:g}) no puede ser menor que "
             f"wall_thickness ({wall_thickness:g}).")
@@ -1171,7 +1180,9 @@ def create_footing_section(
     if labels:
         entries: list[tuple[float, str]] = [
             ((p_y0 + p_y1) / 2.0, con_spec("PLANTILLA DE CONCRETO POBRE", "plantilla")),
-            ((f_y0 + f_y1) / 2.0, con_spec(FOUNDATION_LABEL[foundation_type],
+            ((f_y0 + f_y1) / 2.0, con_spec("ZAPATA AISLADA DE CONCRETO ARMADO"
+                                           if columna and foundation_type == "zapata_concreto"
+                                           else FOUNDATION_LABEL[foundation_type],
                                            "stones" if foundation_type != "zapata_concreto" else "footing")),
         ]
         if footing_bar_count > 0:
@@ -1181,13 +1192,15 @@ def create_footing_section(
                             con_spec("DADO DE CONCRETO", "pedestal")))
         if grade_beam is not None:
             entries.append(((gb_y0 + gb_y0 + grade_beam_height) / 2.0,
-                            con_spec("CADENA DE DESPLANTE", "grade_beam")))
+                            con_spec("CONTRATRABE" if columna else "CADENA DE DESPLANTE",
+                                     "grade_beam")))
         if dowel_count > 0:
             entries.append((top_before_wall + (wall_height * 0.35 if wall else 0.0),
                             con_spec("ARMADO DE ARRANQUE", "dowels")))
         if wall is not None:
             entries.append((top_before_wall + wall_height * 0.75,
-                            con_spec("MURO DE " + str(wall.get("label", "BLOCK")), "wall")))
+                            con_spec("COLUMNA" if columna else
+                                     "MURO DE " + str(wall.get("label", "BLOCK")), "wall")))
         entries.sort(key=lambda e: e[0])
         y_labels = _apilar_labels(entries, text_height * 1.9)
         for (y_true, texto), y_label in zip(entries, y_labels):
@@ -1197,7 +1210,9 @@ def create_footing_section(
                         nivel_terreno)
             t = sym_mod.create_view_title(
                 x - max_half, techo + text_height * 3.0, title,
-                scale_text="SIN ESCALA", height=text_height * 1.5,
+                # La escala real del detalle (en metros: upm * 1000), no
+                # "SIN ESCALA": el detalle SÍ está a escala.
+                scale_text=f"ESC. 1:{round(upm * 1000):g}", height=text_height * 1.5,
                 spaced=False, mark=mark)
             caja_titulo = t.get("box")
 

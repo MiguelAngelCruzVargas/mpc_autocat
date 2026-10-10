@@ -2457,8 +2457,13 @@ def create_footing_section(x: float, y: float,
                            title: str = "",
                            mark: str = "",
                            scale: float = 0.0,
-                           layer: Optional[str] = None) -> dict[str, Any]:
-    """Corte TRANSVERSAL de la cimentación de un muro corrido (barda, muro
+                           layer: Optional[str] = None,
+                           support: str = "muro") -> dict[str, Any]:
+    """Con support='columna' es el corte de una zapata AISLADA bajo columna
+    (rotula zapata aislada / contratrabe / columna; la contratrabe puede ser
+    más angosta que la columna).
+
+    Corte TRANSVERSAL de la cimentación de un muro corrido (barda, muro
     de carga liviano), de la excavación hacia arriba. Es una COMPOSICIÓN de
     las primitivas de detalle -- create_material_section, create_stone_fill,
     create_soil_section, create_rebar -- así que cualquier cimentación que
@@ -2518,7 +2523,7 @@ def create_footing_section(x: float, y: float,
         ground_level=ground_level, excavation_margin=excavation_margin,
         soil_depth_below=soil_depth_below, wall_material=wall_material,
         stone_size=stone_size, specs=specs, dimension=dimension,
-        labels=labels, title=title, mark=mark, scale=scale, layer=layer)
+        labels=labels, title=title, mark=mark, scale=scale, layer=layer, support=support)
 
 
 # ------------------------------------------- primitivas de detalle
