@@ -52,7 +52,11 @@ NORMA: dict[str, Any] = {
     "lavabo_contacto_m": 0.9,       # 210-52(d): contacto a no más de 900 mm del lavabo
     "pasillo_min_m": 3.0,           # 210-52(h): pasillo de 3 m o más lleva al menos un contacto
     "va_m2_alumbrado": 33.0,        # Tabla 220-12: unidades de vivienda, 33 VA/m²
-    "va_contacto": 180.0,           # 220-14(l): 180 VA por contacto
+    "va_contacto": 180.0,           # 220-14(l): 180 VA por contacto (pequeños aparatos, baño, exterior de servicio)
+    # 220-14(j): en VIVIENDA los contactos de uso general ya están incluidos
+    # en los 33 VA/m² de alumbrado (Tabla 220-12): no suman carga propia.
+    # Sumarles 180 VA cada uno le daba 10 circuitos a un depto de 75 m².
+    "va_contacto_general_vivienda": 0.0,
     "va_circuito_20a": 1500.0,      # 220-52(a)/(b): pequeños aparatos y lavado, 1500 VA por circuito
     "tension_v": 120.0,             # [NOM] tensión nominal del texto (CFE suministra 127 V: no verificado)
     "demanda_100_va": 3000.0,       # 220-42: primeros 3000 VA de alumbrado al 100 %
@@ -332,7 +336,7 @@ def suggest_electrical(rooms: list[dict[str, Any]],
                     0.0, nombre, "alumbrado", va_luz)
             b_ = a + 0.9 if a + 0.9 <= t["a1"] - 0.15 else max(t["a0"] + 0.15, a - 0.9)
             x, y = t["punto"](b_)
-            agregar("gfci", x, y, t["hacia"], nombre, "general", NORMA["va_contacto"])
+            agregar("gfci", x, y, t["hacia"], nombre, "general", NORMA["va_contacto_general_vivienda"])
             n_luz = 0
         for k in range(n_luz):
             f = (k + 0.5) / n_luz
@@ -385,7 +389,7 @@ def suggest_electrical(rooms: list[dict[str, Any]],
             if largo >= NORMA["pasillo_min_m"]:
                 t = max(geo.tramos_de_muro(caja, huecos), key=lambda t: t["a1"] - t["a0"])
                 x, y = t["punto"]((t["a0"] + t["a1"]) / 2.0)
-                agregar("outlet", x, y, t["hacia"], nombre, "general", NORMA["va_contacto"])
+                agregar("outlet", x, y, t["hacia"], nombre, "general", NORMA["va_contacto_general_vivienda"])
             continue
         if "LAVADO" in u or "LAVANDER" in u:
             # 210-52(f) y 210-11(c)(2): contacto de lavado en su circuito de
@@ -412,7 +416,7 @@ def suggest_electrical(rooms: list[dict[str, Any]],
             elif "COMEDOR" in u:
                 agregar("outlet", x, y, ang, nombre, "cocina", NORMA["va_contacto"])
             else:
-                agregar("outlet", x, y, ang, nombre, "general", NORMA["va_contacto"])
+                agregar("outlet", x, y, ang, nombre, "general", NORMA["va_contacto_general_vivienda"])
 
     # --- 210-52(e): contacto exterior también AL FRENTE (el de atrás es el
     # del patio), con falla a tierra, junto al acceso por fuera.
@@ -420,7 +424,7 @@ def suggest_electrical(rooms: list[dict[str, Any]],
     if frente:
         y_fachada = min(r["y0"] for r in rooms) - exterior_thickness / 2.0
         agregar("gfci", frente["x"] + float(frente.get("width", 0.9)) / 2.0 + 0.5,
-                y_fachada, 270.0, "EXTERIOR (FRENTE)", "general", NORMA["va_contacto"])
+                y_fachada, 270.0, "EXTERIOR (FRENTE)", "general", NORMA["va_contacto_general_vivienda"])
 
     # --- tablero: junto al acceso, adentro.
     acceso = next((d for d in doors if str(d.get("from", "")).upper() == "EXTERIOR"), None)
@@ -988,6 +992,7 @@ def _notas_norma(kind: str) -> list[str]:
             "CONTACTO, ART. 210-52(a).",
             f"CONDUCTOR CAL. {n['calibre_awg'][20]} AWG EN CIRCUITOS DE 20 A Y "
             f"CAL. {n['calibre_awg'][15]} AWG EN LOS DE 15 A, ART. 240-4(d).",
+            "CONTACTOS DE USO GENERAL INCLUIDOS EN LOS 33 VA/m2 DE ALUMBRADO, ART. 220-14(j).",
             "CARGAS, PROTECCIONES Y CALIBRES POR CIRCUITO: VER CUADRO DE CARGAS.",
         ]
     if kind == "hidraulica":

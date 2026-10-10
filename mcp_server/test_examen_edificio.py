@@ -127,6 +127,9 @@ def main() -> int:
                         ["A-01"])
     check("dice exactamente qué falta", {m["id"] for m in r["missing"]} == {"ie_unifilar", "gas"},
           str([m["id"] for m in r["missing"]]))
+    r = ex.revisar_juego(completo + ["DRO: POR DEFINIR", "qa = 10 t/m2 SUPUESTA"], ["A-01"])
+    check("los datos pendientes salen aparte (POR DEFINIR, SUPUESTA)",
+          r["pendingCount"] == 2 and r["ok"], str(r["pending"]))
     r = ex.revisar_juego(completo, ["Model"])
     check("sin láminas reprueba aunque esté todo dibujado",
           any(m["id"] == "laminas" for m in r["missing"]))

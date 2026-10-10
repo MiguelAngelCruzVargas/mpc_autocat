@@ -353,7 +353,13 @@ def revisar_juego(textos: list[str], layouts: list[str]) -> dict[str, Any]:
     if not laminas:
         faltan.append({"id": "laminas", "discipline": "General",
                        "what": "Ninguna lámina (layout) armada", "source": "CLAUDE.md 8.quater"})
+    # Estar no es tener el dato: "DRO: POR DEFINIR" cumple la presencia del
+    # campo pero el plano no se puede ingresar así. Se listan aparte.
+    marcas = ("POR DEFINIR", "SUPUEST", "POR CALCULAR", "VERIFICAR")
+    pendientes = sorted({" ".join(str(t).split()) for t in textos
+                         if t and any(m in str(t).upper() for m in marcas)})
     return {"ok": not faltan, "present": estan, "missing": faltan,
+            "pending": pendientes[:40], "pendingCount": len(pendientes),
             "score": f"{len(estan)}/{len(estan) + len(faltan)}"}
 
 

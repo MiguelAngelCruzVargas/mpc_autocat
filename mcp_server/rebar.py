@@ -973,6 +973,15 @@ def create_footing_section(
     bc = beam_cover if beam_cover is not None and beam_cover > 0 else cover
     lyr = layer or LAYER_FOOTING_SECTION
     _layer(lyr, LW_OUTLINE)
+    # 'scale' son unidades del modelo por mm de papel (1:25 en metros =
+    # 0.025), NO el denominador. Pasar 25 dibujó las cotas del detalle mil
+    # veces más grandes, con letras de metros (visto en un edificio). En un
+    # detalle dibujado en metros, >= 1 (1:1000 o menos) es siempre ese error.
+    if scale >= 1.0:
+        raise ValueError(
+            f"scale={scale:g}: son unidades del modelo por mm de papel, no el "
+            f"denominador. Para 1:{scale:g} en metros pasá {scale / 1000.0:g}, "
+            "o 0 para tomar la escala de la lámina.")
     upm = scale if scale > 0 else space.units_per_paper_mm()
     gb_width = (grade_beam_width if grade_beam_width and grade_beam_width > 0
                 else wall_thickness)

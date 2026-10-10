@@ -1273,23 +1273,31 @@ def create_axis_grid(
     # 'extension' es un MINIMO, no una orden: pasandola, antes se salteaba
     # esta busqueda y los globos quedaban sentados sobre las cotas (visto en
     # la planta de un edificio).
-    if True:
-        lados = []
-        if xs:
-            a0, a1 = xs[0] - radius, xs[-1] + radius
-            lados.append(space.free_offset("bottom", bottom, a0, a1,
-                                           2 * radius, aire, start=ext))
-            lados.append(space.free_offset("top", top, a0, a1,
-                                           2 * radius, aire, start=ext))
-        if ys:
-            a0, a1 = ys[0] - radius, ys[-1] + radius
-            lados.append(space.free_offset("left", left, a0, a1,
-                                           2 * radius, aire, start=ext))
-            lados.append(space.free_offset("right", right, a0, a1,
-                                           2 * radius, aire, start=ext))
-        # Un solo ext para los cuatro lados: burbujas a distinta distancia
-        # segun el lado se leen como un error de dibujo.
-        ext = max(lados) if lados else ext
+    # Cada lado mide LO SUYO. Antes se tomaba la mayor de las cuatro para
+    # todos: en una PB con cochera al frente y patio al fondo, los globos de
+    # arriba y abajo tienen que pasar esos 4-5 m, pero los laterales salían
+    # igual de lejos y los ejes quedaban larguísimos (visto en un edificio).
+    ext_lado = {}
+    if xs:
+        a0, a1 = xs[0] - radius, xs[-1] + radius
+        ext_lado["bottom"] = space.free_offset("bottom", bottom, a0, a1,
+                                               2 * radius, aire, start=ext)
+        ext_lado["top"] = space.free_offset("top", top, a0, a1,
+                                            2 * radius, aire, start=ext)
+    if ys:
+        a0, a1 = ys[0] - radius, ys[-1] + radius
+        ext_lado["left"] = space.free_offset("left", left, a0, a1,
+                                             2 * radius, aire, start=ext)
+        ext_lado["right"] = space.free_offset("right", right, a0, a1,
+                                              2 * radius, aire, start=ext)
+    # Los lados opuestos sí van parejos entre sí (izquierda = derecha,
+    # arriba = abajo): asimétricos dentro del mismo par se leen como error.
+    for a, b in (("bottom", "top"), ("left", "right")):
+        if a in ext_lado and b in ext_lado:
+            ext_lado[a] = ext_lado[b] = max(ext_lado[a], ext_lado[b])
+    ext_v = ext_lado.get("bottom", ext)       # ejes verticales (globos arriba/abajo)
+    ext_h = ext_lado.get("left", ext)         # ejes horizontales (globos a los lados)
+    ext = max(ext_v, ext_h)
 
     _ensure_layer(layer, GRID_COLOR, LW_GRID, GRID_LINETYPE)
 
@@ -1316,28 +1324,28 @@ def create_axis_grid(
     etiquetas_y = [_rotulo(i, y_labels) for i in range(len(ys))]
 
     for label, x in zip(etiquetas_x, xs):
-        handles.append(_line((x, bottom - ext), (x, top + ext), layer,
+        handles.append(_line((x, bottom - ext_v), (x, top + ext_v), layer,
                              LW_GRID, GRID_COLOR))
-        bubble((x, top + ext + radius), label)
-        bubble((x, bottom - ext - radius), label)
+        bubble((x, top + ext_v + radius), label)
+        bubble((x, bottom - ext_v - radius), label)
 
     for label, y in zip(etiquetas_y, ys):
-        handles.append(_line((left - ext, y), (right + ext, y), layer,
+        handles.append(_line((left - ext_h, y), (right + ext_h, y), layer,
                              LW_GRID, GRID_COLOR))
-        bubble((left - ext - radius, y), label)
-        bubble((right + ext + radius, y), label)
+        bubble((left - ext_h - radius, y), label)
+        bubble((right + ext_h + radius, y), label)
 
     # Queda tomado el anillo de las burbujas, para que una cadena de cotas
     # posterior se apile por afuera en vez de encimarse.
     if xs:
         a0, a1 = xs[0] - radius, xs[-1] + radius
         for lado, ref in (("bottom", bottom), ("top", top)):
-            space.reserve(*space.band_box(lado, ref, ext, 2 * radius, a0, a1),
+            space.reserve(*space.band_box(lado, ref, ext_v, 2 * radius, a0, a1),
                           what="burbujas de eje " + lado)
     if ys:
         a0, a1 = ys[0] - radius, ys[-1] + radius
         for lado, ref in (("left", left), ("right", right)):
-            space.reserve(*space.band_box(lado, ref, ext, 2 * radius, a0, a1),
+            space.reserve(*space.band_box(lado, ref, ext_h, 2 * radius, a0, a1),
                           what="burbujas de eje " + lado)
 
     resultado_extra = {}
