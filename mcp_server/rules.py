@@ -19,7 +19,7 @@ import space
 PRIVADOS = ("recamara", "recámara", "dormitorio", "baño", "bano", "closet",
             "clóset", "vestidor")
 # Espacios que sí pueden recibir el acceso exterior.
-SOCIALES = ("sala", "comedor", "estar", "vestibulo", "vestíbulo", "recibidor",
+SOCIALES = ("sala", "comedor", "estar", "estancia", "vestibulo", "vestíbulo", "recibidor",
             "hall", "cocina")
 SERVICIO = ("patio", "lavado", "servicio", "tendido")
 

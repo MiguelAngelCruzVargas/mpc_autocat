@@ -570,12 +570,20 @@ def suggest_furniture(rooms: list[dict[str, Any]],
         if clase == "recamara":
             piezas = _amueblar_recamara(caja, libres, nombre, salteados)
         elif clase == "bano":
+            # Medio baño / tocador / baño de visitas: WC y lavabo, SIN
+            # regadera (le ponía regadera a un medio baño de 1.7 x 2.1 y
+            # el lavabo ya no entraba).
+            medio = any(p in nombre.upper() for p in ("MEDIO", "TOCADOR", "VISITA"))
             piezas = _amueblar_bano(caja, libres, nombre, salteados,
-                                    _barridos(eje, caja, nombre, doors or []))
+                                    _barridos(eje, caja, nombre, doors or []),
+                                    regadera=not medio)
         elif "COCINA" in nombre.upper():
             piezas = _amueblar_cocina(caja, libres, nombre, salteados)
         elif "COMEDOR" in nombre.upper():
             piezas = _amueblar_comedor(caja, nombre, salteados)
+        elif clase == "social" and any(p in nombre.upper() for p in
+                                       ("VESTÍBULO", "VESTIBULO", "RECIBIDOR", "HALL")):
+            continue        # circulación de llegada: sin sala (le ponía un sillón)
         elif clase == "social":
             piezas = _amueblar_sala(caja, libres, nombre, salteados)
         elif any(p in nombre.upper() for p in ("LAVADO", "LAVANDER")):
@@ -802,8 +810,9 @@ def _bano_lineal(caja, barridos: list[tuple]) -> Optional[list[dict]]:
 
 
 def _amueblar_bano(caja, libres, nombre, salteados,
-                   barridos: Optional[list[tuple]] = None) -> list[dict]:
-    lineal = _bano_lineal(caja, barridos or [])
+                   barridos: Optional[list[tuple]] = None,
+                   regadera: bool = True) -> list[dict]:
+    lineal = _bano_lineal(caja, barridos or []) if regadera else None
     if lineal:
         return lineal
     piezas: list[dict[str, Any]] = []
@@ -813,7 +822,7 @@ def _amueblar_bano(caja, libres, nombre, salteados,
     for tipo, ancho, fondo, extra in (
             ("wc", 0.38, 0.60, {}),
             ("lavatory", 0.60, 0.45, {"width": 0.60, "depth": 0.45}),
-            ("shower", 0.90, 0.90, {"width": 0.90, "depth": 0.90})):
+            ("shower", 0.90, 0.90, {"width": 0.90, "depth": 0.90}))[:3 if regadera else 2]:
         muro = next((m for m in libres
                      if m not in usados and _cabe(caja, m, ancho, fondo, 0.45)),
                     None)

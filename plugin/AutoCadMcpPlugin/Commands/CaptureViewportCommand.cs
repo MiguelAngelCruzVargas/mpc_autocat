@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Geometry;
 
 namespace AutoCadMcpPlugin.Commands
 {
@@ -65,6 +66,13 @@ namespace AutoCadMcpPlugin.Commands
                                         System.Math.Min(wy0, wy1),
                                         System.Math.Max(wx0, wx1),
                                         System.Math.Max(wy0, wy1));
+                // La ventana del plot va en coordenadas de la VISTA (DCS),
+                // no del mundo: con el objetivo de la vista fuera del
+                // origen la foto salía corrida (se vio en una casa: se
+                // pedía la planta y salía la mitad de la sala). En el
+                // modelo se pasa al DCS de la vista activa.
+                if (isModel)
+                    ventana = ADcs(doc.Database, ventana.Value);
                 plotType = Autodesk.AutoCAD.DatabaseServices.PlotType.Window;
             }
 
@@ -76,9 +84,42 @@ namespace AutoCadMcpPlugin.Commands
                 ["layout"] = layoutName,
                 ["space"] = isModel ? "model" : "paper",
                 ["window"] = ventana == null ? null : new JsonArray(
-                    ventana.Value.MinPoint.X, ventana.Value.MinPoint.Y,
-                    ventana.Value.MaxPoint.X, ventana.Value.MaxPoint.Y)
+                    pars["minX"].GetValue<double>(), pars["minY"].GetValue<double>(),
+                    pars["maxX"].GetValue<double>(), pars["maxY"].GetValue<double>())
             };
+        }
+
+        /// <summary>Del mundo al sistema de la vista activa del modelo
+        /// (objetivo, dirección y giro del VPORT *Active).</summary>
+        private static Extents2d ADcs(Database db, Extents2d w)
+        {
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var vt = (ViewportTable)tr.GetObject(db.ViewportTableId, OpenMode.ForRead);
+                if (!vt.Has("*Active"))
+                {
+                    tr.Commit();
+                    return w;
+                }
+                var vp = (ViewportTableRecord)tr.GetObject(vt["*Active"], OpenMode.ForRead);
+                Matrix3d aMundo =
+                    Matrix3d.Rotation(-vp.ViewTwist, vp.ViewDirection, vp.Target) *
+                    Matrix3d.Displacement(vp.Target - Point3d.Origin) *
+                    Matrix3d.PlaneToWorld(vp.ViewDirection);
+                Matrix3d aVista = aMundo.Inverse();
+                tr.Commit();
+                double x0 = double.MaxValue, y0 = double.MaxValue;
+                double x1 = double.MinValue, y1 = double.MinValue;
+                foreach (var p in new[] {
+                    new Point3d(w.MinPoint.X, w.MinPoint.Y, 0), new Point3d(w.MaxPoint.X, w.MinPoint.Y, 0),
+                    new Point3d(w.MaxPoint.X, w.MaxPoint.Y, 0), new Point3d(w.MinPoint.X, w.MaxPoint.Y, 0) })
+                {
+                    var q = p.TransformBy(aVista);
+                    x0 = System.Math.Min(x0, q.X); y0 = System.Math.Min(y0, q.Y);
+                    x1 = System.Math.Max(x1, q.X); y1 = System.Math.Max(y1, q.Y);
+                }
+                return new Extents2d(x0, y0, x1, y1);
+            }
         }
     }
 }

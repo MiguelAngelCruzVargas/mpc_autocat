@@ -1143,6 +1143,23 @@ def _draw_opening(axis: Axis, hole: dict[str, Any],
     if kind in ("pass", "vano", "opening"):
         return result  # hueco limpio, sin símbolo
 
+    if kind in ("sliding", "corrediza"):
+        # Corrediza (ventanal a una terraza): dos hojas paralelas al muro,
+        # desfasadas en el espesor y traslapadas 5 cm. Con abatimiento, un
+        # ventanal de 2.80 m barría media sala: no es lo que se construye.
+        traslape = 0.05
+        hoja = width / 2.0 + traslape / 2.0
+        canto = min(0.03, thickness / 5.0)
+        handles = []
+        for a, off in ((d0, thickness / 6.0), (d1 - hoja, -thickness / 6.0)):
+            pts = [axis.offset_point_at(a, off - canto / 2), axis.offset_point_at(a + hoja, off - canto / 2),
+                   axis.offset_point_at(a + hoja, off + canto / 2), axis.offset_point_at(a, off + canto / 2)]
+            handles.append(acad.call("create_polyline", {
+                "points": [[p[0], p[1]] for p in pts], "closed": True,
+                "layer": LAYER_OPENINGS, "lineweight": LW_OPENING, "colorIndex": None})["handle"])
+        result["handles"] = handles
+        return result
+
     # Puerta: la hoja cuelga de una jamba y abre 90° hacia un lado.
     hinge_at_start = str(hole.get("swing", "left")).lower() in ("left", "izq", "izquierda")
     side = 1.0 if str(hole.get("side", "left")).lower() in ("left", "izq", "izquierda") else -1.0
