@@ -50,7 +50,7 @@ def _text(content: str, x: float, y: float, height: float, layer: str,
     acad.call("create_text", {
         "text": content, "x": x, "y": y, "z": 0.0, "height": height,
         "layer": layer, "rotationDeg": rotation,
-        "lineweight": lineweight, "colorIndex": None,
+        "lineweight": layers.LW_TEXTO, "colorIndex": None,
     })
 
 
@@ -601,7 +601,8 @@ def create_rebar(points: list, diameter: float,
                  hook_extension: float = 0.0,
                  layer: Optional[str] = None,
                  lineweight: int = LW_REBAR,
-                 color_index: Optional[int] = None) -> dict[str, Any]:
+                 color_index: Optional[int] = None,
+                 width: float = 0.0) -> dict[str, Any]:
     """UNA varilla dibujada por su trayectoria, con los dobleces a radio y
     los ganchos normalizados -- lo que separa 'una línea' de 'una varilla'.
 
@@ -616,6 +617,9 @@ def create_rebar(points: list, diameter: float,
     hook_side: 'left' o 'right' respecto del sentido de avance de la
     trayectoria -- para una barra que va de izquierda a derecha, 'left' es
     gancho hacia ARRIBA.
+    width: ancho de la polilínea en unidades del modelo; diameter dibuja la
+    varilla con su grueso real (un detalle 1:20 la lee gruesa en pantalla y
+    en el plot). 0 = línea con lineweight.
     closed=True: la trayectoria vuelve al primer punto y las dos puntas
     llevan gancho a 135° hacia adentro -- un estribo. Recorré los vértices
     en sentido antihorario para que 'adentro' sea 'left'.
@@ -734,6 +738,7 @@ def create_rebar(points: list, diameter: float,
     handle = acad.call("create_polyline", {
         "points": verts, "bulges": bulges, "closed": False, "layer": lyr,
         "lineweight": lineweight, "colorIndex": color_index,
+        **({"width": float(width)} if width and width > 0 else {}),
     })["handle"]
 
     xs = [v[0] for v in verts]

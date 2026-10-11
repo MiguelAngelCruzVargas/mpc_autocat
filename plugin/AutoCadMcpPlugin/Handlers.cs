@@ -183,6 +183,10 @@ namespace AutoCadMcpPlugin
                 case "undo":
                     return UndoCommand.Run(doc, pars);
 
+                // Varios comandos en un solo viaje
+                case "batch":
+                    return BatchCommand.Run(doc, pars);
+
                 // Acceso total a la API (apagado salvo que el usuario lo active)
                 case "run_code":
                     return RunCodeCommand.Run(doc, pars);

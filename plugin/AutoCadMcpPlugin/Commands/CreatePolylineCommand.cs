@@ -8,7 +8,12 @@ namespace AutoCadMcpPlugin.Commands
     public static class CreatePolylineCommand
     {
         /// <summary>
-        /// params: points ([[x,y], ...]), [closed], [layer], [bulges]
+        /// params: points ([[x,y], ...]), [closed], [layer], [bulges], [width]
+        ///
+        /// 'width' es el ancho GLOBAL de la polilínea en unidades del modelo:
+        /// una varilla en un detalle se dibuja con su espesor (se lee gruesa
+        /// en pantalla y en el plot, con o sin grosores de línea), no como
+        /// una línea de 0.35 que a 1:20 es igual de fina que una cota.
         ///
         /// 'bulges' es opcional, un valor por vértice: la tangente de un cuarto
         /// del ángulo del arco hasta el vértice siguiente (0 = tramo recto). Es
@@ -44,6 +49,11 @@ namespace AutoCadMcpPlugin.Commands
                     i++;
                 }
                 pl.Closed = closed;
+                if (pars["width"] != null)
+                {
+                    double w = pars["width"].GetValue<double>();
+                    if (w > 0) pl.ConstantWidth = w;
+                }
                 EntityHelper.ApplyCommon(db, tr, pl, pars);
 
                 btr.AppendEntity(pl);

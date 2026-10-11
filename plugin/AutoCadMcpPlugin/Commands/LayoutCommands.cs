@@ -16,12 +16,30 @@ namespace AutoCadMcpPlugin.Commands
     /// </summary>
     public static class LayoutCommands
     {
-        /// <summary>params: name, [plotConfig], [paperSize]</summary>
+        /// <summary>
+        /// Tamaño de la hoja TAL COMO SE VE en el layout: con el plot rotado
+        /// 90 grados el papel del dispositivo (A0 841x1189, el único A0 que
+        /// trae DWG To PDF) queda apaisado, 1189x841, y las coordenadas del
+        /// espacio papel siguen a lo que se ve.
+        /// </summary>
+        public static (double w, double h) HojaEfectiva(PlotSettings l)
+        {
+            var s = l.PlotPaperSize;
+            bool girada = l.PlotRotation == PlotRotation.Degrees090
+                || l.PlotRotation == PlotRotation.Degrees270;
+            return girada ? (s.Y, s.X) : (s.X, s.Y);
+        }
+
+        /// <summary>params: name, [plotConfig], [paperSize], [orientation]
+        /// orientation: 'horizontal' o 'vertical'. Si el papel del dispositivo
+        /// viene en la otra orientación (A0 en DWG To PDF solo existe vertical)
+        /// se rota el plot 90 grados en vez de cambiar de papel.</summary>
         public static JsonObject Create(Document doc, JsonObject pars)
         {
             string name = pars["name"].GetValue<string>();
             string plotConfig = pars["plotConfig"]?.GetValue<string>();
             string paperSize = pars["paperSize"]?.GetValue<string>();
+            string orientation = pars["orientation"]?.GetValue<string>();
 
             var lm = LayoutManager.Current;
             if (!lm.GetLayoutId(name).IsNull)
@@ -36,17 +54,18 @@ namespace AutoCadMcpPlugin.Commands
             {
                 var layout = (Layout)tr.GetObject(layoutId, OpenMode.ForWrite);
 
-                if (!string.IsNullOrEmpty(plotConfig) || !string.IsNullOrEmpty(paperSize))
-                    ApplyPlotSettings(layout, plotConfig, paperSize);
+                if (!string.IsNullOrEmpty(plotConfig) || !string.IsNullOrEmpty(paperSize)
+                    || !string.IsNullOrEmpty(orientation))
+                    ApplyPlotSettings(layout, plotConfig, paperSize, orientation);
 
-                result["paperWidth"] = layout.PlotPaperSize.X;
-                result["paperHeight"] = layout.PlotPaperSize.Y;
+                var (w, h) = HojaEfectiva(layout);
+                result["paperWidth"] = w;
+                result["paperHeight"] = h;
+                result["plotRotation"] = layout.PlotRotation.ToString();
                 // 'A3' matchea tanto el horizontal como el vertical: hay que
                 // devolver cual quedo, o quien ubica el viewport lo hace a ciegas.
                 result["paperName"] = layout.CanonicalMediaName;
-                result["orientation"] =
-                    layout.PlotPaperSize.X >= layout.PlotPaperSize.Y
-                        ? "horizontal" : "vertical";
+                result["orientation"] = w >= h ? "horizontal" : "vertical";
                 result["tabOrder"] = layout.TabOrder;
                 tr.Commit();
             }
@@ -59,7 +78,8 @@ namespace AutoCadMcpPlugin.Commands
         /// los nombres válidos salen de la lista del propio plotter, por eso el
         /// error incluye las opciones disponibles en vez de un "no se pudo".
         /// </summary>
-        private static void ApplyPlotSettings(Layout layout, string plotConfig, string paperSize)
+        private static void ApplyPlotSettings(Layout layout, string plotConfig, string paperSize,
+                                              string orientation = null)
         {
             var psv = PlotSettingsValidator.Current;
             using (var ps = new PlotSettings(layout.ModelType))
@@ -128,7 +148,18 @@ namespace AutoCadMcpPlugin.Commands
                 // Rotación explícita: CreateLayout hereda la de la plantilla
                 // (90°, visto en vivo) y la hoja salía acostada respecto de la
                 // orientación que esta misma tool devuelve.
-                psv.SetPlotRotation(ps, PlotRotation.Degrees000);
+                // Solo se gira si se pidió una orientación que el papel no tiene.
+                var rot = PlotRotation.Degrees000;
+                if (!string.IsNullOrEmpty(orientation))
+                {
+                    psv.RefreshLists(ps);
+                    bool papelHoriz = ps.PlotPaperSize.X >= ps.PlotPaperSize.Y;
+                    string o = orientation.ToLowerInvariant();
+                    bool quiereHoriz = o == "horizontal" || o == "landscape" || o == "apaisado";
+                    if (papelHoriz != quiereHoriz)
+                        rot = PlotRotation.Degrees090;
+                }
+                psv.SetPlotRotation(ps, rot);
 
                 layout.CopyFrom(ps);
             }
@@ -172,8 +203,10 @@ namespace AutoCadMcpPlugin.Commands
                     {
                         ["name"] = layout.LayoutName,
                         ["tabOrder"] = layout.TabOrder,
-                        ["paperWidth"] = layout.PlotPaperSize.X,
-                        ["paperHeight"] = layout.PlotPaperSize.Y,
+                        ["paperWidth"] = HojaEfectiva(layout).w,
+                        ["paperHeight"] = HojaEfectiva(layout).h,
+                        ["mediaWidth"] = layout.PlotPaperSize.X,
+                        ["mediaHeight"] = layout.PlotPaperSize.Y,
                         ["isModel"] = layout.ModelType,
                         ["plotRotation"] = layout.PlotRotation.ToString(),
                         ["mediaName"] = layout.CanonicalMediaName
@@ -278,8 +311,8 @@ namespace AutoCadMcpPlugin.Commands
                         ["layout"] = layoutName,
                         ["customScale"] = vp.CustomScale,
                         ["number"] = vp.Number,
-                        ["paperWidth"] = layout.PlotPaperSize.X,
-                        ["paperHeight"] = layout.PlotPaperSize.Y
+                        ["paperWidth"] = HojaEfectiva(layout).w,
+                        ["paperHeight"] = HojaEfectiva(layout).h
                     };
 
                     tr.Commit();
@@ -303,8 +336,7 @@ namespace AutoCadMcpPlugin.Commands
         private static void CheckFitsInPaper(Layout layout, double cx, double cy,
                                              double w, double h)
         {
-            double pw = layout.PlotPaperSize.X;
-            double ph = layout.PlotPaperSize.Y;
+            var (pw, ph) = HojaEfectiva(layout);
             if (pw <= 0 || ph <= 0)
                 return;   // sin dispositivo de impresión no hay hoja que validar
 

@@ -496,6 +496,38 @@ piedras no llenan la zanja ni que la textura no cayó. `capture_viewport`
 acotado al detalle, y sin AutoCAD `python mcp_server/preview_footing.py`
 renderiza los dos cortes con sus achurados (el preview ahora los dibuja).
 
+## 4.octies Zapatas: `design_footing` → `draw_footing_detail`
+
+Una zapata no se dimensiona "a ojo" ni se dibuja con `create_footing_section`
+(esa queda para cimientos de muro sencillos). El capítulo de zapatas
+(`zapatas.py`, `zapatas_dibujo.py`, `zapatas_combinada.py`,
+`zapatas_cuadros.py`) tiene seis tipos: aislada, aislada con dado, lindero,
+esquina, corrida bajo muro (con dala por NTC Mampostería) y combinada.
+
+- **`design_footing`** diseña por ACI 318-19 y devuelve cada revisión con su
+  número y su artículo. Sin capacidad del E.M.S., f'c, desplante o peso del
+  relleno RECHAZA: no se suponen. Lindero/esquina devuelven el momento que
+  tiene que tomar la contratrabe de liga. Los volados salen en cm redondos
+  para que la cadena de cotas sume igual que la total.
+- **`draw_footing_detail`** dibuja corte, planta y cuadros (zapatas,
+  revisión estructural, especificaciones, cuantificación) y devuelve la caja
+  de cada vista para `compose_layout`.
+- Primitivas de grafismo que sirven para cualquier detalle (`detalle.py`):
+  `create_callouts` (llamadas en columna que nunca se cruzan),
+  `create_break_line`, `create_construction_joint`.
+
+**Lotes.** Dentro de `with autocad_client.lote():` los comandos de dibujo
+viajan juntos (comando `batch`, plugin 1.8.7+): un detalle de 200 entidades
+pasa de ~2 min a ~10 s. Es lo que permite probar en AutoCAD y corregir sobre
+la marcha.
+
+**Texto siempre con grosor 0.** El cliente lo fuerza en todo `create_text`:
+con pluma y LWDISPLAY encendido AutoCAD traza el contorno de cada letra
+TrueType y, chica en pantalla, sale hueca ("ESC. 1:20" se leía "CJO, 7:00").
+
+**A0 apaisado:** DWG To PDF trae el A0 solo vertical; `compose_layout(...,
+paper_size="A0", orientation="horizontal")` rota el plot 90° (plugin 1.8.9).
+
 ## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta

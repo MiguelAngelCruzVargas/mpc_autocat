@@ -74,8 +74,98 @@ def _es_transitorio(exc: AutoCadError) -> bool:
     return any(marca in mensaje for marca in _TRANSITORIOS)
 
 
-def call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+# ------------------------------------------------------------------ lotes
+#
+# Cada comando cuesta ~0.5 s aunque no haga nada (la cola del plugin se vacía
+# en Application.Idle). Un detalle constructivo son cientos de entidades: con
+# un viaje por entidad, cada prueba en AutoCAD tardaba minutos y no se podía
+# iterar mirando el dibujo. Dentro de `with lote():` los comandos que solo
+# dibujan se encolan y viajan juntos (comando 'batch' del plugin, 1.8.7+):
+# devuelven un handle provisorio ('$L12') que el plugin resuelve en el mismo
+# lote y este módulo después (resolver()). Lo que necesita una respuesta real
+# (medir texto, leer una entidad) vacía la cola antes de ir.
+
+LOTEABLES = frozenset({
+    "create_line", "create_polyline", "create_circle", "create_arc",
+    "create_text", "create_mtext", "create_hatch", "create_dimension",
+    "create_dimension_rotated", "create_leader", "delete_entity",
+    "delete_entities", "set_layer",
+})
+_LOTE: list[Optional[list[dict[str, Any]]]] = [None]
+_PROFUNDIDAD = [0]
+_CONTADOR = [0]
+_RESUELTOS: dict[str, str] = {}
+LOTE_ERRORES: list[dict[str, Any]] = []
+_TAMANO_VIAJE = 300
+
+
+def batching() -> bool:
+    return _LOTE[0] is not None
+
+
+def resolver(obj: Any) -> Any:
+    """Reemplaza los handles provisorios ('$L12') por los reales."""
+    if isinstance(obj, str):
+        return _RESUELTOS.get(obj, obj) if obj.startswith("$L") else obj
+    if isinstance(obj, list):
+        return [resolver(x) for x in obj]
+    if isinstance(obj, tuple):
+        return tuple(resolver(x) for x in obj)
+    if isinstance(obj, dict):
+        return {k: resolver(v) for k, v in obj.items()}
+    return obj
+
+
+def flush() -> list[dict[str, Any]]:
+    """Manda lo encolado. Devuelve los errores (también en LOTE_ERRORES)."""
+    cola = _LOTE[0]
+    if not cola:
+        return []
+    _LOTE[0] = []
+    errores: list[dict[str, Any]] = []
+    for i in range(0, len(cola), _TAMANO_VIAJE):
+        tramo = [dict(c, params=resolver(c["params"]),
+                      **({"fallback": resolver(c["fallback"])} if c.get("fallback") else {}))
+                 for c in cola[i:i + _TAMANO_VIAJE]]
+        r = _do_call("batch", {"commands": tramo})
+        for item, res in zip(tramo, r.get("results", [])):
+            if res.get("ok") and isinstance(res.get("result"), dict)                     and res["result"].get("handle"):
+                _RESUELTOS[item["id"]] = res["result"]["handle"]
+            elif not res.get("ok"):
+                errores.append({"id": item["id"], "cmd": item["cmd"],
+                                "error": res.get("error")})
+    LOTE_ERRORES.extend(errores)
+    return errores
+
+
+class lote:
+    """with lote(): ... -- dibuja en pocos viajes. Anidable: solo el de
+    afuera vacía la cola."""
+
+    def __enter__(self):
+        if _PROFUNDIDAD[0] == 0:
+            _LOTE[0] = []
+        _PROFUNDIDAD[0] += 1
+        return self
+
+    def __exit__(self, *exc):
+        _PROFUNDIDAD[0] -= 1
+        if _PROFUNDIDAD[0] == 0:
+            try:
+                if exc[0] is None:
+                    flush()
+            finally:
+                _LOTE[0] = None
+        return False
+
+
+def call(cmd: str, params: Optional[dict[str, Any]] = None,
+         fallback: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Envía un comando al plugin y devuelve su 'result'.
+
+    Dentro de `with lote():` los comandos de dibujo se encolan (ver arriba);
+    'fallback' son los params alternativos si el comando falla en el lote
+    (el patrón de respaldo de un achurado). Fuera de un lote se ignora.
 
     Reintenta solo las fallas transitorias, y solo cuando repetir es seguro:
     siempre si la conexión ni se estableció (nada llegó a AutoCAD), y para
@@ -83,6 +173,24 @@ def call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     dibuja NUNCA se reintenta tras un timeout: pudo haber llegado, y
     repetirlo deja entidades duplicadas.
     """
+    if cmd in ("create_text", "create_mtext") and params and params.get("lineweight"):
+        # TODO texto con grosor 0: en una TrueType el grosor lo da la letra.
+        # Con pluma (0.35 en un título) y la visualización de grosores
+        # encendida, AutoCAD traza el CONTORNO de cada letra y, chica en
+        # pantalla, sale hueca y deformada ("ESC. 1:20" se leía "CJO, 7:00").
+        params = dict(params, lineweight=0)
+    if _LOTE[0] is not None:
+        if cmd in LOTEABLES:
+            _CONTADOR[0] += 1
+            pid = f"$L{_CONTADOR[0]}"
+            item: dict[str, Any] = {"id": pid, "cmd": cmd, "params": params or {}}
+            if fallback:
+                item["fallback"] = fallback
+            _LOTE[0].append(item)
+            return {"handle": pid, "status": "queued", "area": 0.0, "length": 0.0,
+                    "measurement": 0.0}
+        flush()
+    params = resolver(params) if params else params
     for intento in range(_REINTENTOS):
         try:
             return _do_call(cmd, params)

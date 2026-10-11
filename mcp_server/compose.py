@@ -495,6 +495,7 @@ def compose_layout(name: str,
                    plot_config: Optional[str] = None,
                    paper_size: Optional[str] = None,
                    sheet: Optional[dict[str, Any]] = None,
+                   orientation: Optional[str] = None,
                    create: bool = True,
                    locked: bool = True,
                    draw_titles: bool = True,
@@ -528,7 +529,7 @@ def compose_layout(name: str,
 
     if create and not dry_run:
         acad.call("create_layout", {"name": name, "plotConfig": plot_config,
-                                    "paperSize": paper_size})
+                                    "paperSize": paper_size, "orientation": orientation})
     ancho_hoja, alto_hoja = _papel_de(name)
 
     # Cada vista ocupa en PAPEL lo que mide en el modelo dividido su escala.

@@ -59,7 +59,8 @@ DEFAULT_COLOR = "#444444"
 CHAR_W_RATIO = 0.87
 
 
-def fake_call(cmd: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+def fake_call(cmd: str, params: dict[str, Any] | None = None,
+              **_kw: Any) -> dict[str, Any]:
     params = params or {}
     _next_handle[0] += 1
     handle = format(_next_handle[0], "X")

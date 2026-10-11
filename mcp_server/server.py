@@ -2548,6 +2548,195 @@ def create_footing_section(x: float, y: float,
 # ------------------------------------------- primitivas de detalle
 
 @mcp.tool()
+def design_footing(kind: str, dead_load: float, live_load: float,
+                   allowable_bearing: float, fc: float, depth: float,
+                   column: Optional[list[float]] = None,
+                   wall_thickness: float = 0.0, wall_material: str = "mamposteria",
+                   soil_unit_weight: Optional[float] = None,
+                   bearing_is_net: bool = False, fy: float = 4200.0, code: str = "ACI",
+                   cover: float = 0.075, lean_concrete: float = 0.05,
+                   min_thickness: float = 0.25,
+                   width: Optional[float] = None, length: Optional[float] = None,
+                   moment_x: float = 0.0, moment_y: float = 0.0, tie_beam: bool = True,
+                   pedestal: Optional[list[float]] = None, pedestal_height: float = 0.0,
+                   column_bar: str = "#6", column_bar_count: int = 4,
+                   columns: Optional[list[dict[str, Any]]] = None, spacing: float = 0.0,
+                   boundary_left: bool = False, overhang_left: Optional[float] = None,
+                   aspect: Optional[float] = None, grade_beam_height: float = 0.0,
+                   mark: str = "Z-1") -> dict[str, Any]:
+    """DISEÑA una zapata por norma y devuelve todo lo que el plano tiene que
+    decir: dimensiones, armado, arranques y CADA revisión con su número y su
+    artículo (ACI 318-19; combinación ACI 1.2D+1.6L o NTC 1.3CM+1.5CV). No
+    dibuja: el resultado se le pasa a draw_footing_detail.
+
+    kind: 'aislada' (columna al centro), 'lindero' (columna en la
+    colindancia izquierda), 'esquina' (colindancia izquierda y abajo),
+    'corrida' (bajo muro, por metro) o 'combinada' (dos columnas).
+    dead_load/live_load: servicio, t (corrida: t/m). allowable_bearing: t/m²
+    del ESTUDIO DE MECÁNICA DE SUELOS. fc, depth (desplante al fondo de la
+    zapata) y soil_unit_weight (t/m³, si la capacidad es bruta) son datos del
+    proyecto: SIN ellos rechaza -- no se suponen.
+
+    Lo que revisa: presión de servicio, punzonamiento a d/2 recortado contra
+    los bordes (4/3/2 lados, alfa_s 40/30/20), cortante a d (22.5.5.1(c),
+    sin estribos), flexión en la cara, As mínimo 0.0018Ag, separación
+    máxima, anclaje de la parrilla (recta o gancho), aplastamiento (con A2
+    concéntrica), arranques (>=0.005Ag, ldc en compresión que muchas veces
+    GOBIERNA el peralte), d >= 15 cm. Lindero/esquina con tie_beam=True
+    devuelven el momento que tiene que tomar la contratrabe de liga.
+    pedestal + pedestal_height: dado, con estribos por ACI 25.7.2.1.
+    combinada: columns=[{"dead","live","size":[c1,c2]}, ...], spacing entre
+    ejes, boundary_left o overhang_left. corrida: wall_thickness y, bajo
+    mampostería, grade_beam_height (dala por NTC Mampostería 5.1)."""
+    import zapatas as zap_mod
+    return zap_mod.design_footing(
+        kind=kind, dead_load=dead_load, live_load=live_load,
+        allowable_bearing=allowable_bearing, fc=fc, depth=depth, column=column,
+        wall_thickness=wall_thickness, wall_material=wall_material,
+        soil_unit_weight=soil_unit_weight, bearing_is_net=bearing_is_net, fy=fy,
+        code=code, cover=cover, lean_concrete=lean_concrete,
+        min_thickness=min_thickness, width=width, length=length, moment_x=moment_x,
+        moment_y=moment_y, tie_beam=tie_beam, pedestal=pedestal,
+        pedestal_height=pedestal_height, column_bar=column_bar,
+        column_bar_count=column_bar_count, columns=columns, spacing=spacing,
+        boundary_left=boundary_left, overhang_left=overhang_left, aspect=aspect,
+        grade_beam_height=grade_beam_height, mark=mark)
+
+
+@mcp.tool()
+def draw_footing_detail(design: dict[str, Any], x: float, y: float,
+                        scale_denominator: float = 20.0,
+                        views: Optional[list[str]] = None,
+                        allowable_bearing: Optional[float] = None,
+                        working_space: float = 0.30, slope: float = 0.5,
+                        count: int = 1, mark: str = "") -> dict[str, Any]:
+    """DIBUJA una zapata ya diseñada (el dict de design_footing) al nivel de
+    un despacho: el corte, la planta y la columna de cuadros, cada uno en su
+    lugar a partir de (x, y) = eje de la columna sobre el N.T.N.
+
+    Corte: terreno natural en franja a lo largo del talud (no una caja),
+    relleno compactado, plantilla, parrilla a su diámetro real con ganchos a
+    90° y la otra dirección de punta, calzos, arranques anclados en L con su
+    traslape lb, estribos de montaje y de columna, dado o dala si hay, junta
+    de colado rugosa y acabado rugoso; cotas y N.T.N. a la izquierda,
+    llamadas en una columna a la derecha sin cruzarse. Planta: parrilla fina
+    con una varilla tipo por dirección, líneas de reparto con la cantidad,
+    ejes con globo, marca de corte, límite de propiedad si es de lindero.
+    Combinada: corte longitudinal (lecho superior entre columnas, bandas
+    bajo columnas). Cuadros: CUADRO DE ZAPATAS, REVISIÓN ESTRUCTURAL con
+    cada artículo, ESPECIFICACIONES y CUANTIFICACIÓN (count = piezas
+    iguales; la corrida se cuantifica por metro).
+
+    views: subconjunto de ['corte', 'planta', 'cuadros'] (default los 3).
+    allowable_bearing: el qa para las notas (default: el del diseño no lo
+    guarda, así que hace falta para 'cuadros').
+
+    Devuelve la caja de cada vista en el MODELO: es lo que va a
+    compose_layout (views con 'box' y 'scale_denominator') para armar la
+    lámina; no hace falta medir nada a mano."""
+    import zapatas_combinada as zc_mod
+    import zapatas_cuadros as zq_mod
+    import zapatas_dibujo as zd_mod
+    upm = scale_denominator / 1000.0
+    pedidas = views or ["corte", "planta", "cuadros"]
+    kind = design.get("kind")
+    out: dict[str, Any] = {"boxes": {}, "warnings": []}
+    x_sig = x
+    if "corte" in pedidas:
+        if kind == "combinada":
+            r = zc_mod.draw_combined_section(design, x - design["columns"][0]["x"], y, upm,
+                                             working_space=working_space, slope=slope,
+                                             mark=mark)
+        else:
+            r = zd_mod.draw_footing_section(design, x, y, upm, working_space=working_space,
+                                            slope=slope, mark=mark)
+        out["boxes"]["corte"] = r["box"]
+        out["warnings"] += [str(e) for e in r.get("batchErrors", [])]
+        x_sig = r["box"][2]
+    if "planta" in pedidas:
+        if kind == "combinada":
+            px = x_sig + 1.0
+            r = zc_mod.draw_combined_plan(design, px + 0.6, y - 1.6, upm)
+        elif kind == "corrida":
+            r = zd_mod.draw_strip_plan(design, x_sig + 2.0, y - 0.5, upm)
+        else:
+            izq = design["column_offsets"][0]
+            a1 = (design.get("pedestal") or design["column"])[0]
+            r = zd_mod.draw_footing_plan(design, x_sig + 1.0 + izq + a1 / 2, y - 0.5, upm)
+        out["boxes"]["planta"] = r["box"]
+        out["warnings"] += [str(e) for e in r.get("batchErrors", [])]
+        x_sig = r["box"][2]
+    if "cuadros" in pedidas:
+        if allowable_bearing is None:
+            raise ValueError("Para los cuadros hace falta allowable_bearing (va en las notas).")
+        with acad.lote():
+            r = zq_mod.draw_footing_tables(design, x_sig + 0.6, y + 1.5, upm,
+                                           qa=allowable_bearing, count=count)
+        r = acad.resolver(r)
+        out["boxes"]["cuadros"] = r["box"]
+    return out
+
+
+@mcp.tool()
+def create_callouts(items: list[dict[str, Any]], side: str, x_edge: float,
+                    scale: float = 0.0, y_min: Optional[float] = None,
+                    y_max: Optional[float] = None, text_mm: float = 2.0,
+                    max_chars: int = 40) -> dict[str, Any]:
+    """Llamadas de detalle en UNA columna a un lado del dibujo, como las
+    rotula un despacho: punto macizo en el elemento, línea al quiebre y
+    renglón con el texto ENCIMA. Se ordenan y se intercambian hasta que
+    NINGUNA línea cruza a otra, y se separan lo justo para que los textos no
+    se toquen. Para cualquier detalle constructivo (no solo zapatas).
+
+    items: [{"x":.., "y":.. (el punto señalado), "text": ".."}].
+    side: 'left' o 'right'. x_edge: borde del dibujo de ese lado.
+    scale: unidades del modelo por mm de papel (0 = la de la lámina).
+    y_min/y_max: franja vertical donde pueden ir los renglones."""
+    import detalle as dt_mod
+    upm = scale if scale > 0 else space_mod.units_per_paper_mm()
+    rng = (y_min, y_max) if y_min is not None and y_max is not None else None
+    with acad.lote():
+        r = dt_mod.callouts([((float(i["x"]), float(i["y"])), str(i["text"])) for i in items],
+                            side, x_edge, upm, rng, text_mm=text_mm, max_chars=max_chars)
+    return acad.resolver(r)
+
+
+@mcp.tool()
+def create_break_line(x1: float, y1: float, x2: float, y2: float, kind: str = "z",
+                      scale: float = 0.0, layer: str = "DETALLES",
+                      lineweight: int = 18) -> dict[str, Any]:
+    """Línea de corte de una pieza que sigue más allá del dibujo.
+    kind: 'z' = símbolo de corte (recta con la Z al medio, para una columna o
+    un muro cortado arriba); 'irregular' = borde quebrado de una masa
+    cortada (terreno, relleno) en vez de cerrarla con una caja."""
+    import detalle as dt_mod
+    upm = scale if scale > 0 else space_mod.units_per_paper_mm()
+    layers_mod.ensure(layer, 7, lineweight)
+    if kind == "z":
+        return {"handle": dt_mod.break_line((x1, y1), (x2, y2), upm, layer, lineweight)}
+    if kind == "irregular":
+        return {"handle": dt_mod.jagged_line((x1, y1), (x2, y2), upm, layer, lineweight)}
+    raise ValueError("kind tiene que ser 'z' o 'irregular'.")
+
+
+@mcp.tool()
+def create_construction_joint(x1: float, y1: float, x2: float, y2: float,
+                              finish: str = "junta", scale: float = 0.0,
+                              layer: str = "DETALLES") -> dict[str, Any]:
+    """Grafismo de superficie de concreto en un corte.
+    finish: 'junta' = junta de colado rugosa (dientes finos sobre la línea,
+    donde se cuela contra concreto ya fraguado); 'rugoso' = rayado de
+    acabado rugoso a lo largo de una cara expuesta."""
+    import detalle as dt_mod
+    upm = scale if scale > 0 else space_mod.units_per_paper_mm()
+    layers_mod.ensure(layer, 7, 25)
+    if finish == "junta":
+        return {"handle": dt_mod.rough_line((x1, y1), (x2, y2), upm, layer, 35)}
+    if finish == "rugoso":
+        return {"handles": dt_mod.roughness_marks((x1, y1), (x2, y2), upm, layer)}
+    raise ValueError("finish tiene que ser 'junta' o 'rugoso'.")
+
+@mcp.tool()
 def create_material_section(points: list[list[float]], material: str,
                             bulges: Optional[list[float]] = None,
                             layer: Optional[str] = None,
@@ -2834,7 +3023,8 @@ def compose_layout(name: str,
                     locked: bool = True,
                     draw_titles: bool = True,
                     dry_run: bool = False,
-                    sheet: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+                    sheet: Optional[dict[str, Any]] = None,
+                    orientation: Optional[str] = None) -> dict[str, Any]:
     """Arma una lámina en ESPACIO PAPEL: un viewport por vista, a su escala.
 
     ES EL FLUJO CORRECTO cuando el proyecto tiene varias láminas — que es casi
@@ -2872,6 +3062,9 @@ def compose_layout(name: str,
     'blankFields'); nunca inventado. La escala del rótulo sale sola: la de
     las vistas si es una, 'INDICADA' si son varias.
 
+    orientation: 'horizontal' para una lámina apaisada aunque el papel del
+    dispositivo venga vertical (el A0 de DWG To PDF): rota el plot 90°.
+
     Probá con dry_run=True primero y revisá 'fits'."""
     return compose_mod.compose_layout(
         name=name, views=views, model_units=model_units,
@@ -2879,7 +3072,8 @@ def compose_layout(name: str,
         title_block_mm=title_block_mm, reserved_right_mm=reserved_right_mm,
         padding_mm=padding_mm, align=align, distribute=distribute,
         plot_config=plot_config, paper_size=paper_size, create=create,
-        locked=locked, draw_titles=draw_titles, dry_run=dry_run, sheet=sheet)
+        locked=locked, draw_titles=draw_titles, dry_run=dry_run, sheet=sheet,
+        orientation=orientation)
 
 
 @mcp.tool()
@@ -4066,7 +4260,8 @@ def create_spline(points: list[list[float]], closed: bool = False,
 
 @mcp.tool()
 def create_layout(name: str, plot_config: Optional[str] = None,
-                   paper_size: Optional[str] = None) -> dict[str, Any]:
+                   paper_size: Optional[str] = None,
+                   orientation: Optional[str] = None) -> dict[str, Any]:
     """Crea un layout (espacio papel): una lámina imprimible de verdad, donde la
     escala la controla el viewport en vez de dibujar el marco en el modelo.
 
@@ -4074,10 +4269,14 @@ def create_layout(name: str, plot_config: Optional[str] = None,
     paper_size: parte del nombre del papel, p.ej. 'A2' o 'A3' — busca el
     primero que lo contenga entre los del dispositivo. Si no encuentra ninguno,
     el error lista los disponibles.
+    orientation: 'horizontal' o 'vertical'. DWG To PDF trae el A0 solo
+    vertical (841x1189): pedir 'horizontal' rota el plot 90 grados y la hoja
+    queda de 1189x841 -- lo que hace falta para un plano de plotter apaisado.
 
     Después: create_viewport para poner la ventana al modelo."""
     r = acad.call("create_layout", {
         "name": name, "plotConfig": plot_config, "paperSize": paper_size,
+        "orientation": orientation,
     })
 
     # Sin paper_size queda el default del dispositivo, que casi nunca es el

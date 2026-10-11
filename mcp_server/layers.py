@@ -26,6 +26,12 @@ _TEXT_CHECKED = [False]
 # nota hasta abrir el DWG. Cualquier .ttf lo resuelve.
 FUENTE_DEFECTO = "txt"
 ESTILO_TEXTO = "MCP-ARIAL"
+# Grosor de línea de TODO texto: 0. En una TrueType el grosor lo da la letra,
+# no la pluma: con 0.35 y la visualización de grosores encendida AutoCAD traza
+# el CONTORNO de cada letra con esa pluma y, chica en pantalla, la letra sale
+# hueca y deformada -- "ESC. 1:20" se leía "CJO, 7:00" en el título de una
+# vista (visto en el catálogo de zapatas).
+LW_TEXTO = 0
 
 
 # ----------------------------------------------------------------- color

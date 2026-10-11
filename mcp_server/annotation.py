@@ -130,7 +130,7 @@ def _text(content: str, x: float, y: float, height: float, layer: str,
     return acad.call("create_text", {
         "text": content, "x": x, "y": y, "z": 0.0, "height": height,
         "layer": layer, "rotationDeg": rotation,
-        "lineweight": lineweight, "colorIndex": None,
+        "lineweight": layers.LW_TEXTO, "colorIndex": None,
     })["handle"]
 
 

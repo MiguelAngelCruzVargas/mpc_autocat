@@ -24,10 +24,11 @@ def main() -> int:
     # sheet.py compone tools basicas, asi que tambien invoca comandos.
     composed = "".join(
         io.open(os.path.join(HERE, name), encoding="utf-8").read()
-        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py", "engine.py", "instalaciones.py", "examen_edificio.py")
+        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py", "engine.py", "instalaciones.py", "examen_edificio.py", "autocad_client.py", "detalle.py", "zapatas_dibujo.py", "zapatas_combinada.py", "zapatas_cuadros.py")
     )
 
-    called = set(re.findall(r'acad\.call\(\s*"([a-z_]+)"', server_src + composed))
+    # _do_call: el lote ('batch') lo manda el cliente mismo, no una tool.
+    called = set(re.findall(r'(?:acad\.call|_do_call)\(\s*"([a-z_]+)"', server_src + composed))
     handled = set(re.findall(r'case\s+"([a-z_]+)"\s*:', handlers_src))
     # Con dígitos: create_3d_model se leía como "create_" y fallaba sin motivo.
     exposed = set(re.findall(r"@mcp\.tool\(\)\s*\ndef\s+([a-z_0-9]+)", server_src))
@@ -69,6 +70,8 @@ def main() -> int:
                  "model3d_mod.",
                  # instalaciones: eléctrica, hidráulica, sanitaria y su simbología.
                  "inst_mod.",
+                 # capítulo de zapatas: diseño y dibujo de oficio.
+                 "zap_mod.", "zd_mod.", "zc_mod.", "zq_mod.", "dt_mod.",
                  # examen de edificio: revisar_proyecto (sin AutoCAD) y
                  # revisar_juego (lee el dibujo).
                  "exam_mod.",

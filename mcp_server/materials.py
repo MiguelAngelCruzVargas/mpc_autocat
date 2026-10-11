@@ -297,6 +297,20 @@ def apply_hatch(handle: str, spec: dict[str, Any], layer: str,
         intentos.append((respaldo, spec.get("fallback_mm") or 2.0, 0.0))
 
     col = color if color is not None else spec.get("color", layers.COLOR_SECUNDARIO)
+    if acad.batching():
+        # En un lote no hay excepción que atrapar: el respaldo viaja junto y
+        # el plugin lo prueba si el principal falla.
+        def _params(patron, mm, real):
+            return {"boundaryHandle": handle, "pattern": patron,
+                    "scale": hatch_scale(patron, mm, real, scale),
+                    "angleDeg": float(spec.get("angle", 0.0)), "layer": layer,
+                    "islandHandles": island_handles or None,
+                    "lineweight": LW_HATCH, "colorIndex": col}
+        principal_p = _params(*intentos[0])
+        respaldo_p = _params(*intentos[1]) if len(intentos) > 1 else None
+        h = acad.call("create_hatch", principal_p, fallback=respaldo_p)["handle"]
+        return h, {"pattern": intentos[0][0], "scale": round(principal_p["scale"], 5),
+                   "angle": spec.get("angle", 0.0)}, avisos
     ultimo_error = ""
     for patron, mm, real in intentos:
         esc = hatch_scale(patron, mm, real, scale)
