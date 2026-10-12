@@ -217,7 +217,8 @@ def create_level_mark(x: float, y: float, elevation: float,
 SPACED_MAX_CHARS = 12
 
 
-def create_view_title(x: float, y: float, title: str,
+def create_view_title(x: Optional[float] = None, y: Optional[float] = None,
+                      title: str = "",
                       scale_text: Optional[str] = None,
                       height: float = 0.0,
                       spaced: Optional[bool] = None,
@@ -227,8 +228,17 @@ def create_view_title(x: float, y: float, title: str,
                       layer: str = LAYER_TITLE,
                       color_index: Optional[int] = COLOR_TITLE,
                       lineweight: int = LW_TITLE_TEXT,
-                      rule_lineweight: int = LW_TITLE_RULE) -> dict[str, Any]:
+                      rule_lineweight: int = LW_TITLE_RULE,
+                      figure_box: Optional[list[float]] = None,
+                      position: str = "below") -> dict[str, Any]:
     """Titulo de vista con la convencion completa: nombre, subrayado y escala.
+
+    figure_box: [x0, y0, x1, y1] de la figura que titula (con sus cotas).
+    Es la forma correcta: el titulo va PEGADO a su figura -- debajo y
+    centrado (position='below', la convencion) o arriba ('above') -- y con
+    un alto PROPORCIONAL a ella (2.5 % del ancho, entre 4 y 10 mm de papel).
+    Con x/y a mano los titulos quedaban donde sea y chicos al lado de una
+    planta de 16 m (visto en AutoCAD). Con figure_box, x/y no hacen falta.
 
     Es lo que convierte tres dibujos sueltos en una lamina. Un titulo escrito
     con create_text a secas queda del mismo tamano y del mismo peso que una
@@ -249,6 +259,20 @@ def create_view_title(x: float, y: float, title: str,
         raise ValueError("align tiene que ser 'left' o 'center'.")
     if not title:
         raise ValueError("Un titulo de vista sin texto no sirve de nada.")
+    if figure_box is not None:
+        if position not in ("below", "above"):
+            raise ValueError("position tiene que ser 'below' o 'above'.")
+        bx0, by0, bx1, by1 = (float(v) for v in figure_box)
+        if height <= 0:
+            height = min(max((bx1 - bx0) * 0.025, space.paper(4.0)), space.paper(10.0))
+        hh = height
+        bloque = hh * (1.0 + (0.45 if underline else 0.0) + (1.4 * 0.6 if scale_text else 0.0))
+        aire = hh * 1.2
+        align = "center"
+        x = (bx0 + bx1) / 2.0
+        y = (by0 - aire - hh) if position == "below" else (by1 + aire + bloque - hh)
+    elif x is None or y is None:
+        raise ValueError("Pasá figure_box (el titulo se pega a la figura) o x e y.")
 
     h = _alto(height, 4.0)
     h_esc = h * 0.6

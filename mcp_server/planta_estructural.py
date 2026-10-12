@@ -163,11 +163,13 @@ def _cimentacion(columns, tipos, ligas, lot, upm, c, title, text_mm, origin):
     # Cotas entre ejes.
     dt.chain(xs, "bottom", y0 - 1.5, upm)
     dt.chain(ys, "left", x0 - 1.5, upm)
-    t = sym_mod.create_view_title(x0 - 1.6, y1 + 1.6 + 12 * upm, title,
-                                  scale_text=f"ESC. 1:{round(upm * 1000)}", height=3.5 * upm,
-                                  spaced=False)
-    return {"box": [x0 - 1.6 - 30 * upm, y0 - 1.5 - 30 * upm, x1 + 1.6,
-                    (t.get("box") or [0, 0, 0, y1 + 3])[3]],
+    # Pegado a la figura (con sus burbujas y cotas), debajo y del tamaño
+    # que le corresponde: a mano quedaba arriba, lejos y diminuto.
+    t = sym_mod.create_view_title(title=title, scale_text=f"ESC. 1:{round(upm * 1000)}",
+                                  spaced=False,
+                                  figure_box=[x0 - 1.6, y0 - 1.5 - 10 * upm, x1 + 1.6, y1 + 1.6])
+    return {"box": [x0 - 1.6 - 30 * upm, min(y0 - 1.5 - 30 * upm, t["box"][1]), x1 + 1.6,
+                    y1 + 1.6],
             "overlaps": encimadas,
             "warnings": [f"Zapatas encimadas {e['a']} / {e['b']}: van COMBINADAS"
                          for e in encimadas]}
@@ -253,8 +255,10 @@ def _losas(columns, beams, panels, upm, huecos, c, title, text_mm):
                         justify="center", rotation=90)
     dt.chain(xs, "bottom", y0 - 1.5, upm)
     dt.chain(ys, "left", x0 - 1.5, upm)
-    t = sym_mod.create_view_title(x0 - 1.6, y1 + 1.6 + 12 * upm, title,
-                                  scale_text=f"ESC. 1:{round(upm * 1000)}", height=3.5 * upm,
-                                  spaced=False)
-    return {"box": [x0 - 1.6 - 30 * upm, y0 - 1.5 - 30 * upm, x1 + 1.6,
-                    (t.get("box") or [0, 0, 0, y1 + 3])[3]]}
+    # Pegado a la figura (con sus burbujas y cotas), debajo y del tamaño
+    # que le corresponde: a mano quedaba arriba, lejos y diminuto.
+    t = sym_mod.create_view_title(title=title, scale_text=f"ESC. 1:{round(upm * 1000)}",
+                                  spaced=False,
+                                  figure_box=[x0 - 1.6, y0 - 1.5 - 10 * upm, x1 + 1.6, y1 + 1.6])
+    return {"box": [x0 - 1.6 - 30 * upm, min(y0 - 1.5 - 30 * upm, t["box"][1]), x1 + 1.6,
+                    y1 + 1.6]}

@@ -3186,7 +3186,8 @@ def create_level_mark(x: float, y: float, elevation: float,
 
 
 @mcp.tool()
-def create_view_title(x: float, y: float, title: str,
+def create_view_title(x: Optional[float] = None, y: Optional[float] = None,
+                       title: str = "",
                        scale_text: Optional[str] = None,
                        height: float = 0.0,
                        spaced: Optional[bool] = None,
@@ -3196,8 +3197,16 @@ def create_view_title(x: float, y: float, title: str,
                        layer: str = "TITULOS",
                        color_index: Optional[int] = 152,
                        lineweight: int = 35,
-                       rule_lineweight: int = 50) -> dict[str, Any]:
+                       rule_lineweight: int = 50,
+                       figure_box: Optional[list[float]] = None,
+                       position: str = "below") -> dict[str, Any]:
     """Título de vista: nombre, subrayado grueso y escala debajo.
+
+    figure_box=[x0, y0, x1, y1] de la figura (con sus cotas) es la forma
+    CORRECTA: el título va pegado a su figura, debajo y centrado
+    (position='below', la convención; 'above' arriba), con alto
+    proporcional a ella (2.5 % del ancho, entre 4 y 10 mm de papel). Con
+    x/y a mano quedaban donde sea y chicos junto a una planta grande.
 
     TODA vista lleva el suyo. Es lo que convierte tres dibujos sueltos en una
     lámina: sin jerarquía de texto el nombre de la planta pesa lo mismo que
@@ -3219,7 +3228,7 @@ def create_view_title(x: float, y: float, title: str,
         x=x, y=y, title=title, scale_text=scale_text, height=height,
         spaced=spaced, underline=underline, align=align, mark=mark,
         layer=layer, color_index=color_index, lineweight=lineweight,
-        rule_lineweight=rule_lineweight)
+        rule_lineweight=rule_lineweight, figure_box=figure_box, position=position)
 
 
 @mcp.tool()

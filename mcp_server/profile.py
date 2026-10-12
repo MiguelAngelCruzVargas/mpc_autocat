@@ -562,8 +562,7 @@ def create_cross_section_series(x: float, y: float, stations: list[float],
     leyenda = None
     if title:
         import symbols
-        symbols.create_view_title(x=caja[0], y=caja[3] + text_height * 4.0, title=title,
-                                  scale_text=scale_text, height=text_height * 1.6)
+        tv = symbols.create_view_title(title=title, scale_text=scale_text, figure_box=caja)
         # Simbología: qué es cada línea. Sin esto el plano solo lo lee
         # quien lo dibujó.
         lx, ly = caja[2] + text_height * 4.0, caja[3]
@@ -579,7 +578,7 @@ def create_cross_section_series(x: float, y: float, stations: list[float],
         _text("SIMBOLOGÍA", lx, ly + text_height * 2.0, text_height * 1.2, f"{layer}-TEXTO")
         leyenda = [lx, ly - len(filas) * text_height * 2.4, lx + text_height * 40.0,
                    ly + text_height * 3.5]
-        caja = [caja[0], caja[1], max(caja[2], leyenda[2]), caja[3] + text_height * 7.0]
+        caja = [caja[0], min(caja[1], tv["box"][1]), max(caja[2], leyenda[2]), caja[3]]
 
     paquete = medias("area")
     return {"sections": hechas, "count": len(hechas),
