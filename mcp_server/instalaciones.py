@@ -287,7 +287,8 @@ def suggest_electrical(rooms: list[dict[str, Any]],
                        legend: bool = True,
                        legend_x: Optional[float] = None,
                        legend_y: Optional[float] = None,
-                       notes: Optional[list[str]] = None) -> dict[str, Any]:
+                       notes: Optional[list[str]] = None,
+                       title: Optional[str] = "auto") -> dict[str, Any]:
     """Instalación eléctrica de la vivienda según la NOM-001-SEDE-2012."""
     doors = doors or []
     cajas = _cajas_utiles(rooms, exterior_thickness, interior_thickness)
@@ -459,6 +460,7 @@ def suggest_electrical(rooms: list[dict[str, Any]],
     if draw:
         resultado.update(_dibujar_electrica(devices, circuitos, (tx, ty), cuadro,
                                             rooms, table_x, table_y))
+        resultado["title"] = _titulo_auto("electrica", rooms, title)
         if legend:
             resultado["legend"] = _leyenda_auto("electrica", rooms, legend_x, legend_y, notes)
     if avisos:
@@ -672,7 +674,8 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
                       legend_y: Optional[float] = None,
                       notes: Optional[list[str]] = None,
                       hot_riser: Optional[list[float]] = None,
-                      extra_outlets: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+                      extra_outlets: Optional[list[dict[str, Any]]] = None,
+                      title: Optional[str] = "auto") -> dict[str, Any]:
     """Agua fría y caliente a cada mueble, con diámetros por unidades mueble.
 
     Sistema por gravedad, el usual en vivienda mexicana: la toma municipal y
@@ -692,9 +695,11 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
     alimentar: la columna que SUBE a la planta alta, una llave de jardín.
     Cada una {"point": [x, y], "um": UM que sirve, "hot": bool, "label"}."""
     muebles = _muebles(rooms, doors, fixtures)
+    movidas: list[dict[str, Any]] = []
     for k, e in enumerate(extra_outlets or []):
-        muebles.append({"type": "extra", "room": e.get("label") or f"SALIDA {k + 1}",
-                        "conexion": (float(e["point"][0]), float(e["point"][1])),
+        nombre_e = e.get("label") or f"SALIDA {k + 1}"
+        muebles.append({"type": "extra", "room": nombre_e,
+                        "conexion": _a_muros(nombre_e, e["point"], rooms, doors, movidas),
                         "um": float(e.get("um", 1.0)), "hot": bool(e.get("hot", False)),
                         "label": e.get("label")})
     if not muebles:
@@ -711,9 +716,10 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
         heater = hot_riser
     elif heater is None:
         heater = [supply[0] + 1.0, supply[1] + 0.35]
-    baf = (float(supply[0]), float(supply[1]))
-    cal = (float(heater[0]), float(heater[1]))
     sin_calentador = hot_riser is not None
+    baf = _a_muros("BAF", supply, rooms, doors, movidas)
+    cal = (_a_muros("LLEGA AC", heater, rooms, doors, movidas) if sin_calentador
+           else (float(heater[0]), float(heater[1])))
 
     for i, m in enumerate(muebles):
         m["_id"] = i
@@ -753,8 +759,9 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
             avisos.append(f"El calentador quedó dentro de {donde}: un aparato de combustión no "
                           "va en recámara ni baño [práctica]. Pasá heater= en un patio o "
                           "azotea, o hot_riser= si el agua caliente sube de otro nivel.")
+    avisos += _avisos_movidas(movidas)
     resultado: dict[str, Any] = {
-        "supply": list(baf), "heater": list(cal),
+        "supply": list(baf), "heater": list(cal), "risersMoved": movidas,
         "fixtures": [{"type": m["type"], "room": m["room"],
                       "point": [round(v, 3) for v in m["conexion"]],
                       "um": _um(m), "hot": _caliente(m)} for m in muebles],
@@ -769,9 +776,25 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
         resultado.update(_dibujar_hidraulica(tramos_f, tramos_c, baf,
                                              None if sin_calentador else cal, muebles,
                                              riser=cal if sin_calentador else None))
+        resultado["title"] = _titulo_auto("hidraulica", rooms, title)
         if legend:
             resultado["legend"] = _leyenda_auto("hidraulica", rooms, legend_x, legend_y, notes)
     return resultado
+
+
+def _a_muros(nombre: str, p: tuple, rooms, doors, movidas: list) -> tuple:
+    """Lleva una tubería vertical al muro (geo.al_muro) y anota la mudanza."""
+    q, recinto = geo.al_muro((float(p[0]), float(p[1])), rooms, doors)
+    if recinto:
+        movidas.append({"name": nombre, "from": [round(p[0], 3), round(p[1], 3)],
+                        "to": [round(q[0], 3), round(q[1], 3)], "room": recinto})
+    return q
+
+
+def _avisos_movidas(movidas: list) -> list[str]:
+    return [f"{m['name']} caía suelta en {m['room']}: se llevó al muro en "
+            f"({m['to'][0]:.2f}, {m['to'][1]:.2f}). Una tubería vertical va dentro de un muro o "
+            "ducto; si atraviesa otro nivel, usá ESE punto también allá." for m in movidas]
 
 
 def _um(m: dict[str, Any]) -> float:
@@ -868,7 +891,8 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
                      legend_y: Optional[float] = None,
                      notes: Optional[list[str]] = None,
                      stacks: Optional[list[list[float]]] = None,
-                     inlets: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+                     inlets: Optional[list[dict[str, Any]]] = None,
+                     title: Optional[str] = "auto") -> dict[str, Any]:
     """Desagüe de cada mueble hasta la red municipal.
 
     Diámetro de cada tramo = el mayor de lo que drena (un WC aguas arriba
@@ -888,17 +912,21 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
     {"point": [x, y], "ud": UD que bajan, "diameter_mm", "label"}: entran a
     la red como una descarga más y cargan el albañal con lo que traen."""
     muebles = _muebles(rooms, doors, fixtures)
+    movidas: list[dict[str, Any]] = []
     for k, e in enumerate(inlets or []):
+        nombre_e = e.get("label") or f"BAN-{k + 1}"
         muebles.append({"type": "extra", "room": e.get("label") or f"BAJADA {k + 1}",
-                        "conexion": (float(e["point"][0]), float(e["point"][1])),
+                        "conexion": _a_muros(nombre_e, e["point"], rooms, doors, movidas),
                         "ud": float(e["ud"]), "boca": int(e.get("diameter_mm", 100)),
                         "label": e.get("label") or f"BAN-{k + 1}"})
     if not muebles:
         raise ValueError("No hay muebles sanitarios: amuebla los baños, la "
                          "cocina y el lavado antes (suggest_furniture).")
     if stacks:
+        stacks = [list(_a_muros(f"BAN-{k + 1}", p, rooms, doors, movidas))
+                  for k, p in enumerate(stacks)]
         return _sanitaria_planta_alta(rooms, muebles, stacks, draw, legend, legend_x,
-                                      legend_y, notes)
+                                      legend_y, notes, movidas, title)
     y_frente = min(r["y0"] for r in rooms)
     if outlet is None:
         cx = sum(m["conexion"][0] for m in muebles) / len(muebles)
@@ -947,9 +975,13 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
                 for m in muebles if m["type"] == "extra"]
     if llegadas:
         resultado["inlets"] = llegadas
+    if movidas:
+        resultado["risersMoved"] = movidas
+        resultado["warnings"] = _avisos_movidas(movidas)
     if draw:
         resultado.update(_dibujar_sanitaria(tramos, registros, albanal, ventilador,
                                             llegadas=llegadas))
+        resultado["title"] = _titulo_auto("sanitaria", rooms, title)
         if legend:
             resultado["legend"] = _leyenda_auto("sanitaria", rooms, legend_x, legend_y, notes)
     return resultado
@@ -983,7 +1015,7 @@ def _tramos_desague(red: geo.Red) -> list[dict[str, Any]]:
 
 
 def _sanitaria_planta_alta(rooms, muebles, stacks, draw, legend, legend_x, legend_y,
-                           notes) -> dict[str, Any]:
+                           notes, movidas=None, title="auto") -> dict[str, Any]:
     """Planta alta: cada mueble a la bajada más cercana (por recorrido
     ortogonal, que es como corre la tubería en el entrepiso)."""
     puntos = [(float(p[0]), float(p[1])) for p in stacks]
@@ -1016,10 +1048,13 @@ def _sanitaria_planta_alta(rooms, muebles, stacks, draw, legend, legend_x, legen
         "warnings": [f"{b['name']}: pasala a la planta baja como inlets="
                      f"[{{'point': {b['point']}, 'ud': {b['ud']:g}, 'diameter_mm': "
                      f"{b['diameter_mm']}, 'label': '{b['name']}'}}] (mismo punto en "
-                     "planta) para que el albañal cargue lo que baja." for b in bajadas],
+                     "planta) para que el albañal cargue lo que baja." for b in bajadas]
+        + _avisos_movidas(movidas or []),
+        "risersMoved": movidas or [],
     }
     if draw:
         resultado.update(_dibujar_sanitaria(tramos, [], None, None, bajadas=bajadas))
+        resultado["title"] = _titulo_auto("sanitaria", rooms, title)
         if legend:
             resultado["legend"] = _leyenda_auto("sanitaria", rooms, legend_x, legend_y, notes)
     return resultado
@@ -1330,6 +1365,29 @@ def create_installation_legend(kind: str, x: float, y: float,
     space.reserve(*caja, what=f"simbologia {kind}")
     return {"kind": kind, "box": [round(v, 3) for v in caja],
             "symbols": len(filas), "notes": len(lista)}
+
+
+TITULOS_INST = {"electrica": "INSTALACIÓN ELÉCTRICA", "hidraulica": "INSTALACIÓN HIDRÁULICA",
+                "sanitaria": "INSTALACIÓN SANITARIA"}
+
+
+def _titulo_auto(kind: str, rooms: list[dict[str, Any]],
+                 title: Optional[str]) -> Optional[dict[str, Any]]:
+    """Toda planta de instalación sale con su título y escala, pegado debajo
+    de la planta: salieron plantas sin nombre ni escala y no se sabía qué
+    eran (visto en AutoCAD). title=None no lo dibuja; "auto" usa el nombre
+    de la instalación."""
+    if title is None:
+        return None
+    import symbols
+    texto = TITULOS_INST[kind] if title == "auto" else title
+    x0 = min(r["x0"] for r in rooms)
+    y0 = min(r["y0"] for r in rooms)
+    x1 = max(r["x1"] for r in rooms)
+    y1 = max(r["y1"] for r in rooms)
+    den = round(space.units_per_paper_mm() * 1000)
+    return symbols.create_view_title(title=texto, scale_text=f"ESC. 1:{den}",
+                                     figure_box=[x0 - 0.5, y0 - 1.2, x1 + 0.5, y1 + 0.5])
 
 
 def _leyenda_auto(kind: str, rooms: list[dict[str, Any]], x: Optional[float],

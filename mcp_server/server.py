@@ -1187,7 +1187,8 @@ def draw_layout(rooms: list[dict[str, Any]],
                 window_width: float = 1.20,
                 merge: bool = True,
                 label: bool = True,
-                label_height: Optional[float] = None) -> dict[str, Any]:
+                label_height: Optional[float] = None,
+                title: Optional[str] = None) -> dict[str, Any]:
     """Dibuja ENTERA la muraria de una distribución: el cierre del ciclo
     suggest_layout → plano. Le pasás los rooms/doors/windows tal cual los
     devolvió suggest_layout (o armados a mano con el mismo vocabulario) y
@@ -1221,7 +1222,10 @@ def draw_layout(rooms: list[dict[str, Any]],
     todavía no están: si vas a amueblar, poné label=False y rotulá DESPUÉS
     de place_furniture, como manda la regla).
     label_height: altura del texto de rótulo en unidades del modelo; por
-    default 2.5 mm de papel a la escala registrada de la lámina."""
+    default 2.5 mm de papel a la escala registrada de la lámina.
+    title: 'PLANTA BAJA' -> título de vista con su escala, pegado debajo de
+    la planta y dejando lugar a las cadenas de cotas. Toda vista lleva
+    nombre y escala (check_view_titles avisa de las que no)."""
     r = arch_mod.draw_layout(
         rooms=rooms, doors=doors, windows=windows,
         exterior_thickness=exterior_thickness,
@@ -1235,6 +1239,15 @@ def draw_layout(rooms: list[dict[str, Any]],
                       if str(rm.get("name", "")).upper() != "PASILLO"]
         altura = label_height or space_mod.paper(2.5)
         r["labels"] = fur_mod.label_rooms(rooms=rotulables, height=altura)
+    if title:
+        den = round(space_mod.units_per_paper_mm() * 1000)
+        margen = space_mod.paper(32.0)          # las tres cadenas de cotas
+        r["title"] = sym_mod.create_view_title(
+            title=title, scale_text=f"ESC. 1:{den}",
+            figure_box=[min(x["x0"] for x in rooms) - margen,
+                        min(x["y0"] for x in rooms) - margen,
+                        max(x["x1"] for x in rooms) + margen,
+                        max(x["y1"] for x in rooms)])
     return r
 
 
@@ -1837,7 +1850,8 @@ def suggest_electrical(rooms: list[dict[str, Any]],
                        legend: bool = True,
                        legend_x: Optional[float] = None,
                        legend_y: Optional[float] = None,
-                       notes: Optional[list[str]] = None) -> dict[str, Any]:
+                       notes: Optional[list[str]] = None,
+                       title: Optional[str] = "auto") -> dict[str, Any]:
     """INSTALACIÓN ELÉCTRICA de la vivienda según la NOM-001-SEDE-2012, a
     partir de los rooms/doors de suggest_layout (y los muebles de
     suggest_furniture): salidas de alumbrado (al menos una con apagador por
@@ -1865,7 +1879,7 @@ def suggest_electrical(rooms: list[dict[str, Any]],
     import instalaciones as inst_mod
     return inst_mod.suggest_electrical(
         rooms, doors, fixtures, panel_room, draw, exterior_thickness,
-        interior_thickness, table_x, table_y, legend, legend_x, legend_y, notes)
+        interior_thickness, table_x, table_y, legend, legend_x, legend_y, notes, title=title)
 
 
 @mcp.tool()
@@ -1880,7 +1894,8 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
                       legend_y: Optional[float] = None,
                       notes: Optional[list[str]] = None,
                       hot_riser: Optional[list[float]] = None,
-                      extra_outlets: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+                      extra_outlets: Optional[list[dict[str, Any]]] = None,
+                      title: Optional[str] = "auto") -> dict[str, Any]:
     """INSTALACIÓN HIDRÁULICA: agua fría (línea continua) desde la bajada
     del tinaco (BAF) y agua caliente (discontinua) desde el calentador a
     cada mueble, en red de árbol con troncales compartidas. Diámetro de cada
@@ -1909,7 +1924,7 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
     import instalaciones as inst_mod
     return inst_mod.suggest_hydraulic(rooms, doors, fixtures, supply, heater, draw,
                                       legend, legend_x, legend_y, notes, hot_riser,
-                                      extra_outlets)
+                                      extra_outlets, title)
 
 
 @mcp.tool()
@@ -1923,7 +1938,8 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
                      legend_y: Optional[float] = None,
                      notes: Optional[list[str]] = None,
                      stacks: Optional[list[list[float]]] = None,
-                     inlets: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+                     inlets: Optional[list[dict[str, Any]]] = None,
+                     title: Optional[str] = "auto") -> dict[str, Any]:
     """INSTALACIÓN SANITARIA: desagüe de cada mueble hasta la red municipal.
     Diámetro de cada tramo: el mayor entre la boca del mueble (INIFED Tabla
     3.1: WC 100, regadera 50, lavadero 38, lavabo 32) y lo que piden las
@@ -1951,7 +1967,8 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
     se escribe."""
     import instalaciones as inst_mod
     return inst_mod.suggest_sanitary(rooms, doors, fixtures, outlet, draw,
-                                     legend, legend_x, legend_y, notes, stacks, inlets)
+                                     legend, legend_x, legend_y, notes, stacks, inlets,
+                                     title)
 
 
 @mcp.tool()
@@ -2283,6 +2300,8 @@ def create_building_section(
     layer_cut: Optional[str] = None,
     layer_seen: Optional[str] = None,
     text_height: float = 0.0,
+    title: Optional[str] = None,
+    scale_text: Optional[str] = None,
 ) -> dict[str, Any]:
     """Corte vertical (o fachada) de un edificio, por niveles.
 
@@ -2325,7 +2344,7 @@ def create_building_section(
         dimension_stories=dimension_stories, dimension_side=dimension_side,
         level_labels=level_labels, hatch_pattern=hatch_pattern,
         hatch_scale=hatch_scale, layer_cut=layer_cut, layer_seen=layer_seen,
-        text_height=text_height)
+        text_height=text_height, title=title, scale_text=scale_text)
 
 
 @mcp.tool()

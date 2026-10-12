@@ -37,7 +37,7 @@ def test_calentador_en_recamara_avisa() -> None:
 
 
 def test_columna_de_agua_caliente() -> None:
-    sube = [4.2, 2.8]
+    sube = [4.0, 2.8]                 # sobre el muro baño/recámara (x=4.0)
     r = inst.suggest_hydraulic(ROOMS, fixtures=MUEBLES, supply=[0.45, 2.0], hot_riser=sube,
                                draw=False)
     check("con hot_riser no hay aviso de calentador",
@@ -69,9 +69,33 @@ def test_salida_extra_suma_su_carga() -> None:
           str(con["fixtures"]))
 
 
+def test_bajada_suelta_va_al_muro() -> None:
+    # El caso real: BAF a media lavandería y dentro del abatimiento de la
+    # puerta de la cochera (puerta en x=2.0 sobre el muro y=6.0, 0.90).
+    import instalaciones_geom as geo
+    rooms = [{"name": "CUARTO DE LAVADO", "x0": 0.0, "y0": 6.0, "x1": 3.6, "y1": 8.0},
+             {"name": "COCHERA", "x0": 0.0, "y0": 0.0, "x1": 5.6, "y1": 6.0}]
+    doors = [{"from": "COCHERA", "to": "CUARTO DE LAVADO", "width": 0.9, "x": 2.0, "y": 6.0}]
+    q, recinto = geo.al_muro((2.5, 6.9), rooms, doors)
+    check("se movió y dice de dónde", recinto == "CUARTO DE LAVADO", str(recinto))
+    check("quedó sobre el muro y=6.0", abs(q[1] - 6.0) < 1e-9, str(q))
+    check("fuera del vano de la puerta (1.40..2.60)", not (1.40 < q[0] < 2.60), str(q))
+    q2, r2 = geo.al_muro((0.0, 6.5), rooms, doors)
+    check("sobre un muro no se toca", r2 is None and q2 == (0.0, 6.5), str((q2, r2)))
+    r = inst.suggest_hydraulic(rooms + [{"name": "BAÑO", "x0": 3.6, "y0": 6.0, "x1": 5.6,
+                                         "y1": 8.0}], doors=doors,
+                               fixtures=[{"type": "lavatory", "x": 4.0, "y": 7.7,
+                                          "rotation_deg": 0.0, "room": "BAÑO"}],
+                               supply=[2.5, 6.9], heater=[0.5, 9.0], draw=False)
+    check("la BAF de la red queda en el muro", abs(r["supply"][1] - 6.0) < 1e-9, str(r["supply"]))
+    check("y lo avisa", r["risersMoved"] and any("BAF" in w for w in r["warnings"]),
+          str(r["warnings"]))
+
+
 def main() -> int:
     for t in (test_calentador_en_recamara_avisa, test_columna_de_agua_caliente,
-              test_salida_extra_suma_su_carga):
+              test_salida_extra_suma_su_carga,
+              test_bajada_suelta_va_al_muro):
         print(t.__name__)
         t()
     if FAILED:

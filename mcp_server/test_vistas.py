@@ -70,9 +70,18 @@ def test_cajon_no_cuenta() -> None:
     check("el cajón no funde todo ni cuenta como vista", r["ok"] and r["views"] == 1, str(r))
 
 
+def test_tabla_con_titulo_propio() -> None:
+    tabla = [{"layer": "CUADRO-CONSTRUCCION", "box": [50, 0, 60, 0.4],
+              "text": "CUADRO DE CONSTRUCCIÓN"}] + [
+        {"layer": "CUADRO-CONSTRUCCION", "box": [50, -k * 0.5, 60, -k * 0.5 + 0.05]}
+        for k in range(1, 8)]
+    r = vistas.revisar(_planta(0, 0) + _titulo(0, 10.8, "PLANTA") + tabla, gap=1.5)
+    check("una tabla con su título no es vista sin nombre", r["ok"], str(r["problems"]))
+
+
 def main() -> int:
     for t in (test_vista_sin_titulo, test_titulo_separado_cuenta, test_trazos_sueltos_aparte,
-              test_cajon_no_cuenta):
+              test_cajon_no_cuenta, test_tabla_con_titulo_propio):
         print(t.__name__)
         t()
     if FAILED:

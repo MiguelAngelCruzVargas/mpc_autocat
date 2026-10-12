@@ -107,6 +107,8 @@ def create_building_section(
     layer_cut: Optional[str] = None,
     layer_seen: Optional[str] = None,
     text_height: float = 0.0,
+    title: Optional[str] = None,
+    scale_text: Optional[str] = None,
 ) -> dict[str, Any]:
     """Corte vertical (o fachada) de un edificio, por niveles.
 
@@ -381,7 +383,20 @@ def create_building_section(
             reference=PX(0) if dimension_side == "left" else PX(length),
         )
 
+    # Título pegado debajo del corte o la fachada, con su escala: un corte
+    # sin nombre no se puede llamar desde la planta (salió así en un plano).
+    titulo = None
+    if title:
+        import symbols
+        den = round(space.units_per_paper_mm() * 1000)
+        margen = space.paper(25.0)
+        titulo = symbols.create_view_title(
+            title=title, scale_text=scale_text or f"ESC. 1:{den}",
+            figure_box=[PX(0) - margen, PY(0) - space.paper(6.0), PX(length) + margen,
+                        PY(levels[-1])])
+
     resultado: dict[str, Any] = {
+        "title": titulo,
         "levels": niveles,
         "storyHandles": story_handles,
         "storyDimensions": story_dims,

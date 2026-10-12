@@ -55,6 +55,51 @@ def recinto_de(p: Punto, rooms: list[dict[str, Any]]) -> Optional[str]:
     return min(adentro, key=lambda r: (r["x1"] - r["x0"]) * (r["y1"] - r["y0"]))["name"]
 
 
+def al_muro(p: Punto, rooms: list[dict[str, Any]],
+            doors: Optional[list[dict[str, Any]]] = None,
+            holgura: float = 0.15, tol: float = 0.02) -> tuple[Punto, Optional[str]]:
+    """Una tubería VERTICAL (bajada del tinaco, columna de agua caliente,
+    bajada de aguas negras) va dentro de un muro o un ducto, nunca suelta en
+    medio de un cuarto: salió así en una planta, con la BAF a media
+    lavandería y en el abatimiento de la puerta. Lleva el punto al eje del
+    muro más cercano del recinto donde cae (los rooms vienen en ejes) y lo
+    corre a lo largo del muro hasta salir del vano de cualquier puerta.
+
+    Devuelve (punto, recinto) -- recinto es None si no hubo que moverlo
+    (ya estaba sobre un muro, o fuera de todo recinto: un patio, la calle)."""
+    adentro = [r for r in rooms
+               if r["x0"] - 1e-6 <= p[0] <= r["x1"] + 1e-6
+               and r["y0"] - 1e-6 <= p[1] <= r["y1"] + 1e-6]
+    if not adentro:
+        return p, None
+    r = min(adentro, key=lambda r: (r["x1"] - r["x0"]) * (r["y1"] - r["y0"]))
+    x, y = float(p[0]), float(p[1])
+    bordes = [("x", r["x0"], abs(x - r["x0"])), ("x", r["x1"], abs(x - r["x1"])),
+              ("y", r["y0"], abs(y - r["y0"])), ("y", r["y1"], abs(y - r["y1"]))]
+    eje, valor, dist = min(bordes, key=lambda b: b[2])
+    q = (valor, y) if eje == "x" else (x, valor)
+    # Fuera de los vanos de puerta del mismo muro (dos pasadas: al correrse
+    # puede caer en el vano de otra puerta vecina).
+    lo, hi = (r["y0"], r["y1"]) if eje == "x" else (r["x0"], r["x1"])
+    for _ in range(2):
+        for d in doors or []:
+            if "x" not in d or "y" not in d:
+                continue
+            dx, dy, w = float(d["x"]), float(d["y"]), float(d.get("width", 0.9))
+            sobre = abs(dx - valor) < tol if eje == "x" else abs(dy - valor) < tol
+            c = dy if eje == "x" else dx
+            a = q[1] if eje == "x" else q[0]
+            if not sobre or abs(a - c) >= w / 2 + holgura:
+                continue
+            arriba, abajo = c + w / 2 + holgura, c - w / 2 - holgura
+            nuevo = arriba if (abs(arriba - a) <= abs(abajo - a) and arriba <= hi - holgura) \
+                or abajo < lo + holgura else abajo
+            q = (q[0], nuevo) if eje == "x" else (nuevo, q[1])
+    if dist <= tol and q == (x, y):
+        return (x, y), None
+    return (round(q[0], 4), round(q[1], 4)), r["name"]
+
+
 # ------------------------------------------------------------ red en árbol
 
 class Red:

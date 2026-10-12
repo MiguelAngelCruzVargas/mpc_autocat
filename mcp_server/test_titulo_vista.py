@@ -56,8 +56,30 @@ def test_sin_caja_ni_punto_falla() -> None:
         check("sin figure_box ni x/y falla", True)
 
 
+def test_instalacion_y_corte_salen_titulados() -> None:
+    # Salieron plantas de instalaciones y cortes sin nombre ni escala.
+    import instalaciones as inst
+    import sections
+    space.set_scale(0.05)
+    preview.DRAWN.clear()
+    rooms = [{"name": "BAÑO", "x0": 0.0, "y0": 0.0, "x1": 2.0, "y1": 3.0}]
+    inst.suggest_hydraulic(rooms, fixtures=[{"type": "lavatory", "x": 0.6, "y": 2.7,
+                                             "rotation_deg": 0.0, "room": "BAÑO"}],
+                           supply=[0.0, 1.5], heater=[3.0, 1.5], legend=False)
+    textos = [e.get("text", "") for e in preview.DRAWN if e["cmd"] == "create_text"]
+    check("la hidráulica sale con su título", any("HIDRÁULICA" in t for t in textos), str(textos))
+    check("y su escala", "ESC. 1:50" in textos, str(textos))
+    preview.DRAWN.clear()
+    sections.create_building_section(0, 0, 6.0, [{"name": "PB", "height": 2.9, "elements": [
+        {"type": "cut_wall", "x": 0.1, "thickness": 0.15}]}], title="CORTE A-A")
+    textos = [e.get("text", "") for e in preview.DRAWN if e["cmd"] == "create_text"]
+    check("el corte sale con su título", any("A-A" in t or "A - A" in t for t in textos),
+          str(textos))
+
+
 def main() -> int:
-    for t in (test_pegado_y_proporcional, test_sin_caja_ni_punto_falla):
+    for t in (test_pegado_y_proporcional, test_sin_caja_ni_punto_falla,
+              test_instalacion_y_corte_salen_titulados):
         print(t.__name__)
         t()
     if FAILED:

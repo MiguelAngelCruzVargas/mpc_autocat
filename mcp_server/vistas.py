@@ -26,7 +26,11 @@ import autocad_client as acad
 CAPAS_TITULO = ("TITULOS",)
 # Lo que no es dibujo: el cajón y el rótulo de create_sheet, las ventanas
 # de los viewports.
-CAPAS_IGNORADAS = ("CAJON", "ROTULO", "DEFPOINTS")
+CAPAS_IGNORADAS = ("CAJON", "ROTULO", "DEFPOINTS", "NORTE")
+# Una tabla ya trae su título adentro ("CUADRO DE CONSTRUCCIÓN",
+# "SIMBOLOGÍA — INSTALACIÓN ELÉCTRICA"): no es una vista sin nombre.
+TITULOS_PROPIOS = ("CUADRO DE", "CUADRO DE ", "SIMBOLOG", "TABLA", "CATÁLOGO", "CATALOGO",
+                   "NOTAS")
 
 
 def agrupar(cajas: list[list[float]], gap: float) -> list[list[int]]:
@@ -92,7 +96,8 @@ def revisar(entidades: list[dict[str, Any]], gap: float,
     solo_titulo = []
     for g in grupos:
         capas = Counter(ents[i]["layer"] for i in g)
-        con_titulo = any(c.upper() in tit for c in capas)
+        con_titulo = any(c.upper() in tit for c in capas) or any(
+            str(ents[i].get("text") or "").strip().upper().startswith(TITULOS_PROPIOS) for i in g)
         dibujo = sum(n for c, n in capas.items() if c.upper() not in tit)
         v = {"box": [round(v_, 2) for v_ in _caja(cajas, g)], "entities": len(g),
              "layers": [c for c, _ in capas.most_common(4)], "titled": con_titulo,
