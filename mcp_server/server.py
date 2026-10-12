@@ -1389,6 +1389,11 @@ def create_axis_grid(
 
     Llamala DESPUÉS de create_walls, con las coordenadas de los ejes de los
     muros portantes.
+
+    Qué planos llevan ejes: planta arquitectónica (acotada a ejes),
+    cimentación y estructurales, con LOS MISMOS ejes en todos (los
+    estructurales tienen que coincidir con el arquitectónico). Las plantas de
+    instalaciones NO: van sobre la base limpia. Cortes y fachadas: opcional.
     x_labels / y_labels: 'numbers' o 'letters'. Por defecto los verticales van
     1,2,3 y los horizontales A,B,C, pero la convención no es universal: en
     mucho plano estructural las letras van en los ejes verticales. El nombre de

@@ -134,7 +134,21 @@ def _escribir(path: str, texto: str) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(texto)
-    os.replace(tmp, path)               # atómico: ffmpeg nunca lee a medias
+    # Atómico, para que ffmpeg nunca lea a medias. Pero en Windows no se
+    # puede reemplazar un archivo que ffmpeg tiene abierto justo en ese
+    # instante (PermissionError: cortó una grabación entera): se reintenta.
+    for _ in range(50):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.02)
+    with open(path, "w", encoding="utf-8") as f:   # último recurso
+        f.write(texto)
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
 
 
 def _filtro_bandas(f_pedido: str, f_paso: Optional[str]) -> str:
@@ -171,23 +185,29 @@ class Grabacion:
         _escribir(self.f_paso, f"»  {texto}")
 
     def _bucle(self) -> None:
-        intervalo = 1.0 / self.fps
-        siguiente = time.time()
+        """Mantiene SIEMPRE cuadros escritos = segundos transcurridos x fps:
+        si la captura o ffmpeg se atrasan (AutoCAD ocupado con un 3D con
+        texturas), repite el último cuadro hasta alcanzar el reloj. Así el
+        video dura exactamente lo que duró la toma."""
+        datos = None
         try:
-            while not self._parar.is_set() and time.time() - self.t0 < self.max_segundos:
+            while time.time() - self.t0 < self.max_segundos:
+                if self._parar.is_set():
+                    objetivo = int(round((self.t_fin - self.t0) * self.fps))
+                    while datos is not None and self.cuadros < objetivo:
+                        self.proc.stdin.write(datos)
+                        self.cuadros += 1
+                    break
                 datos = self.cap.cuadro()
                 self.proc.stdin.write(datos)
                 self.cuadros += 1
-                siguiente += intervalo
-                espera = siguiente - time.time()
+                objetivo = int((time.time() - self.t0) * self.fps)
+                while self.cuadros < objetivo and not self._parar.is_set():
+                    self.proc.stdin.write(datos)
+                    self.cuadros += 1
+                espera = self.cuadros / self.fps - (time.time() - self.t0)
                 if espera > 0:
                     time.sleep(espera)
-                else:                   # se atrasó: repite el cuadro para no acelerar
-                    while espera < -intervalo / 2 and not self._parar.is_set():
-                        self.proc.stdin.write(datos)
-                        self.cuadros += 1
-                        siguiente += intervalo
-                        espera = siguiente - time.time()
         except (BrokenPipeError, OSError):
             pass
 
@@ -198,7 +218,9 @@ class Grabacion:
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgra",
                "-s", f"{self.cap.w}x{self.cap.hh}", "-framerate", str(self.fps), "-i", "-",
                "-vf", _filtro_bandas(self.f_pedido, self.f_paso), "-r", "30",
-               "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+               # ultrafast: con AutoCAD rindiendo un 3D con texturas, veryfast
+               # no llegaba a codificar en tiempo real.
+               "-c:v", "libx264", "-preset", "ultrafast", "-crf", "21",
                "-pix_fmt", "yuv420p", "-movflags", "+faststart", self.salida]
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         self.t0 = time.time()
@@ -209,9 +231,10 @@ class Grabacion:
 
     def __exit__(self, *exc) -> None:
         time.sleep(2.5)                 # que se vea el resultado terminado
+        self.t_fin = time.time()
         self._parar.set()
-        self.hilo.join(timeout=10)
-        self.duracion = round(time.time() - self.t0, 1)
+        self.hilo.join(timeout=600)     # escribe los cuadros que falten
+        self.duracion = round(self.t_fin - self.t0, 1)
         try:
             self.proc.stdin.close()
         except OSError:

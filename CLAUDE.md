@@ -362,7 +362,17 @@ distancia se mide sobre la cuerda y no sobre el arco: los pozos, las marcas y
 todo lo que caiga después del principio de curva queda corrido, y el error no
 se ve en pantalla, aparece en el replanteo.
 
-## 4.bis Ejes: separación mínima 1.20 m
+## 4.bis Ejes: qué planos los llevan, y separación mínima 1.20 m
+
+**Llevan ejes:** la planta arquitectónica (se acota "a ejes"), la planta de
+cimentación y las estructurales (losas, trabes), con LOS MISMOS ejes en todas
+—un formato municipal real (Juárez, N.L.) exige que los ejes estructurales
+coincidan con los del arquitectónico, y en la práctica los arquitectónicos
+rigen sobre los estructurales—. Cortes y fachadas pueden referenciarlos
+(opcional). **No llevan ejes** las plantas de instalaciones: van sobre la
+base arquitectónica limpia para que se lean los símbolos. Se preguntó si
+"solo la cimentación lleva ejes": no, el arquitectónico también.
+
 
 `create_axis_grid` fusiona solo los ejes más próximos que eso, porque dos
 burbujas a 0.65 m se pisan y las cotas quedan ilegibles. Revisá el 'warning'
