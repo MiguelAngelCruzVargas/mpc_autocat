@@ -822,7 +822,13 @@ def _combinada(columns, s, qa, fc, fc_mpa, fy, fy_mpa, depth, gamma_s, neta, fd,
             h = _r(h + 0.05)
             continue
         vc = PHI_CORTANTE * vc_un_sentido(fc_mpa, By, d, arm_sup["As_cm2"] / (By * d * 1e4))
-        if pun1["ok"] and pun2["ok"] and vu <= vc and d >= 0.15:
+        # Los arranques de las dos columnas se desarrollan en compresión
+        # dentro de la zapata (ACI 318-19 25.4.9.2): sin esto salía una
+        # combinada de 35 cm con arranques #6 que piden 38 cm de desarrollo.
+        db_c = VARILLAS[column_bar][0]
+        ldc_c = ldc_compresion(db_c, fc_mpa, fy_mpa)
+        ok_arr = h - cover - 2 * db - db_c >= ldc_c - 1e-6
+        if pun1["ok"] and pun2["ok"] and vu <= vc and d >= 0.15 and ok_arr:
             break
         h = _r(h + 0.05)
     # Transversal: bandas bajo cada columna de ancho c + d (d/2 por lado).
@@ -855,6 +861,11 @@ def _combinada(columns, s, qa, fc, fc_mpa, fy, fy_mpa, depth, gamma_s, neta, fd,
         "flexion_inferior": {"Mu_tm": _r(m_pos / T_A_KN), "As_req_cm2": _r(as_inf), "ok": True,
                              "ref": "Volados y bajo columnas, tensión ABAJO"},
         "peralte_minimo": {"d_m": _r(d, 3), "ok": d >= 0.15 - 1e-9, "ref": "ACI 318-19 13.3.1.2"},
+        "arranques": {"count": max(4, column_bar_count), "bar": column_bar,
+                      "ldc_m": _r(ldc_c, 3), "available_m": _r(h - cover - 2 * db - db_c, 3),
+                      "As_cm2": _r(max(4, column_bar_count) * VARILLAS[column_bar][1]),
+                      "As_min_cm2": 0.0, "ok": ok_arr,
+                      "ref": "ACI 318-19 25.4.9.2 (ldc), 25.4.1.2"},
     }
     db_col = VARILLAS[column_bar][0]
     out = {"ok": all(v.get("ok", True) for v in rev.values()), "kind": "combinada", "mark": mark,

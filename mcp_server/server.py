@@ -423,7 +423,7 @@ def sheet_origin(width: float, height: float, margin_mm: float = 10.0,
 
 @mcp.tool()
 def traverse(sides: list[dict[str, Any]], start_x: float = 0.0,
-             start_y: float = 0.0) -> dict[str, Any]:
+             start_y: float = 0.0, adjust: bool = True) -> dict[str, Any]:
     """Del CUADRO DE CONSTRUCCIÓN a las coordenadas: rumbo + distancia por lado.
 
     Es el inverso de `create_construction_table`, y con los dos se cierra el
@@ -442,8 +442,14 @@ def traverse(sides: list[dict[str, Any]], start_x: float = 0.0,
     shoelace, el perímetro y el ERROR DE CIERRE: cuánto le falta al último
     lado para volver al arranque. Eso último es lo que importa en obra — un
     cuadro bien copiado cierra con centímetros; si no cierra, el dato está
-    mal leído y dibujarlo sería propagar el error."""
-    return civil_mod.traverse(sides=sides, start_x=start_x, start_y=start_y)
+    mal leído y dibujarlo sería propagar el error.
+
+    adjust (default True): un cierre dentro de tolerancia se COMPENSA por el
+    método de la brújula (Bowditch); los vértices crudos van en 'rawPoints'.
+    Sin compensar, todo el error caía en el último lado y su rumbo ya no era
+    el del título."""
+    return civil_mod.traverse(sides=sides, start_x=start_x, start_y=start_y,
+                              adjust=adjust)
 
 
 @mcp.tool()
@@ -881,6 +887,12 @@ def check_all(rooms: Optional[list[dict[str, Any]]] = None,
     checks["hygiene"] = check_drawing_hygiene(
         sample_limit=hygiene_sample_limit,
         max_duplicate_check=hygiene_max_duplicate_check)
+    # Que cada dibujo del modelo diga qué es (create_view_title). Necesita
+    # el plugin 1.9.0 (cajas en list_entities); con uno viejo se saltea.
+    try:
+        checks["view_titles"] = check_view_titles()
+    except acad.AutoCadError as exc:
+        skipped.append(f"view_titles ({exc})")
 
     # Xrefs rotos: una referencia Unresolved/FileNotFound en la máquina de
     # destino deja la lámina sin la base de otra disciplina, y hasta ahora
@@ -919,6 +931,28 @@ def check_all(rooms: Optional[list[dict[str, Any]]] = None,
 
     return {"ok": not problems, "problems": problems, "count": len(problems),
            "checks": checks, "skipped": skipped}
+
+
+@mcp.tool()
+def check_view_titles(gap: Optional[float] = None, min_entities: int = 6,
+                      title_layers: Optional[list[str]] = None,
+                      ignore_layers: Optional[list[str]] = None) -> dict[str, Any]:
+    """¿Cada dibujo del MODELO dice qué es? Agrupa el modelo en vistas
+    (entidades a menos de 'gap' entre sí; default 15 mm de papel a la escala
+    registrada) y reporta las que no tienen título de create_view_title
+    (capa TITULOS) — con su caja y sus capas, para encontrarlas.
+
+    Salió mirando el modelo de un proyecto: plantas y secciones sueltas sin
+    nombre, y nadie sabía qué eran. Las láminas titulan cada viewport, pero
+    el modelo es lo que abre quien sigue el DWG. Corre dentro de check_all.
+
+    title_layers: capas que cuentan como título (default TITULOS).
+    ignore_layers: lo que no es dibujo (default CAJON, ROTULO, DEFPOINTS).
+    'loose' lista los grupos de menos de min_entities: trazos sueltos."""
+    import vistas as vistas_mod
+    return vistas_mod.check_view_titles(gap=gap, min_entities=min_entities,
+                                        title_layers=title_layers,
+                                        ignore_layers=ignore_layers)
 
 
 @mcp.tool()
@@ -1706,25 +1740,36 @@ def create_cross_sections(x: float, y: float, stations: list[float],
                            columns: int = 3, spacing_x: float = 0.0,
                            spacing_y: float = 0.0, crown: float = 0.02,
                            side_slope: float = 1.5, depth: float = 0.33,
-                           scale: float = 1.0, text_height: float = 0.3
-                           ) -> dict[str, Any]:
-    """Secciones transversales en una tanda de cadenamientos, en cuadrícula.
+                           scale: float = 1.0, text_height: float = 0.3,
+                           surface: Optional[dict[str, Any]] = None,
+                           alignment: Optional[dict[str, Any]] = None,
+                           half_width: float = 0.0,
+                           title: Optional[str] = "SECCIONES TRANSVERSALES",
+                           scale_text: Optional[str] = None) -> dict[str, Any]:
+    """Secciones transversales en una tanda de cadenamientos, en cuadrícula,
+    con TÍTULO y SIMBOLOGÍA (qué es cada línea: rasante, paquete y taludes,
+    terreno natural, eje). Cada sección rotula su cadenamiento 0+000.00, la
+    cota de rasante y de terreno en el eje, el bombeo, el ancho, el talud y
+    sus ÁREAS de corte y de terraplén.
 
-    Cada sección sale con su calzada, el bombeo, el paquete estructural y los
-    taludes, y con el corte o terraplén ya resuelto a partir de la rasante
-    (pvis) y el terreno (ground).
+    Terreno: con 'ground' ([[cadenamiento, cota]] sobre el eje) lo toma
+    plano de lado a lado, que en ladera es falso. Con surface (malla
+    {"x0","y0","dx","dy","z"}) + alignment ({"points","bulges"} de
+    create_alignment) lo muestrea TRANSVERSAL en cada cadenamiento, hasta
+    half_width del eje (default 3 veces el ancho).
 
-    crown: bombeo, la pendiente transversal que saca el agua al borde (0.02 =
-    2%, lo normal). side_slope: talud expresado H:V (1.5 = 1.5 horizontal por
-    1 vertical). depth: espesor del paquete estructural.
+    crown: bombeo (0.02 = 2%). side_slope: talud H:V. depth: paquete
+    estructural. title=None para no dibujar título ni simbología.
 
-    Devuelve el volumen estimado por el método de las áreas medias, que es con
-    el que se cuantifica el movimiento de tierras."""
+    Devuelve cutVolume y fillVolume por áreas medias (el movimiento de
+    tierras) y pavementVolume (el paquete estructural; 'volume' es ese
+    mismo, por compatibilidad), más 'box' con la caja de toda la vista."""
     return profile_mod.create_cross_section_series(
         x=x, y=y, stations=stations, width=width, pvis=pvis, ground=ground,
         columns=columns, spacing_x=spacing_x, spacing_y=spacing_y, crown=crown,
         side_slope=side_slope, depth=depth, scale=scale,
-        text_height=text_height)
+        text_height=text_height, surface=surface, alignment=alignment,
+        half_width=half_width, title=title, scale_text=scale_text)
 
 
 # ------------------------------------------- Documentación (obra lineal, etc.)
@@ -1818,7 +1863,9 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
                       legend: bool = True,
                       legend_x: Optional[float] = None,
                       legend_y: Optional[float] = None,
-                      notes: Optional[list[str]] = None) -> dict[str, Any]:
+                      notes: Optional[list[str]] = None,
+                      hot_riser: Optional[list[float]] = None,
+                      extra_outlets: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     """INSTALACIÓN HIDRÁULICA: agua fría (línea continua) desde la bajada
     del tinaco (BAF) y agua caliente (discontinua) desde el calentador a
     cada mueble, en red de árbol con troncales compartidas. Diámetro de cada
@@ -1828,7 +1875,14 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
     si hace falta retorno de agua caliente (>25 m, INIFED §2.8).
 
     supply: [x, y] de la BAF (por default, en el patio, del lado de los
-    muebles). heater: [x, y] del calentador (default junto a la BAF).
+    muebles). heater: [x, y] del calentador (default junto a la BAF;
+    avisa si cae en recámara o baño).
+
+    Casa de dos niveles: en la planta de ABAJO, extra_outlets=[{"point":
+    [x, y], "um": UM de arriba, "hot": True, "label": "SUBE AC"}] lleva la
+    caliente hasta la columna; en la de ARRIBA, hot_riser=[x, y] (el mismo
+    punto) hace que la caliente arranque de ahí, sin dibujar otro
+    calentador. extra_outlets sirve igual para una llave de jardín.
     Va DESPUÉS de suggest_furniture (toma de ahí los muebles).
 
     legend (default True): dibuja a la derecha de la planta el cuadro de
@@ -1839,7 +1893,8 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
     se escribe."""
     import instalaciones as inst_mod
     return inst_mod.suggest_hydraulic(rooms, doors, fixtures, supply, heater, draw,
-                                      legend, legend_x, legend_y, notes)
+                                      legend, legend_x, legend_y, notes, hot_riser,
+                                      extra_outlets)
 
 
 @mcp.tool()
@@ -1851,7 +1906,9 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
                      legend: bool = True,
                      legend_x: Optional[float] = None,
                      legend_y: Optional[float] = None,
-                     notes: Optional[list[str]] = None) -> dict[str, Any]:
+                     notes: Optional[list[str]] = None,
+                     stacks: Optional[list[list[float]]] = None,
+                     inlets: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     """INSTALACIÓN SANITARIA: desagüe de cada mueble hasta la red municipal.
     Diámetro de cada tramo: el mayor entre la boca del mueble (INIFED Tabla
     3.1: WC 100, regadera 50, lavadero 38, lavabo 32) y lo que piden las
@@ -1865,6 +1922,12 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
     outlet: [x, y] de la conexión a la red municipal (default al frente,
     alineado con los muebles). Va DESPUÉS de suggest_furniture.
 
+    Casa de dos niveles: la planta ALTA va con stacks=[[x, y], ...] (las
+    bajadas de aguas negras; cada mueble drena a la más cercana, SIN
+    registros ni albañal, que solo existen en planta baja) y devuelve
+    'stacks' con UD y diámetro de cada una. La planta BAJA las recibe en
+    inlets=[{"point", "ud", "diameter_mm", "label"}] en el mismo punto.
+
     legend (default True): dibuja a la derecha de la planta el cuadro de
     SIMBOLOGÍA con NOTAS de norma, para que el cliente y quien ejecuta sepan
     qué es cada símbolo. legend_x/legend_y: su esquina superior izquierda.
@@ -1873,7 +1936,7 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
     se escribe."""
     import instalaciones as inst_mod
     return inst_mod.suggest_sanitary(rooms, doors, fixtures, outlet, draw,
-                                     legend, legend_x, legend_y, notes)
+                                     legend, legend_x, legend_y, notes, stacks, inlets)
 
 
 @mcp.tool()
@@ -3962,11 +4025,17 @@ def find_replace_text(find: str, replace: str,
 # --------------------------------------------------------------- Consulta
 
 @mcp.tool()
-def list_entities(entity_type: Optional[str] = None, limit: int = 200) -> dict[str, Any]:
+def list_entities(entity_type: Optional[str] = None, limit: int = 200,
+                  include_extents: bool = False) -> dict[str, Any]:
     """Lista entidades del espacio ACTIVO (el modelo, o el layout de papel si
     hay uno abierto con set_current_layout) (handle, tipo, capa).
-    entity_type: filtro opcional por tipo exacto (p.ej. 'Line', 'Polyline', 'Circle')."""
-    return acad.call("list_entities", {"type": entity_type, "limit": limit})
+    entity_type: filtro opcional por tipo exacto (p.ej. 'Line', 'Polyline', 'Circle').
+    include_extents: agrega 'box' [minX, minY, maxX, maxY] de cada una, en la
+    misma llamada (plugin 1.9.0)."""
+    pars: dict[str, Any] = {"type": entity_type, "limit": limit}
+    if include_extents:
+        pars["includeExtents"] = True
+    return acad.call("list_entities", pars)
 
 
 @mcp.tool()

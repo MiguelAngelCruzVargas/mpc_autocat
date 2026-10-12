@@ -19,8 +19,26 @@ namespace AutoCadMcpPlugin.Commands
                 o["text"] = m.Text;
         }
 
+        /// <summary>La caja de cada entidad en la misma llamada: agrupar el
+        /// modelo en vistas (para encontrar las que no tienen título) con un
+        /// get_entity por entidad eran miles de viajes de ~0.5 s.</summary>
+        private static void AgregarCaja(JsonObject o, Entity ent, bool incluir)
+        {
+            if (!incluir)
+                return;
+            try
+            {
+                var e = ent.GeometricExtents;
+                o["box"] = new JsonArray(e.MinPoint.X, e.MinPoint.Y, e.MaxPoint.X, e.MaxPoint.Y);
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception)
+            {
+                // Entidades sin extensión (una XLine, un texto vacío): sin caja.
+            }
+        }
+
         private static JsonObject TodosLosEspacios(Document doc, string typeFilter, int limit,
-                                                   bool incluirTexto)
+                                                   bool incluirTexto, bool incluirCaja)
         {
             var db = doc.Database;
             var arr = new JsonArray();
@@ -51,6 +69,7 @@ namespace AutoCadMcpPlugin.Commands
                             ["space"] = layout.LayoutName
                         };
                         AgregarTexto(o, ent, incluirTexto);
+                        AgregarCaja(o, ent, incluirCaja);
                         arr.Add(o);
                     }
                 }
@@ -61,7 +80,7 @@ namespace AutoCadMcpPlugin.Commands
 
         /// <summary>params: [type] (p.ej. "Line", "Polyline"), [limit] (default 200),
         /// [allSpaces], [includeText]: devuelve también el contenido de cada
-        /// DBText/MText.</summary>
+        /// DBText/MText. [includeExtents]: la caja [minX, minY, maxX, maxY].</summary>
         public static JsonObject Run(Document doc, JsonObject pars)
         {
             string typeFilter = pars.ContainsKey("type") ? pars["type"]?.GetValue<string>() : null;
@@ -71,8 +90,9 @@ namespace AutoCadMcpPlugin.Commands
             // no ve lo que hay en el modelo mientras hay una lámina abierta.
             bool todos = pars["allSpaces"] != null && pars["allSpaces"].GetValue<bool>();
             bool incluirTexto = pars["includeText"] != null && pars["includeText"].GetValue<bool>();
+            bool incluirCaja = pars["includeExtents"] != null && pars["includeExtents"].GetValue<bool>();
             if (todos)
-                return TodosLosEspacios(doc, typeFilter, limit, incluirTexto);
+                return TodosLosEspacios(doc, typeFilter, limit, incluirTexto, incluirCaja);
 
             var db = doc.Database;
             var arr = new JsonArray();
@@ -104,6 +124,7 @@ namespace AutoCadMcpPlugin.Commands
                         ["layer"] = ent.Layer
                     };
                     AgregarTexto(o, ent, incluirTexto);
+                    AgregarCaja(o, ent, incluirCaja);
                     arr.Add(o);
                     count++;
                 }

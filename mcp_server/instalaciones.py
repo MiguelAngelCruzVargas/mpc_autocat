@@ -590,33 +590,51 @@ def _dibujar_electrica(devices, circuitos, tablero, cuadro, rooms,
             aristas.append((pts[i], pts[j]))
             dentro.append(j)
             fuera.remove(j)
+        # Un tramo largo entre recintos DISTINTOS no se dibuja: cruzaba el
+        # cuarto de en medio en línea recta (visto en AutoCAD: el circuito
+        # BAÑO uniendo los dos baños de la planta alta a través del
+        # vestidor). Cada grupo que queda suelto lleva su propio retorno al
+        # tablero, que es como lo canaliza la obra.
+        recinto = {(s["x"], s["y"]): s.get("room") for s in c["outlets"]}
+        grupo = {p: k for k, p in enumerate(pts)}
         for a, b in aristas:
             largo = math.dist(a, b)
+            if largo > 3.0 and recinto.get(a) != recinto.get(b):
+                continue
+            ra, rb = grupo[a], grupo[b]
+            for p in pts:
+                if grupo[p] == rb:
+                    grupo[p] = ra
             if largo < 0.25:
                 continue
             canal.append(electrical.create_conduit(
                 [[a[0], a[1]], [b[0], b[1]]], sag=min(0.10, 0.30 / largo),
                 conductors="/|T"))
-        # Retorno al tablero.
-        cerca = min(pts, key=lambda p: math.dist(p, tablero))
-        d = math.dist(cerca, tablero)
-        if d <= 3.0:
-            canal.append(electrical.create_conduit(
-                [[cerca[0], cerca[1]], [tablero[0], tablero[1]]],
-                sag=min(0.10, 0.30 / max(d, 0.3)), conductors="/|T"))
-            punta = cerca
-        else:
-            ux, uy = (tablero[0] - cerca[0]) / d, (tablero[1] - cerca[1]) / d
-            punta = (cerca[0] + ux * 0.8, cerca[1] + uy * 0.8)
-            _linea(cerca, punta, electrical.LAYER_OUTLET, 25)
-            try:
-                annotation.create_flow_arrow(points=[list(cerca), list(punta)],
-                                             positions=[0.8], size=_paper(2.5),
-                                             layer=electrical.LAYER_OUTLET)
-            except Exception:                           # noqa: BLE001
-                pass
-        etiquetas.append({"text": c["name"],
-                          "box": [punta[0] - 0.05, punta[1] - 0.05, punta[0] + 0.05, punta[1] + 0.05]})
+        grupos: dict[int, list] = {}
+        for p in pts:
+            grupos.setdefault(grupo[p], []).append(p)
+        # Retorno al tablero, uno por grupo.
+        for gp in grupos.values():
+            cerca = min(gp, key=lambda p: math.dist(p, tablero))
+            d = math.dist(cerca, tablero)
+            if d <= 3.0:
+                canal.append(electrical.create_conduit(
+                    [[cerca[0], cerca[1]], [tablero[0], tablero[1]]],
+                    sag=min(0.10, 0.30 / max(d, 0.3)), conductors="/|T"))
+                punta = cerca
+            else:
+                ux, uy = (tablero[0] - cerca[0]) / d, (tablero[1] - cerca[1]) / d
+                punta = (cerca[0] + ux * 0.8, cerca[1] + uy * 0.8)
+                _linea(cerca, punta, electrical.LAYER_OUTLET, 25)
+                try:
+                    annotation.create_flow_arrow(points=[list(cerca), list(punta)],
+                                                 positions=[0.8], size=_paper(2.5),
+                                                 layer=electrical.LAYER_OUTLET)
+                except Exception:                           # noqa: BLE001
+                    pass
+            etiquetas.append({"text": c["name"],
+                              "box": [punta[0] - 0.05, punta[1] - 0.05, punta[0] + 0.05,
+                                      punta[1] + 0.05]})
     if etiquetas:
         annotation.place_labels(etiquetas, height=h, layer=CAPA_TEXTO_INST)
     # Cuadro de cargas a la derecha de la planta.
@@ -652,7 +670,9 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
                       legend: bool = True,
                       legend_x: Optional[float] = None,
                       legend_y: Optional[float] = None,
-                      notes: Optional[list[str]] = None) -> dict[str, Any]:
+                      notes: Optional[list[str]] = None,
+                      hot_riser: Optional[list[float]] = None,
+                      extra_outlets: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     """Agua fría y caliente a cada mueble, con diámetros por unidades mueble.
 
     Sistema por gravedad, el usual en vivienda mexicana: la toma municipal y
@@ -662,8 +682,21 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
 
     supply: punto de la bajada del tinaco (BAF). Por defecto, sobre el muro
     del patio más cercano a los muebles. heater: punto del calentador; por
-    defecto, en el patio de servicio junto a la BAF."""
+    defecto, en el patio de servicio junto a la BAF.
+
+    hot_riser: punto donde LLEGA el agua caliente de otro nivel (planta alta
+    de una casa con el calentador abajo). Con él no se dibuja calentador: la
+    caliente arranca de esa columna. Sin él, una planta sin patio ponía el
+    calentador junto a la BAF, adentro de una recámara (visto en AutoCAD).
+    extra_outlets: salidas que no son muebles y que la red tiene que
+    alimentar: la columna que SUBE a la planta alta, una llave de jardín.
+    Cada una {"point": [x, y], "um": UM que sirve, "hot": bool, "label"}."""
     muebles = _muebles(rooms, doors, fixtures)
+    for k, e in enumerate(extra_outlets or []):
+        muebles.append({"type": "extra", "room": e.get("label") or f"SALIDA {k + 1}",
+                        "conexion": (float(e["point"][0]), float(e["point"][1])),
+                        "um": float(e.get("um", 1.0)), "hot": bool(e.get("hot", False)),
+                        "label": e.get("label")})
     if not muebles:
         raise ValueError("No hay muebles sanitarios: amuebla los baños, la "
                          "cocina y el lavado antes (suggest_furniture).")
@@ -674,18 +707,20 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
             supply = [min(max(cx, patio["x0"] + 0.4), patio["x1"] - 0.4), patio["y0"] + 0.25]
         else:
             supply = [cx, max(r["y1"] for r in rooms) - 0.25]
-    if heater is None:
+    if hot_riser is not None:
+        heater = hot_riser
+    elif heater is None:
         heater = [supply[0] + 1.0, supply[1] + 0.35]
     baf = (float(supply[0]), float(supply[1]))
     cal = (float(heater[0]), float(heater[1]))
+    sin_calentador = hot_riser is not None
 
     for i, m in enumerate(muebles):
         m["_id"] = i
     fria = geo.red_en_arbol(baf, [(m["conexion"], 0.0, m) for m in muebles]
-                            + [(cal, 0.0, "calentador")])
-    caliente = geo.red_en_arbol(cal, [(m["conexion"], 0.0, m) for m in muebles
-                                      if m["type"] in CON_AGUA_CALIENTE])
-    con_ac = [m for m in muebles if m["type"] in CON_AGUA_CALIENTE]
+                            + ([] if sin_calentador else [(cal, 0.0, "calentador")]))
+    con_ac = [m for m in muebles if _caliente(m)]
+    caliente = geo.red_en_arbol(cal, [(m["conexion"], 0.0, m) for m in con_ac])
 
     def describir(red: geo.Red, es_fria: bool) -> list[dict[str, Any]]:
         """La UM de un tramo cuenta cada mueble UNA vez: un lavabo que
@@ -698,7 +733,7 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
             servidos = {m["_id"]: m for m in abajo if isinstance(m, dict)}
             if es_fria and "calentador" in abajo:
                 servidos.update({m["_id"]: m for m in con_ac})
-            um = sum(UNIDADES_MUEBLE[m["type"]] for m in servidos.values())
+            um = sum(_um(m) for m in servidos.values())
             salida.append({**t, "carga": um, "diametro_mm": _diametro_agua(um)})
         return salida
 
@@ -707,30 +742,44 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
               "por encima de la regadera más alta (NTC 6.1.2): con menos, no hay "
               "presión en la regadera."]
     lejos = max((abs(m["conexion"][0] - cal[0]) + abs(m["conexion"][1] - cal[1]), m["room"])
-                for m in muebles if m["type"] in CON_AGUA_CALIENTE) \
-        if any(m["type"] in CON_AGUA_CALIENTE for m in muebles) else (0.0, "")
+                for m in con_ac) if con_ac else (0.0, "")
     if lejos[0] > NORMA["retorno_ac_m"]:
         avisos.append(f"El mueble con agua caliente más lejano ({lejos[1]}) está a "
                       f"{lejos[0]:.1f} m del calentador: más de "
                       f"{NORMA['retorno_ac_m']:g} m pide línea de retorno (INIFED §2.8).")
+    if not sin_calentador:
+        donde = geo.recinto_de(cal, rooms) or ""
+        if any(p in donde.upper() for p in ("RECÁMARA", "RECAMARA", "DORMITORIO", "BAÑO", "BANO")):
+            avisos.append(f"El calentador quedó dentro de {donde}: un aparato de combustión no "
+                          "va en recámara ni baño [práctica]. Pasá heater= en un patio o "
+                          "azotea, o hot_riser= si el agua caliente sube de otro nivel.")
     resultado: dict[str, Any] = {
         "supply": list(baf), "heater": list(cal),
         "fixtures": [{"type": m["type"], "room": m["room"],
                       "point": [round(v, 3) for v in m["conexion"]],
-                      "um": UNIDADES_MUEBLE[m["type"]],
-                      "hot": m["type"] in CON_AGUA_CALIENTE} for m in muebles],
+                      "um": _um(m), "hot": _caliente(m)} for m in muebles],
         "coldPipes": [_tramo_publico(t) for t in tramos_f],
         "hotPipes": [_tramo_publico(t) for t in tramos_c],
-        "totalUM": sum(UNIDADES_MUEBLE[m["type"]] for m in muebles),
+        "totalUM": sum(_um(m) for m in muebles),
         "warnings": avisos,
         "criteria": {"unidades_mueble": UNIDADES_MUEBLE,
                      "diametro_por_um": DIAMETRO_AGUA},
     }
     if draw:
-        resultado.update(_dibujar_hidraulica(tramos_f, tramos_c, baf, cal, muebles))
+        resultado.update(_dibujar_hidraulica(tramos_f, tramos_c, baf,
+                                             None if sin_calentador else cal, muebles,
+                                             riser=cal if sin_calentador else None))
         if legend:
             resultado["legend"] = _leyenda_auto("hidraulica", rooms, legend_x, legend_y, notes)
     return resultado
+
+
+def _um(m: dict[str, Any]) -> float:
+    return m["um"] if m["type"] == "extra" else UNIDADES_MUEBLE[m["type"]]
+
+
+def _caliente(m: dict[str, Any]) -> bool:
+    return m["hot"] if m["type"] == "extra" else m["type"] in CON_AGUA_CALIENTE
 
 
 def _tramo_publico(t: dict[str, Any]) -> dict[str, Any]:
@@ -758,7 +807,7 @@ def _rotulos_diametro(tramos, prefijo: str, capa: str, desplaz: float) -> list[d
     return labels
 
 
-def _dibujar_hidraulica(tramos_f, tramos_c, baf, cal, muebles) -> dict[str, Any]:
+def _dibujar_hidraulica(tramos_f, tramos_c, baf, cal, muebles, riser=None) -> dict[str, Any]:
     # Más gruesas que la muraria (50): corren junto a los muros y con el
     # mismo grosor se perdían sobre sus líneas (visto en AutoCAD).
     _ensure(CAPA_AF, COLOR_AF, 50)
@@ -780,10 +829,24 @@ def _dibujar_hidraulica(tramos_f, tramos_c, baf, cal, muebles) -> dict[str, Any]
     # Símbolos: BAF (círculo con texto), calentador (rectángulo CAL),
     # salida en cada mueble (círculo chico).
     _circulo(baf, 0.15, CAPA_HID_SIMB)
-    _rect(cal[0] - 0.25, cal[1] - 0.25, cal[0] + 0.25, cal[1] + 0.25, CAPA_HID_SIMB)
-    simbolos = [{"text": "BAF", "box": [baf[0] - 0.15, baf[1] - 0.15, baf[0] + 0.15, baf[1] + 0.15]},
-                {"text": "CAL", "box": [cal[0] - 0.25, cal[1] - 0.25, cal[0] + 0.25, cal[1] + 0.25]}]
+    simbolos = [{"text": "BAF", "box": [baf[0] - 0.15, baf[1] - 0.15, baf[0] + 0.15, baf[1] + 0.15]}]
+    if cal is not None:
+        _rect(cal[0] - 0.25, cal[1] - 0.25, cal[0] + 0.25, cal[1] + 0.25, CAPA_HID_SIMB)
+        simbolos.append({"text": "CAL", "box": [cal[0] - 0.25, cal[1] - 0.25, cal[0] + 0.25,
+                                                 cal[1] + 0.25]})
+    if riser is not None:
+        # Columna de agua caliente que llega de otro nivel: círculo como la BAF.
+        _circulo(riser, 0.15, CAPA_HID_SIMB)
+        simbolos.append({"text": "LLEGA AC", "box": [riser[0] - 0.15, riser[1] - 0.15,
+                                                     riser[0] + 0.15, riser[1] + 0.15]})
     for m in muebles:
+        if m["type"] == "extra":
+            _circulo(m["conexion"], 0.15, CAPA_HID_SIMB)
+            if m.get("label"):
+                c = m["conexion"]
+                simbolos.append({"text": m["label"],
+                                 "box": [c[0] - 0.15, c[1] - 0.15, c[0] + 0.15, c[1] + 0.15]})
+            continue
         _circulo(m["conexion"], 0.06, CAPA_HID_SIMB)
     import annotation
     rot = simbolos + (_rotulos_diametro(tramos_f, "AF", CAPA_AF, 0.15)
@@ -803,7 +866,9 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
                      legend: bool = True,
                      legend_x: Optional[float] = None,
                      legend_y: Optional[float] = None,
-                     notes: Optional[list[str]] = None) -> dict[str, Any]:
+                     notes: Optional[list[str]] = None,
+                     stacks: Optional[list[list[float]]] = None,
+                     inlets: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     """Desagüe de cada mueble hasta la red municipal.
 
     Diámetro de cada tramo = el mayor de lo que drena (un WC aguas arriba
@@ -812,11 +877,28 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
     ramales del albañal y a no más de 10 m entre sí.
 
     outlet: punto de conexión a la red municipal (sobre el frente). Por
-    defecto, en el paramento del frente alineado con los muebles."""
+    defecto, en el paramento del frente alineado con los muebles.
+
+    stacks: PLANTA ALTA. Puntos de las bajadas de aguas negras (BAN): cada
+    mueble drena a la más cercana por el entrepiso, y no hay registros ni
+    albañal (un registro existe solo en planta baja; dibujarlos arriba fue
+    el error que salió en AutoCAD). Devuelve cada bajada con sus UD y su
+    diámetro, listas para pasarlas como 'inlets' a la planta de abajo.
+    inlets: PLANTA BAJA. Bajadas que llegan de arriba, cada una
+    {"point": [x, y], "ud": UD que bajan, "diameter_mm", "label"}: entran a
+    la red como una descarga más y cargan el albañal con lo que traen."""
     muebles = _muebles(rooms, doors, fixtures)
+    for k, e in enumerate(inlets or []):
+        muebles.append({"type": "extra", "room": e.get("label") or f"BAJADA {k + 1}",
+                        "conexion": (float(e["point"][0]), float(e["point"][1])),
+                        "ud": float(e["ud"]), "boca": int(e.get("diameter_mm", 100)),
+                        "label": e.get("label") or f"BAN-{k + 1}"})
     if not muebles:
         raise ValueError("No hay muebles sanitarios: amuebla los baños, la "
                          "cocina y el lavado antes (suggest_furniture).")
+    if stacks:
+        return _sanitaria_planta_alta(rooms, muebles, stacks, draw, legend, legend_x,
+                                      legend_y, notes)
     y_frente = min(r["y0"] for r in rooms)
     if outlet is None:
         cx = sum(m["conexion"][0] for m in muebles) / len(muebles)
@@ -826,17 +908,7 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
     reg_final = (salida[0], salida[1] + 0.6)
     red = geo.red_en_arbol(reg_final, [(m["conexion"], 0.0, m) for m in muebles])
 
-    tramos = []
-    for t in red.tramos():
-        abajo = red.aguas_abajo(t["nodo"])
-        # El mayor entre la boca del mueble más grande que drena y lo que
-        # pide la suma de unidades de descarga (INIFED Tabla 3.3).
-        ud = sum(UNIDADES_DESCARGA[m["type"]] for m in abajo)
-        por_ud = next((d for lim, d in DIAMETRO_RAMAL if ud <= lim), 150)
-        diam = max(max(DESCARGA_MM[m["type"]] for m in abajo), por_ud,
-                   NORMA["desague_min_mm"])
-        tramos.append({**t, "diametro_mm": diam, "ud": ud,
-                       "drena": sorted({NOMBRES_MUEBLE[m["type"]] for m in abajo})})
+    tramos = _tramos_desague(red)
     # Albañal: lo que lleva WC es la línea principal.
     principal = [t for t in tramos if t["diametro_mm"] >= 100]
 
@@ -849,7 +921,8 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
             r["room"] = local
     # [NTC] 6.1.3.2-III: tubo ventilador en el ORIGEN del albañal: el WC
     # más alejado de la descarga.
-    wcs = [m for m in muebles if m["type"] == "wc"]
+    wcs = [m for m in muebles if m["type"] == "wc"
+           or (m["type"] == "extra" and m["boca"] >= 100)]
     ventilador = None
     if wcs:
         lejos = max(wcs, key=lambda m: abs(m["conexion"][0] - reg_final[0])
@@ -870,8 +943,83 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
         "criteria": {k: NORMA[k] for k in ("pendiente_drenaje", "albanal_min_mm",
                                            "registro_max_m")},
     }
+    llegadas = [{"name": m["label"], "point": list(m["conexion"]), "diameter_mm": m["boca"]}
+                for m in muebles if m["type"] == "extra"]
+    if llegadas:
+        resultado["inlets"] = llegadas
     if draw:
-        resultado.update(_dibujar_sanitaria(tramos, registros, albanal, ventilador))
+        resultado.update(_dibujar_sanitaria(tramos, registros, albanal, ventilador,
+                                            llegadas=llegadas))
+        if legend:
+            resultado["legend"] = _leyenda_auto("sanitaria", rooms, legend_x, legend_y, notes)
+    return resultado
+
+
+def _ud(m: dict[str, Any]) -> float:
+    return m["ud"] if m["type"] == "extra" else UNIDADES_DESCARGA[m["type"]]
+
+
+def _boca(m: dict[str, Any]) -> int:
+    return m["boca"] if m["type"] == "extra" else DESCARGA_MM[m["type"]]
+
+
+def _diametro_desague(abajo: list[dict[str, Any]]) -> int:
+    """El mayor entre la boca del mueble más grande que drena y lo que pide
+    la suma de unidades de descarga (INIFED Tabla 3.3)."""
+    ud = sum(_ud(m) for m in abajo)
+    por_ud = next((d for lim, d in DIAMETRO_RAMAL if ud <= lim), 150)
+    return max(max(_boca(m) for m in abajo), por_ud, NORMA["desague_min_mm"])
+
+
+def _tramos_desague(red: geo.Red) -> list[dict[str, Any]]:
+    tramos = []
+    for t in red.tramos():
+        abajo = [m for m in red.aguas_abajo(t["nodo"]) if isinstance(m, dict)]
+        tramos.append({**t, "diametro_mm": _diametro_desague(abajo),
+                       "ud": sum(_ud(m) for m in abajo),
+                       "drena": sorted({m["label"] if m["type"] == "extra"
+                                        else NOMBRES_MUEBLE[m["type"]] for m in abajo})})
+    return tramos
+
+
+def _sanitaria_planta_alta(rooms, muebles, stacks, draw, legend, legend_x, legend_y,
+                           notes) -> dict[str, Any]:
+    """Planta alta: cada mueble a la bajada más cercana (por recorrido
+    ortogonal, que es como corre la tubería en el entrepiso)."""
+    puntos = [(float(p[0]), float(p[1])) for p in stacks]
+    grupos: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(puntos))}
+    for m in muebles:
+        c = m["conexion"]
+        i = min(range(len(puntos)),
+                key=lambda k: abs(c[0] - puntos[k][0]) + abs(c[1] - puntos[k][1]))
+        grupos[i].append(m)
+    tramos: list[dict[str, Any]] = []
+    bajadas: list[dict[str, Any]] = []
+    for i, p in enumerate(puntos):
+        if not grupos[i]:
+            continue
+        tramos += _tramos_desague(geo.red_en_arbol(p, [(m["conexion"], 0.0, m)
+                                                       for m in grupos[i]]))
+        bajadas.append({"name": f"BAN-{len(bajadas) + 1}",
+                        "point": [round(p[0], 3), round(p[1], 3)],
+                        "diameter_mm": _diametro_desague(grupos[i]),
+                        "ud": sum(_ud(m) for m in grupos[i]),
+                        "drains": sorted({m["room"] for m in grupos[i]})})
+    resultado: dict[str, Any] = {
+        "outlet": None,
+        "pipes": [{**_tramo_publico(t), "drains": t["drena"],
+                   "slope": NORMA["pendiente_drenaje"]} for t in tramos],
+        "registers": [], "sewer": None, "vent": None,
+        "stacks": bajadas,
+        "criteria": {k: NORMA[k] for k in ("pendiente_drenaje", "albanal_min_mm",
+                                           "registro_max_m")},
+        "warnings": [f"{b['name']}: pasala a la planta baja como inlets="
+                     f"[{{'point': {b['point']}, 'ud': {b['ud']:g}, 'diameter_mm': "
+                     f"{b['diameter_mm']}, 'label': '{b['name']}'}}] (mismo punto en "
+                     "planta) para que el albañal cargue lo que baja." for b in bajadas],
+    }
+    if draw:
+        resultado.update(_dibujar_sanitaria(tramos, [], None, None, bajadas=bajadas))
         if legend:
             resultado["legend"] = _leyenda_auto("sanitaria", rooms, legend_x, legend_y, notes)
     return resultado
@@ -918,13 +1066,15 @@ def _registros(red: geo.Red, principal: list[dict[str, Any]],
              "size_cm": "40x60"} for i, p in enumerate(unicos)]
 
 
-def _dibujar_sanitaria(tramos, registros, albanal, ventilador=None) -> dict[str, Any]:
+def _dibujar_sanitaria(tramos, registros, albanal, ventilador=None, bajadas=None,
+                       llegadas=None) -> dict[str, Any]:
     _ensure(CAPA_DRENAJE, COLOR_DRENAJE, 40)
     _ensure(CAPA_REGISTRO, COLOR_REGISTRO, 30)
     _ensure(CAPA_TEXTO_INST, 7, 18)
     for t in tramos:
         _linea(t["desde"], t["hasta"], CAPA_DRENAJE, 40 if t["diametro_mm"] >= 100 else 30)
-    _linea(tuple(albanal["from"]), tuple(albanal["to"]), CAPA_DRENAJE, 50)
+    if albanal:
+        _linea(tuple(albanal["from"]), tuple(albanal["to"]), CAPA_DRENAJE, 50)
     h = _paper(1.8)
     # Los rótulos de registro y del ventilador van por place_labels junto
     # con los de diámetro: escritos a mano a +0.25 caían encima del
@@ -937,6 +1087,17 @@ def _dibujar_sanitaria(tramos, registros, albanal, ventilador=None) -> dict[str,
             _rect(x - 0.15, y - 0.25, x + 0.15, y + 0.25, CAPA_REGISTRO, 18)
         rot.append({"text": f"{r['name']} {r['size_cm']}" + (" D.T." if r.get("double_lid") else ""),
                     "box": [x - 0.2, y - 0.3, x + 0.2, y + 0.3]})
+    # Bajadas de aguas negras: la que SALE de esta planta (planta alta) y la
+    # que LLEGA de arriba (planta baja). Círculo del diámetro del tubo, no
+    # menos de 0.12 para que se lea.
+    for b, verbo in [(b, "BAJA") for b in (bajadas or [])] + \
+            [(b, "LLEGA") for b in (llegadas or [])]:
+        bx, by = b["point"]
+        r_ = max(0.12, b["diameter_mm"] / 2000.0)
+        _circulo((bx, by), r_, CAPA_DRENAJE)
+        _circulo((bx, by), r_ * 0.55, CAPA_DRENAJE, 18)
+        rot.append({"text": f"{verbo} {b['name']} Ø{b['diameter_mm']}",
+                    "box": [bx - r_, by - r_, bx + r_, by + r_]})
     if ventilador:
         vx, vy = ventilador["point"]
         _circulo((vx, vy), 0.10, CAPA_DRENAJE)
@@ -965,8 +1126,9 @@ def _dibujar_sanitaria(tramos, registros, albanal, ventilador=None) -> dict[str,
                     "x": (a[0] + b[0]) / 2.0 + (0.18 if vertical else 0.0),
                     "y": (a[1] + b[1]) / 2.0 + (0.0 if vertical else 0.18),
                     "rotation": 90.0 if vertical else 0.0})
-    rot.append({"text": f"ALBAÑAL Ø{albanal['diameter_mm']} A RED MUNICIPAL",
-                "x": albanal["to"][0] + 0.25, "y": albanal["to"][1] - 0.4})
+    if albanal:
+        rot.append({"text": f"ALBAÑAL Ø{albanal['diameter_mm']} A RED MUNICIPAL",
+                    "x": albanal["to"][0] + 0.25, "y": albanal["to"][1] - 0.4})
     lab = annotation.place_labels(rot, height=h, layer=CAPA_TEXTO_INST)
     return {"drainSegments": len(tramos), "registersDrawn": len(registros),
             "flowArrows": flechas, "cramped": len(lab.get("cramped", []))}

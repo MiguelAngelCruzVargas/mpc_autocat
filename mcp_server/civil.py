@@ -881,7 +881,8 @@ def parse_rumbo(texto: str) -> float:
 
 
 def traverse(sides: list[dict[str, Any]],
-             start_x: float = 0.0, start_y: float = 0.0) -> dict[str, Any]:
+             start_x: float = 0.0, start_y: float = 0.0,
+             adjust: bool = True) -> dict[str, Any]:
     """Del CUADRO DE CONSTRUCCIÓN a las coordenadas: rumbo + distancia por
     lado, recorrido lado a lado desde el vértice de arranque.
 
@@ -900,6 +901,14 @@ def traverse(sides: list[dict[str, Any]],
     lado para volver al punto de partida. Un cuadro copiado de un plano casi
     nunca cierra exacto por el redondeo de los segundos, y hay que saber
     cuánto: 2 cm en 170 m es redondeo, 2 m es un dato mal leído.
+
+    adjust (default): si el error está DENTRO de tolerancia se COMPENSA por
+    el método de la brújula (Bowditch): a cada vértice se le resta el error
+    en proporción a la distancia recorrida hasta él. Sin compensar, todo el
+    error caía en el último lado y su rumbo salía distinto al del título
+    (S 4°04'08" contra S 4°05'08": se vio en un terreno de prueba). Los
+    vértices sin compensar quedan en 'rawPoints'. Un error FUERA de
+    tolerancia no se compensa: se avisa, porque es un dato mal leído.
     """
     if not sides:
         raise ValueError("Hace falta al menos un lado en 'sides'.")
@@ -944,8 +953,24 @@ def traverse(sides: list[dict[str, Any]],
     # punto es el intento de volver al primero y no es un vértice nuevo.
     vertices = [[round(p[0], 4), round(p[1], 4)] for p in puntos[:-1]]
 
+    tolerancia = perimetro / 5000.0
+    crudos = vertices
+    compensado = False
+    if adjust and 0 < error <= max(tolerancia, 0.005):
+        acum = 0.0
+        ajustados = [[puntos[0][0], puntos[0][1]]]
+        for i, lado in enumerate(sides[:-1]):
+            acum += float(lado["distance"])
+            f = acum / perimetro
+            ajustados.append([puntos[i + 1][0] - cierre_dx * f, puntos[i + 1][1] - cierre_dy * f])
+        vertices = [[round(p[0], 4), round(p[1], 4)] for p in ajustados]
+        compensado = True
+
     resultado: dict[str, Any] = {
         "points": vertices,
+        "rawPoints": crudos,
+        "adjusted": compensado,
+        "adjustment": "Brújula (Bowditch)" if compensado else None,
         "closureError": round(error, 4),
         "closureBy": {"dx": round(cierre_dx, 4), "dy": round(cierre_dy, 4)},
         "perimeter": round(perimetro, 3),
@@ -954,7 +979,6 @@ def traverse(sides: list[dict[str, Any]],
     if len(vertices) >= 3:
         resultado["area"] = round(geom.polygon_area(vertices), 3)
     # 1/5000 es la tolerancia habitual de un levantamiento de predio urbano.
-    tolerancia = perimetro / 5000.0
     resultado["closes"] = error <= max(tolerancia, 0.005)
     if not resultado["closes"]:
         resultado["warning"] = (

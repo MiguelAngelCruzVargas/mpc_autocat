@@ -135,17 +135,31 @@ def _cimentacion(columns, tipos, ligas, lot, upm, c, title, text_mm, origin):
                   L_ZAP, 18)
             mx, my = t["x0"] + b / 2 + 0.6 * h, (t["y0"] + t["y1"]) / 2
             dt.text(t["mark"], mx, my, h * 1.2, rotation=90)
-    # Zapatas y columnas.
+    # Zapatas y columnas. Una columna puede traer 'rect' (la zapata
+    # combinada que comparte con otra): se dibuja UNA vez.
+    dibujadas = {}
     for k in columns:
         z = tipos[k["type"]]
-        zx0, zy0, zx1, zy1 = footing_rect(k, z, lot, origin)
-        _rect(zx0, zy0, zx1, zy1, L_ZAP, 50)
+        rect = tuple(round(v, 4) for v in (k.get("rect") or footing_rect(k, z, lot, origin)))
+        if rect not in dibujadas:
+            zx0, zy0, zx1, zy1 = rect
+            _rect(zx0, zy0, zx1, zy1, L_ZAP, 50)
+            tx = zx0 + 0.10 if abs(k["x"] - zx1) < abs(k["x"] - zx0) else zx1 - 0.10
+            ty = zy1 - 0.12 - h * 1.4 if abs(k["y"] - zy0) < abs(k["y"] - zy1) else zy0 + 0.12
+            dt.text(k["type"], tx, ty, h * 1.4, justify=None if tx < k["x"] else "right")
+            dibujadas[rect] = k["type"]
         hc = _rect(k["x"] - c / 2, k["y"] - c / 2, k["x"] + c / 2, k["y"] + c / 2, L_COL, 50)
         dt._solid(hc, L_COL, 7)
-        # Marca de la zapata dentro de ella, del lado lejano a la columna.
-        tx = zx0 + 0.10 if abs(k["x"] - zx1) < abs(k["x"] - zx0) else zx1 - 0.10
-        ty = zy1 - 0.12 - h * 1.4 if abs(k["y"] - zy0) < abs(k["y"] - zy1) else zy0 + 0.12
-        dt.text(k["type"], tx, ty, h * 1.4, justify=None if tx < k["x"] else "right")
+    # Revisión: dos zapatas que se pisan no son dos zapatas, son una
+    # combinada. Pasó: en un eje con columnas a 2.0 m las aisladas se
+    # encimaban y la planta se veía "bien".
+    encimadas = []
+    rs = list(dibujadas.items())
+    for i in range(len(rs)):
+        for j in range(i + 1, len(rs)):
+            (a, ma), (b, mb) = rs[i], rs[j]
+            if a[0] < b[2] - 1e-6 and b[0] < a[2] - 1e-6 and a[1] < b[3] - 1e-6 and b[1] < a[3] - 1e-6:
+                encimadas.append({"a": ma, "b": mb, "rect_a": list(a), "rect_b": list(b)})
     # Cotas entre ejes.
     dt.chain(xs, "bottom", y0 - 1.5, upm)
     dt.chain(ys, "left", x0 - 1.5, upm)
@@ -153,7 +167,10 @@ def _cimentacion(columns, tipos, ligas, lot, upm, c, title, text_mm, origin):
                                   scale_text=f"ESC. 1:{round(upm * 1000)}", height=3.5 * upm,
                                   spaced=False)
     return {"box": [x0 - 1.6 - 30 * upm, y0 - 1.5 - 30 * upm, x1 + 1.6,
-                    (t.get("box") or [0, 0, 0, y1 + 3])[3]]}
+                    (t.get("box") or [0, 0, 0, y1 + 3])[3]],
+            "overlaps": encimadas,
+            "warnings": [f"Zapatas encimadas {e['a']} / {e['b']}: van COMBINADAS"
+                         for e in encimadas]}
 
 
 def draw_framing_plan(columns: list[dict[str, Any]], beams: list[dict[str, Any]],
