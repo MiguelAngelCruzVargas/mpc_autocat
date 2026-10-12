@@ -934,6 +934,17 @@ def check_all(rooms: Optional[list[dict[str, Any]]] = None,
 
 
 @mcp.tool()
+def live_drawing(enabled: bool = True) -> dict[str, Any]:
+    """Modo VER DIBUJAR: con enabled=True las tools dejan de mandar el dibujo
+    en lotes y cada entidad aparece en AutoCAD en el momento en que se crea —
+    la planta se va armando en pantalla, como si la dibujara una persona.
+    Más lento (~0.5 s por entidad); sirve para mirar el trabajo en vivo o
+    grabar una demostración. enabled=False vuelve a los lotes (rápido)."""
+    acad.ver_dibujar(enabled)
+    return {"liveDrawing": acad.VER_DIBUJAR[0]}
+
+
+@mcp.tool()
 def check_view_titles(gap: Optional[float] = None, min_entities: int = 6,
                       title_layers: Optional[list[str]] = None,
                       ignore_layers: Optional[list[str]] = None) -> dict[str, Any]:
@@ -1697,9 +1708,12 @@ def create_profile(x: float, y: float, length: float,
                     h_scale: float = 1.0, v_exag: float = 10.0,
                     datum: Optional[float] = None,
                     grid_station: float = 20.0, grid_elevation: float = 1.0,
-                    text_height: float = 0.5, step: float = 2.0
-                    ) -> dict[str, Any]:
-    """Perfil longitudinal: terreno natural, rasante de proyecto y grilla.
+                    text_height: float = 0.5, step: float = 2.0,
+                    title: Optional[str] = "PERFIL LONGITUDINAL",
+                    scale_text: Optional[str] = None) -> dict[str, Any]:
+    """Perfil longitudinal: terreno natural, rasante de proyecto y grilla,
+    con título pegado y simbología (title=None no los dibuja; scale_text p.ej.
+    'ESC. H 1:100  V 1:20'). Cadenamientos en 0+000.00. Devuelve 'box'.
 
     La planta dice por dónde va la obra; el perfil dice a qué altura. Sin él no
     hay cotas de rasante ni volúmenes de corte y terraplén.
@@ -1720,7 +1734,8 @@ def create_profile(x: float, y: float, length: float,
     return profile_mod.create_profile(
         x=x, y=y, length=length, pvis=pvis, ground=ground, h_scale=h_scale,
         v_exag=v_exag, datum=datum, grid_station=grid_station,
-        grid_elevation=grid_elevation, text_height=text_height, step=step)
+        grid_elevation=grid_elevation, text_height=text_height, step=step,
+        title=title, scale_text=scale_text)
 
 
 @mcp.tool()

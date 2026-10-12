@@ -132,8 +132,12 @@ def create_profile(x: float, y: float, length: float,
                    datum: Optional[float] = None,
                    grid_station: float = 20.0, grid_elevation: float = 1.0,
                    text_height: float = 0.5,
-                   step: float = 2.0) -> dict[str, Any]:
-    """Perfil longitudinal: terreno, rasante y grilla de referencia.
+                   step: float = 2.0,
+                   title: Optional[str] = "PERFIL LONGITUDINAL",
+                   scale_text: Optional[str] = None) -> dict[str, Any]:
+    """Perfil longitudinal: terreno, rasante y grilla de referencia, con
+    título pegado debajo y simbología (qué línea es cada cosa). title=None
+    no los dibuja. scale_text: 'ESC. H 1:100  V 1:20'.
 
     (x, y) es la esquina inferior izquierda del cuadro del perfil.
     length: largo del eje, en metros de obra.
@@ -187,8 +191,11 @@ def create_profile(x: float, y: float, length: float,
         return y + (cota - base) * h_scale * v_exag
 
     _layer(LAYER_GRID, 8, LW_GRID)
-    _layer(LAYER_GROUND, 3, LW_GROUND)
-    _layer(LAYER_GRADE, 1, LW_GRADE)
+    # Rasante gruesa y terreno fino gris: se distinguen por el TRAZO, también
+    # en monocromo. Antes eran rojo y verde puros, sin rótulo: nadie sabía
+    # qué eran (visto en una prueba real).
+    _layer(LAYER_GROUND, 8, LW_GROUND)
+    _layer(LAYER_GRADE, 7, LW_GRADE)
     _layer(LAYER_TEXT, 7, LW_TEXT)
 
     # --- Grilla ---
@@ -201,7 +208,7 @@ def create_profile(x: float, y: float, length: float,
     est = 0.0
     while est <= length + 1e-9:
         _line((PX(est), PY(base)), (PX(est), PY(techo)), LAYER_GRID, LW_GRID)
-        _text(f"{est:.0f}", PX(est) - text_height, PY(base) - text_height * 3.5,
+        _text(station_text(est), PX(est) + text_height * 0.5, PY(base) - text_height * 7.5,
               text_height, LAYER_TEXT, rotation=90.0)
         est += grid_station
 
@@ -216,11 +223,11 @@ def create_profile(x: float, y: float, length: float,
     handle_terreno = None
     if ground:
         pts = [(PX(e), PY(terreno(e))) for e in muestras]
-        handle_terreno = _poly(pts, LAYER_GROUND, LW_GROUND, color=3)
+        handle_terreno = _poly(pts, LAYER_GROUND, LW_GROUND)
 
     # --- Rasante de proyecto ---
     pts_rasante = [(PX(e), PY(grade_elevation(pvis, e))) for e in muestras]
-    handle_rasante = _poly(pts_rasante, LAYER_GRADE, LW_GRADE, color=1)
+    handle_rasante = _poly(pts_rasante, LAYER_GRADE, LW_GRADE)
 
     # --- Pendientes rotuladas entre PVIs ---
     tramos = []
@@ -232,7 +239,7 @@ def create_profile(x: float, y: float, length: float,
         medio = (a["station"] + b["station"]) / 2.0
         _text(f"{pend:+.2f}%", PX(medio) - text_height * 2.0,
               PY(grade_elevation(pvis, medio)) + text_height * 1.5,
-              text_height, LAYER_TEXT, color=1)
+              text_height, LAYER_TEXT)
         tramos.append({"from": a["station"], "to": b["station"],
                        "gradePercent": pend, "length": dl})
 
@@ -247,9 +254,23 @@ def create_profile(x: float, y: float, length: float,
                       "cut_fill": round(t - r, 3) if t is not None else None})
         est += grid_station
 
+    caja = [PX(0) - text_height * 8.0, PY(base) - text_height * 8.0, PX(length), PY(techo)]
+    if title:
+        import symbols
+        tv = symbols.create_view_title(title=title, scale_text=scale_text, figure_box=caja)
+        lx, ly = PX(length) + text_height * 3.0, PY(techo)
+        filas_ley = [(LAYER_GRADE, LW_GRADE, "RASANTE DE PROYECTO"),
+                     (LAYER_GROUND, LW_GROUND, "TERRENO NATURAL")]
+        _text("SIMBOLOGÍA", lx, ly + text_height * 1.0, text_height * 1.2, LAYER_TEXT)
+        for k, (capa, lw, txt) in enumerate(filas_ley):
+            yy = ly - (k + 1) * text_height * 2.4
+            _line((lx, yy), (lx + text_height * 5.0, yy), capa, lw)
+            _text(txt, lx + text_height * 6.0, yy - text_height * 0.4, text_height, LAYER_TEXT)
+        caja = [caja[0], min(caja[1], tv["box"][1]), lx + text_height * 30.0, caja[3]]
+
     return {
         "x": x, "y": y, "datum": base, "top": techo,
-        "width": ancho, "height": alto,
+        "width": ancho, "height": alto, "box": [round(v, 3) for v in caja],
         "groundHandle": handle_terreno, "gradeHandle": handle_rasante,
         "grades": tramos, "stations": filas,
         "vExaggeration": v_exag,

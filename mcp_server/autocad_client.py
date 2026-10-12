@@ -98,6 +98,17 @@ _RESUELTOS: dict[str, str] = {}
 LOTE_ERRORES: list[dict[str, Any]] = []
 _TAMANO_VIAJE = 300
 
+# Modo "ver dibujar": sin lotes, cada entidad viaja sola y AutoCAD la muestra
+# en cuanto existe -- la planta se va armando en pantalla como si la dibujara
+# una persona. Es más lento (~0.5 s por entidad) y es lo que se quiere para
+# mirar el trabajo en vivo o grabar una demostración. MCP_VER_DIBUJAR=1 en el
+# entorno, o ver_dibujar(True).
+VER_DIBUJAR = [os.environ.get("MCP_VER_DIBUJAR", "") == "1"]
+
+
+def ver_dibujar(activo: bool = True) -> None:
+    VER_DIBUJAR[0] = bool(activo)
+
 
 def batching() -> bool:
     return _LOTE[0] is not None
@@ -143,7 +154,7 @@ class lote:
     afuera vacía la cola."""
 
     def __enter__(self):
-        if _PROFUNDIDAD[0] == 0:
+        if _PROFUNDIDAD[0] == 0 and not VER_DIBUJAR[0]:
             _LOTE[0] = []
         _PROFUNDIDAD[0] += 1
         return self
@@ -209,7 +220,10 @@ def _do_call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any
     """Una llamada al plugin, sin reintentos. Abre una conexión nueva por
     llamada: más simple que mantener una persistente, y evita manejar
     reconexión cuando AutoCAD se cierra/abre entre una llamada y otra."""
-    request = {"id": str(uuid.uuid4()), "cmd": cmd, "params": params or {}}
+    params = dict(params or {})
+    if VER_DIBUJAR[0]:
+        params["_live"] = True          # el plugin repinta tras cada comando
+    request = {"id": str(uuid.uuid4()), "cmd": cmd, "params": params}
     payload = (json.dumps(request) + "\n").encode("utf-8")
 
     # Se relee en cada llamada: si AutoCAD se reinició y quedó en otro puerto,

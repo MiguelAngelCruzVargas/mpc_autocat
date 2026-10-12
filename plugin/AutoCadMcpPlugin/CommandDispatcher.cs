@@ -133,6 +133,21 @@ namespace AutoCadMcpPlugin
                         if (!ReferenceEquals(HostApplicationServices.WorkingDatabase, actual.Database))
                             HostApplicationServices.WorkingDatabase = actual.Database;
                         JsonObject r = Handlers.Execute(cmd, actual, pars);
+                        // Modo "ver dibujar" (el cliente manda _live): lo que
+                        // se agrega por API no se pinta hasta que algo fuerza
+                        // un redibujo -- la planta aparecía recién al hacer
+                        // zoom. Un Regen después de cada comando de dibujo la
+                        // va mostrando en pantalla a medida que se arma.
+                        if (pars != null && pars["_live"] != null && pars["_live"].GetValue<bool>()
+                            && !EsLectura(cmd))
+                        {
+                            try
+                            {
+                                actual.Editor.Regen();
+                                actual.Editor.UpdateScreen();
+                            }
+                            catch (Exception) { }
+                        }
                         tcs.SetResult(r);
                     }
                 }
@@ -147,6 +162,13 @@ namespace AutoCadMcpPlugin
                     "AutoCAD no procesó el comando a tiempo. ¿Hay algún diálogo modal abierto en AutoCAD?");
 
             return tcs.Task.GetAwaiter().GetResult();
+        }
+
+        private static bool EsLectura(string cmd)
+        {
+            return cmd.StartsWith("get_") || cmd.StartsWith("list_") || cmd.StartsWith("select_")
+                || cmd.StartsWith("capture") || cmd.StartsWith("zoom") || cmd == "ping"
+                || cmd.StartsWith("check_") || cmd.StartsWith("measure");
         }
 
         private static string BuildResponse(string id, bool ok, JsonObject result, string error)

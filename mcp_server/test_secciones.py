@@ -119,9 +119,25 @@ def test_superficie_y_eje() -> None:
         check("cadenamiento más allá del eje falla", "0+025.00" in str(e), str(e))
 
 
+def test_perfil_rotulado_y_sin_colores_puros() -> None:
+    preview.DRAWN.clear()
+    r = prof.create_profile(0, 0, 40.0, [{"station": 0, "elevation": 100.0},
+                                         {"station": 40, "elevation": 102.0}],
+                            ground=[[0, 99.5], [40, 103.0]], grid_station=10.0,
+                            text_height=0.3, scale_text="ESC. H 1:200  V 1:40")
+    colores = {e.get("colorIndex") for e in preview.DRAWN}
+    check("perfil: sin rojo ni verde puros", not ({1, 3} & colores), str(colores))
+    t = " | ".join(_textos())
+    for esperado in ("PERFIL LONGITUDINAL", "RASANTE DE PROYECTO", "TERRENO NATURAL",
+                     "0+010.00", "ESC. H 1:200"):
+        check(f"perfil rotula '{esperado}'", esperado in t, t[:300])
+    check("perfil devuelve su caja", len(r["box"]) == 4, str(r.get("box")))
+
+
 def main() -> int:
     for t in (test_cadenamiento, test_areas_terraplen_y_corte, test_terreno_en_ladera,
-              test_nada_en_colores_puros_y_rotulado, test_superficie_y_eje):
+              test_nada_en_colores_puros_y_rotulado, test_superficie_y_eje,
+              test_perfil_rotulado_y_sin_colores_puros):
         print(t.__name__)
         t()
     if FAILED:
