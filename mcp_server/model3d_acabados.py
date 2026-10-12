@@ -39,6 +39,8 @@ CAPA_CARPINTERIA = "3D-CARPINTERIA"
 CAPA_SITIO = "3D-SITIO"
 CAPA_ARBOLES = "3D-ARBOLES"
 CAPA_MUEBLES = "3D-MUEBLES"
+CAPA_ESCALERA = "3D-ESCALERA"
+CAPA_AZOTEA = "3D-AZOTEA"
 CAPA_PISO = "3D-PISO"
 
 CARPETA_TEXTURAS = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
@@ -233,6 +235,71 @@ System.Func<Solid3d, string, ObjectId, string> poner = delegate(Solid3d s, strin
     s.MaterialId = mat;
     return Add(s);
 };
+// Barra de largo L (sección a x h) inclinada 'pitch' y con rumbo 'yaw',
+// centrada en (cx, cy, cz): pasamanos, vigas.
+System.Func<double, double, double, double, double, double, double, double, Solid3d> barra =
+    delegate(double L, double a, double h, double pitch, double yaw, double cx, double cy, double cz)
+{
+    var s = new Solid3d();
+    s.SetDatabaseDefaults();
+    s.CreateBox(L, a, h);
+    s.TransformBy(Matrix3d.Rotation(-pitch, Vector3d.YAxis, Point3d.Origin));
+    s.TransformBy(Matrix3d.Rotation(yaw, Vector3d.ZAxis, Point3d.Origin));
+    s.TransformBy(Matrix3d.Displacement(new Vector3d(cx, cy, cz)));
+    return s;
+};
+// Contorno desplazado hacia afuera (true) o adentro (false) d metros.
+System.Func<double[], double, bool, double[]> desplazar = delegate(double[] c, double d, bool afuera)
+{
+    if (System.Math.Abs(d) < 1e-9) return c;
+    var pl = new Polyline();
+    for (int i = 0; i < c.Length / 2; i++)
+        pl.AddVertexAt(i, new Point2d(c[2 * i], c[2 * i + 1]), 0, 0, 0);
+    pl.Closed = true;
+    Polyline mejor = null;
+    foreach (double sd in new double[] { d, -d })
+    {
+        var curvas = pl.GetOffsetCurves(sd);
+        foreach (DBObject o in curvas)
+        {
+            var p = o as Polyline;
+            if (p != null && (mejor == null || (afuera ? p.Area > mejor.Area : p.Area < mejor.Area)))
+            { if (mejor != null) mejor.Dispose(); mejor = p; }
+            else o.Dispose();
+        }
+    }
+    pl.Dispose();
+    var r = new double[mejor.NumberOfVertices * 2];
+    for (int i = 0; i < mejor.NumberOfVertices; i++)
+    { var v = mejor.GetPoint2dAt(i); r[2 * i] = v.X; r[2 * i + 1] = v.Y; }
+    mejor.Dispose();
+    return r;
+};
+// Anillo entre el contorno desplazado dOut hacia afuera y dIn hacia adentro.
+System.Func<double[], double, double, double, double, Solid3d> anillo =
+    delegate(double[] c, double dOut, double dIn, double z0, double alto)
+{
+    return extruir(desplazar(c, dOut, true), new double[][] { desplazar(c, dIn, false) }, z0, alto);
+};
+// Restar una caja de todo sólido de esas capas que la toque (hueco de escalera).
+System.Action<string[], double, double, double, double, double, double> perforar =
+    delegate(string[] capas, double x0, double y0, double x1, double y1, double z0, double z1)
+{
+    var ids = new System.Collections.Generic.List<ObjectId>();
+    foreach (ObjectId id in space) ids.Add(id);
+    foreach (var id in ids)
+    {
+        var e = tr.GetObject(id, OpenMode.ForRead) as Solid3d;
+        if (e == null || System.Array.IndexOf(capas, e.Layer) < 0) continue;
+        var ex = e.GeometricExtents;
+        if (ex.MaxPoint.X <= x0 || ex.MinPoint.X >= x1 || ex.MaxPoint.Y <= y0 || ex.MinPoint.Y >= y1
+            || ex.MaxPoint.Z <= z0 || ex.MinPoint.Z >= z1) continue;
+        e.UpgradeOpen();
+        var h = caja(x1 - x0, y1 - y0, z1 - z0, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, 0);
+        e.BooleanOperation(BooleanOperationType.BoolSubtract, h);
+        h.Dispose();
+    }
+};
 int n = 0;
 """
 
@@ -338,6 +405,92 @@ def _arr(pts) -> str:
     return "new double[] { " + ", ".join(f"{v:.6f}" for p in pts for v in p) + " }"
 
 
+def _lado_exterior(c: dict[str, Any], adentro: list, tw: float) -> int:
+    """+1 / -1: hacia qué lado de la normal del muro queda la calle; 0 si
+    el muro es interior (los dos lados caen dentro de la casa)."""
+    nx, ny = -math.sin(c["angulo"]), math.cos(c["angulo"])
+    d = tw / 2 + 0.20
+
+    def dentro(x, y):
+        return any(model3d.point_in_polygon(x, y, e) and
+                   not any(model3d.point_in_polygon(x, y, h) for h in hs) for e, hs in adentro)
+    a = dentro(c["cx"] + nx * d, c["cy"] + ny * d)
+    b = dentro(c["cx"] - nx * d, c["cy"] - ny * d)
+    return 0 if a == b else (1 if not a else -1)
+
+
+def _codigo_escalera(st: dict[str, Any], dx: float) -> str:
+    """Escalera de concreto por tramos rectos (los mismos datos de
+    create_stairs: arranque = centro de la primera contrahuella), descansos,
+    huella de madera, barandal del lado indicado y el hueco en la losa."""
+    p = []
+    for f in st.get("flights", []):
+        sx, sy = float(f["start"][0]) + dx, float(f["start"][1])
+        a = math.radians(float(f.get("direction_deg", 90.0)))
+        ux, uy = math.cos(a), math.sin(a)
+        w = float(f.get("width", 1.0))
+        n_ = int(f["risers"])
+        r = float(f["riser"])
+        t = float(f["tread"])
+        z0 = float(f.get("base_z", 0.0))
+        for i in range(n_ - 1):
+            zt = z0 + (i + 1) * r
+            dc = (i + 0.5) * t
+            cx, cy = sx + ux * dc, sy + uy * dc
+            fondo = (zt - z0) if z0 < 0.01 else (r + 0.12)   # el primer tramo apoya en el piso
+            p.append(f'poner(caja({t:.4f}, {w:.4f}, {fondo:.4f}, {cx:.4f}, {cy:.4f}, '
+                     f'{zt - fondo / 2:.4f}, {a:.6f}), "{CAPA_ESCALERA}", mConcretoAparente); n++;')
+            p.append(f'poner(caja({t + 0.02:.4f}, {w:.4f}, 0.025, {cx + ux * 0.01:.4f}, '
+                     f'{cy + uy * 0.01:.4f}, {zt + 0.0125:.4f}, {a:.6f}), "{CAPA_ESCALERA}", '
+                     'mMadera); n++;')
+        lado = f.get("railing")
+        if lado in ("left", "right"):
+            sg = 1 if lado == "left" else -1
+            px_, py_ = -uy * sg * (w / 2 - 0.04), ux * sg * (w / 2 - 0.04)
+            run = (n_ - 1) * t
+            rise = (n_ - 1) * r
+            for k in range(int(run // 0.9) + 2):
+                dk = min(k * 0.9, run - 0.05) + 0.05
+                zk = z0 + (min(int(dk // t), n_ - 2) + 1) * r
+                p.append(f'poner(caja(0.035, 0.035, 0.95, {sx + ux * dk + px_:.4f}, '
+                         f'{sy + uy * dk + py_:.4f}, {zk + 0.475:.4f}, 0), "{CAPA_ESCALERA}", '
+                         'mAcero); n++;')
+            largo = math.hypot(run, rise)
+            pitch = math.atan2(rise, run)
+            mx, my = sx + ux * run / 2 + px_, sy + uy * run / 2 + py_
+            mz = z0 + r + rise / 2 + 0.95
+            p.append(f'poner(barra({largo + 0.10:.4f}, 0.05, 0.04, {pitch:.6f}, {a:.6f}, {mx:.4f}, '
+                     f'{my:.4f}, {mz:.4f}), "{CAPA_ESCALERA}", mAcero); n++;')
+    for d in st.get("landings", []):
+        x0, y0, x1, y1 = (float(v) for v in d["box"])
+        z = float(d["z"])
+        e = float(d.get("thickness", 0.12))
+        p.append(f'poner(caja({x1 - x0:.4f}, {y1 - y0:.4f}, {e:.4f}, {(x0 + x1) / 2 + dx:.4f}, '
+                 f'{(y0 + y1) / 2:.4f}, {z - e / 2:.4f}, 0), "{CAPA_ESCALERA}", mConcretoAparente); n++;')
+        p.append(f'poner(caja({x1 - x0:.4f}, {y1 - y0:.4f}, 0.025, {(x0 + x1) / 2 + dx:.4f}, '
+                 f'{(y0 + y1) / 2:.4f}, {z + 0.0125:.4f}, 0), "{CAPA_ESCALERA}", mMadera); n++;')
+    for g in st.get("guards", []):
+        ax, ay = float(g["from"][0]) + dx, float(g["from"][1])
+        bx, by = float(g["to"][0]) + dx, float(g["to"][1])
+        z = float(g.get("z", 0.0))
+        L = math.hypot(bx - ax, by - ay)
+        a = math.atan2(by - ay, bx - ax)
+        k = max(1, int(L // 0.9))
+        for i in range(k + 1):
+            f_ = i / k
+            p.append(f'poner(caja(0.035, 0.035, 0.95, {ax + (bx - ax) * f_:.4f}, '
+                     f'{ay + (by - ay) * f_:.4f}, {z + 0.475:.4f}, 0), "{CAPA_ESCALERA}", mAcero); n++;')
+        for hz in (0.95, 0.50):
+            p.append(f'poner(barra({L:.4f}, 0.04, 0.04, 0, {a:.6f}, {(ax + bx) / 2:.4f}, '
+                     f'{(ay + by) / 2:.4f}, {z + hz:.4f}), "{CAPA_ESCALERA}", mAcero); n++;')
+    for h in st.get("openings", []):
+        x0, y0, x1, y1 = (float(v) for v in h["box"])
+        p.append(f'perforar(new string[] {{ "{model3d.LAYER_LOSA_3D}", "{CAPA_PISO}" }}, '
+                 f'{x0 + dx:.4f}, {y0:.4f}, {x1 + dx:.4f}, {y1:.4f}, {float(h["z0"]):.4f}, '
+                 f'{float(h["z1"]):.4f});')
+    return "\n".join(p)
+
+
 def _codigo_nivel(nivel: dict[str, Any], ext: float, inter: float, ventana: float,
                   m: dict[str, str]) -> str:
     """Forro de ladrillo, vidrios, marcos y puertas de un nivel."""
@@ -353,6 +506,7 @@ def _codigo_nivel(nivel: dict[str, Any], ext: float, inter: float, ventana: floa
                                     float(nivel.get("sill_height", 0.90)),
                                     float(nivel.get("window_head", 2.10)))
     tol = min(ext, inter) / 2.0 * 1e-5
+    fachada = "mLadrillo" if nivel.get("facade", "ladrillo") == "ladrillo" else "mFachada"
     adentro = model3d._agrupar(model3d._losa(rooms, ext, tol))
     afuera = model3d._agrupar(model3d._losa(rooms, ext + 0.024, tol))   # +12 mm por lado
     partes = []
@@ -380,7 +534,7 @@ def _codigo_nivel(nivel: dict[str, Any], ext: float, inter: float, ventana: floa
                           f"{px_ + dx:.4f}, {py_:.4f}, {z0 + alto_muro / 2:.4f}, {ang_:.6f}); "
                           "forro.BooleanOperation(BooleanOperationType.BoolSubtract, v); "
                           "v.Dispose(); }")
-        partes.append(f'  poner(forro, "{CAPA_FORRO}", mLadrillo); n++; }}')
+        partes.append(f'  poner(forro, "{CAPA_FORRO}", {fachada}); n++; }}')
     # Piso cerámico sobre todo lo techado del nivel.
     for e_in, huecos in adentro:
         partes.append("poner(extruir(" + _arr([(p[0] + dx, p[1]) for p in e_in]) +
@@ -397,11 +551,34 @@ def _codigo_nivel(nivel: dict[str, Any], ext: float, inter: float, ventana: floa
                                        c["cz"], c["angulo"])
         if tipo in ("pass", "vano", "opening"):
             continue
+        tw = c["ancho"] - 2 * model3d.HOLGURA_VANO          # espesor real del muro
+        lado = _lado_exterior(c, adentro, tw)
+        nx, ny = -math.sin(ang), math.cos(ang)
+        ux, uy = math.cos(ang), math.sin(ang)
         if tipo == "door":
+            zb = cz - A / 2
+            # Chambrana (marco de madera) alrededor del vano, hoja y manijas.
+            partes.append(
+                f'{{ var ch = caja({L + 0.10:.4f}, {tw + 0.04:.4f}, {A + 0.05:.4f}, {cx:.4f}, {cy:.4f}, '
+                f'{zb + (A + 0.05) / 2:.4f}, {ang:.6f}); var hu = caja({L:.4f}, {tw + 0.6:.4f}, {A:.4f}, '
+                f'{cx:.4f}, {cy:.4f}, {cz:.4f}, {ang:.6f}); ch.BooleanOperation('
+                f'BooleanOperationType.BoolSubtract, hu); hu.Dispose(); '
+                f'poner(ch, "{CAPA_CARPINTERIA}", mMadera); n++; }}')
             partes.append(f'poner(caja({L - 0.02:.4f}, 0.045, {A - 0.01:.4f}, {cx:.4f}, '
                           f'{cy:.4f}, {cz - 0.005:.4f}, {ang:.6f}), "{CAPA_CARPINTERIA}", '
                           'mMadera); n++;')
+            for sgn in (1, -1):
+                hx = cx + ux * (L / 2 - 0.10) + nx * sgn * 0.045
+                hy = cy + uy * (L / 2 - 0.10) + ny * sgn * 0.045
+                partes.append(f'poner(caja(0.12, 0.03, 0.025, {hx:.4f}, {hy:.4f}, {zb + 1.0:.4f}, '
+                              f'{ang:.6f}), "{CAPA_CARPINTERIA}", mAcero); n++;')
             continue
+        if lado and tipo == "window":
+            # Repisón de concreto que sobresale 6 cm de la fachada.
+            sx = cx + nx * lado * (tw / 2 + 0.05)
+            sy = cy + ny * lado * (tw / 2 + 0.05)
+            partes.append(f'poner(caja({L + 0.10:.4f}, 0.16, 0.04, {sx:.4f}, {sy:.4f}, '
+                          f'{cz - A / 2 - 0.02:.4f}, {ang:.6f}), "{CAPA_CARPINTERIA}", mRepison); n++;')
         # Ventana o corrediza: marco de aluminio + vidrio.
         partes.append(
             f'{{ var marco = caja({L:.4f}, 0.07, {A:.4f}, {cx:.4f}, {cy:.4f}, {cz:.4f}, {ang:.6f});'
@@ -410,7 +587,7 @@ def _codigo_nivel(nivel: dict[str, Any], ext: float, inter: float, ventana: floa
             f'luz.Dispose(); poner(marco, "{CAPA_CARPINTERIA}", mAluminio); n++; }}')
         partes.append(f'poner(caja({L - 0.10:.4f}, 0.012, {A - 0.10:.4f}, {cx:.4f}, {cy:.4f}, '
                       f'{cz:.4f}, {ang:.6f}), "{CAPA_VIDRIO}", mVidrio); n++;')
-        if tipo in ("sliding", "corrediza") and L > 1.2:
+        if (tipo in ("sliding", "corrediza") and L > 1.2) or L > 1.40:
             # parteluz al centro: se lee como dos hojas
             partes.append(f'poner(caja(0.05, 0.07, {A - 0.10:.4f}, {cx:.4f}, {cy:.4f}, '
                           f'{cz:.4f}, {ang:.6f}), "{CAPA_CARPINTERIA}", mAluminio); n++;')
@@ -425,7 +602,15 @@ def dress_3d_model(levels: list[dict[str, Any]],
                    roof_visible: bool = True,
                    site_margin: float = 6.0,
                    trees: Optional[list[list[float]]] = None,
-                   sidewalk: bool = True) -> dict[str, Any]:
+                   sidewalk: bool = True,
+                   stairs: Optional[list[dict[str, Any]]] = None,
+                   parapet_height: float = 0.60,
+                   tank: Optional[dict[str, Any]] = None,
+                   terraces: Optional[list[dict[str, Any]]] = None,
+                   lot: Optional[list[list[float]]] = None,
+                   fence_height: float = 2.40,
+                   paving: Optional[list[dict[str, Any]]] = None,
+                   site_offset: float = 0.0) -> dict[str, Any]:
     """Acabados sobre un modelo ya levantado con create_3d_model (uno por
     nivel). Cada nivel: los mismos {rooms, doors, windows, base_z,
     wall_height, slab_thickness, offset} que se usaron para levantarlo, y
@@ -435,7 +620,8 @@ def dress_3d_model(levels: list[dict[str, Any]],
         raise ValueError("Pasá al menos un nivel (los mismos datos de create_3d_model).")
     tx = texturas()
     for capa, color in ((CAPA_FORRO, 21), (CAPA_VIDRIO, 151), (CAPA_CARPINTERIA, 8),
-                        (CAPA_SITIO, 96), (CAPA_ARBOLES, 96), (CAPA_MUEBLES, 8), (CAPA_PISO, 8)):
+                        (CAPA_SITIO, 96), (CAPA_ARBOLES, 96), (CAPA_MUEBLES, 8), (CAPA_PISO, 8),
+                        (CAPA_ESCALERA, 8), (CAPA_AZOTEA, 8)):
         layers.ensure(capa, color, 25)
 
     def ruta(k):
@@ -464,7 +650,12 @@ def dress_3d_model(levels: list[dict[str, Any]],
         'var mTelaGris = material("MCP Tela gris", 112, 116, 124, "", 1, 1, 1.0);\n'
         'var mGranito = material("MCP Granito", 58, 56, 54, "", 1, 1, 1.0);\n'
         'var mAcero = material("MCP Acero", 182, 186, 190, "", 1, 1, 1.0);\n'
-        'var mPorcelana = material("MCP Porcelana", 246, 246, 244, "", 1, 1, 1.0);\n')
+        'var mPorcelana = material("MCP Porcelana", 246, 246, 244, "", 1, 1, 1.0);\n'
+        'var mFachada = material("MCP Aplanado exterior", 238, 234, 224, "", 1, 1, 1.0);\n'
+        'var mRepison = material("MCP Repison de concreto", 200, 198, 192, "", 1, 1, 1.0);\n'
+        'var mConcretoAparente = material("MCP Concreto aparente", 182, 180, 174, "", 1, 1, 1.0);\n'
+        'var mTinaco = material("MCP Tinaco", 34, 34, 36, "", 1, 1, 1.0);\n'
+        'var mAsfalto = material("MCP Asfalto", 58, 60, 62, "", 1, 1, 1.0);\n')
     # El plafón y el aplanado con algo de luz propia: la iluminación por
     # defecto viene de arriba y el techo interior salía casi negro.
     mats += ('((Material)tr.GetObject(mLosa, OpenMode.ForWrite)).SelfIllumination = 0.55;\n'
@@ -486,6 +677,19 @@ foreach (ObjectId id in space)
     if (tabla.Has("{capa_cubierta}"))
         ((LayerTableRecord)tr.GetObject(tabla["{capa_cubierta}"], OpenMode.ForWrite)).IsOff = {str(not roof_visible).lower()};
 }}""")
+    # create_3d_model deja la losa de arriba de CADA nivel en la capa de
+    # cubierta; solo la del nivel más alto es azotea. Las de abajo son
+    # entrepiso: a su capa, para que el techo se apague sin llevárselas y la
+    # escalera las pueda perforar.
+    z_tope = max(float(n_.get("base_z", 0.0)) + float(n_.get("wall_height", 2.5))
+                 + float(n_.get("slab_thickness", 0.12)) for n_ in levels)
+    cuerpo.append(f"""
+foreach (ObjectId id in space)
+{{{{
+    var e = tr.GetObject(id, OpenMode.ForRead) as Solid3d;
+    if (e == null || e.Layer != "{capa_cubierta}") continue;
+    if (e.GeometricExtents.MaxPoint.Z < {z_tope - 0.01:.4f}) {{{{ e.UpgradeOpen(); e.Layer = "{slab_layer}"; }}}}
+}}}}""".replace("{{{{", "{").replace("}}}}", "}"))
     xs, ys = [], []
     for nivel in levels:
         cuerpo.append(_codigo_nivel(nivel, exterior_thickness, interior_thickness,
@@ -494,13 +698,107 @@ foreach (ObjectId id in space)
         for r in nivel["rooms"]:
             xs += [r["x0"] + dx, r["x1"] + dx]
             ys += [r["y0"], r["y1"]]
+    so = float(site_offset)
+    for st in stairs or []:
+        cuerpo.append(_codigo_escalera(st, so))
+    # Pretil con remate sobre la azotea (el nivel más alto).
+    arriba = max(levels, key=lambda n_: float(n_.get("base_z", 0.0)))
+    if parapet_height > 0:
+        tol = min(exterior_thickness, interior_thickness) / 2.0 * 1e-5
+        z_azotea = (float(arriba.get("base_z", 0.0)) + float(arriba.get("wall_height", 2.5))
+                    + float(arriba.get("slab_thickness", 0.12)))
+        dxa = float(arriba.get("offset", 0.0))
+        mat_p = "mLadrillo" if arriba.get("facade", "ladrillo") == "ladrillo" else "mFachada"
+        for e_out, _h in model3d._agrupar(model3d._losa(arriba["rooms"], exterior_thickness + 0.024,
+                                                        tol)):
+            c = _arr([(p[0] + dxa, p[1]) for p in e_out])
+            cuerpo.append(f'poner(anillo({c}, 0, 0.15, {z_azotea:.4f}, {parapet_height:.4f}), '
+                          f'"{CAPA_AZOTEA}", {mat_p}); n++;')
+            cuerpo.append(f'poner(anillo({c}, 0.025, 0.175, {z_azotea + parapet_height:.4f}, 0.05), '
+                          f'"{CAPA_AZOTEA}", mRepison); n++;')
+        if tank:
+            tx_, ty_ = float(tank["point"][0]) + dxa, float(tank["point"][1])
+            dia, alto = float(tank.get("diameter", 1.10)), float(tank.get("height", 1.45))
+            cuerpo.append(f'poner(caja({dia + 0.30:.3f}, {dia + 0.30:.3f}, 0.40, {tx_:.4f}, {ty_:.4f}, '
+                          f'{z_azotea + 0.20:.4f}, 0), "{CAPA_AZOTEA}", mConcreto); n++;')
+            cuerpo.append(f'{{ var tk = new Solid3d(); tk.SetDatabaseDefaults(); '
+                          f'tk.CreateFrustum({alto:.3f}, {dia / 2:.3f}, {dia / 2:.3f}, {dia / 2 * 0.9:.3f}); '
+                          f'tk.TransformBy(Matrix3d.Displacement(new Vector3d({tx_:.4f}, {ty_:.4f}, '
+                          f'{z_azotea + 0.40 + alto / 2:.4f}))); poner(tk, "{CAPA_AZOTEA}", mTinaco); n++; }}')
+    # Terrazas con deck de madera y pérgola.
+    for te in terraces or []:
+        x0_, y0_, x1_, y1_ = (float(v) for v in te["box"])
+        x0_, x1_ = x0_ + so, x1_ + so
+        z = float(te.get("z", 0.0))
+        cuerpo.append(f'poner(caja({x1_ - x0_:.3f}, {y1_ - y0_:.3f}, 0.05, {(x0_ + x1_) / 2:.4f}, '
+                      f'{(y0_ + y1_) / 2:.4f}, {z - 0.025:.4f}, 0), "{CAPA_SITIO}", mMadera); n++;')
+        if te.get("pergola", True):
+            h = float(te.get("height", 2.60))
+            for px_ in (x0_ + 0.15, x1_ - 0.15):
+                for py_ in (y0_ + 0.15, y1_ - 0.15):
+                    cuerpo.append(f'poner(caja(0.12, 0.12, {h:.3f}, {px_:.4f}, {py_:.4f}, {z + h / 2:.4f}, 0),'
+                                  f' "{CAPA_SITIO}", mMadera); n++;')
+            for py_ in (y0_ + 0.15, y1_ - 0.15):
+                cuerpo.append(f'poner(caja({x1_ - x0_:.3f}, 0.10, 0.20, {(x0_ + x1_) / 2:.4f}, {py_:.4f}, '
+                              f'{z + h - 0.10:.4f}, 0), "{CAPA_SITIO}", mMadera); n++;')
+            k = 0
+            xv = x0_ + 0.25
+            while xv < x1_ - 0.2:
+                # Del paño de la casa (y0 + 12 cm) hasta 15 cm más allá del
+                # borde: entrando al muro asomaban adentro de la sala.
+                ya, yb = y0_ + 0.12, y1_ + 0.15
+                cuerpo.append(f'poner(caja(0.05, {yb - ya:.3f}, 0.15, {xv:.4f}, '
+                              f'{(ya + yb) / 2:.4f}, {z + h + 0.075:.4f}, 0), "{CAPA_SITIO}", '
+                              'mMadera); n++;')
+                xv += 0.50
+    # Pavimentos (cochera, andadores).
+    for pv in paving or []:
+        x0_, y0_, x1_, y1_ = (float(v) for v in pv["box"])
+        mat = {"concreto": "mConcretoAparente", "madera": "mMadera"}.get(pv.get("material", "concreto"),
+                                                                          "mConcretoAparente")
+        cuerpo.append(f'poner(caja({x1_ - x0_:.3f}, {y1_ - y0_:.3f}, 0.10, {(x0_ + x1_) / 2 + so:.4f}, '
+                      f'{(y0_ + y1_) / 2:.4f}, -0.06, 0), "{CAPA_SITIO}", {mat}); n++;')
+    # Barda perimetral del lote (abierta al frente: el lado de y mínima).
+    if lot:
+        pts = [(float(p[0]) + so, float(p[1])) for p in lot]
+        y_frente = min(p[1] for p in pts)
+        for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
+            if abs(ay - y_frente) < 1e-6 and abs(by - y_frente) < 1e-6:
+                continue
+            L = math.hypot(bx - ax, by - ay)
+            a = math.atan2(by - ay, bx - ax)
+            cuerpo.append(f'poner(caja({L:.3f}, 0.15, {fence_height:.3f}, {(ax + bx) / 2:.4f}, '
+                          f'{(ay + by) / 2:.4f}, {fence_height / 2 - 0.10:.4f}, {a:.6f}), "{CAPA_SITIO}", '
+                          'mFachada); n++;')
+            cuerpo.append(f'poner(caja({L + 0.05:.3f}, 0.20, 0.05, {(ax + bx) / 2:.4f}, '
+                          f'{(ay + by) / 2:.4f}, {fence_height - 0.075:.4f}, {a:.6f}), "{CAPA_SITIO}", '
+                          'mRepison); n++;')
+    if lot:
+        xs += [float(p[0]) + float(site_offset) for p in lot]
+        ys += [float(p[1]) for p in lot]
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
     base = min(float(n.get("base_z", 0.0)) for n in levels)
     m = site_margin
-    # Terreno con pasto, 10 cm bajo el piso; banqueta al frente (y menor).
-    cuerpo.append(f'poner(caja({x1 - x0 + 2 * m:.3f}, {y1 - y0 + 2 * m:.3f}, 0.10, '
-                  f'{(x0 + x1) / 2:.3f}, {(y0 + y1) / 2:.3f}, {base - 0.15:.3f}, 0), '
-                  f'"{CAPA_SITIO}", mPasto); n++;')
+    if lot:
+        # Pasto en el lote y alrededor; al frente banqueta de 1.50 y calle
+        # de asfalto de 8 m: pasto en la vía pública no existe.
+        lx0, lx1 = min(float(p[0]) for p in lot) + so, max(float(p[0]) for p in lot) + so
+        ly0, ly1 = min(float(p[1]) for p in lot), max(float(p[1]) for p in lot)
+        cuerpo.append(f'poner(caja({lx1 - lx0 + 2 * m:.3f}, {ly1 - ly0 + m:.3f}, 0.10, '
+                      f'{(lx0 + lx1) / 2:.3f}, {(ly0 + ly1 + m) / 2:.3f}, {base - 0.15:.3f}, 0), '
+                      f'"{CAPA_SITIO}", mPasto); n++;')
+        cuerpo.append(f'poner(caja({lx1 - lx0 + 2 * m:.3f}, 1.50, 0.15, {(lx0 + lx1) / 2:.3f}, '
+                      f'{ly0 - 0.75:.3f}, {base - 0.075:.3f}, 0), "{CAPA_SITIO}", mBanqueta); n++;')
+        cuerpo.append(f'poner(caja({lx1 - lx0 + 2 * m:.3f}, 0.15, 0.20, {(lx0 + lx1) / 2:.3f}, '
+                      f'{ly0 - 1.575:.3f}, {base - 0.10:.3f}, 0), "{CAPA_SITIO}", mRepison); n++;')
+        cuerpo.append(f'poner(caja({lx1 - lx0 + 2 * m:.3f}, 8.0, 0.10, {(lx0 + lx1) / 2:.3f}, '
+                      f'{ly0 - 1.65 - 4.0:.3f}, {base - 0.20:.3f}, 0), "{CAPA_SITIO}", mAsfalto); n++;')
+        sidewalk = False
+    else:
+        # Terreno con pasto, 10 cm bajo el piso; banqueta al frente (y menor).
+        cuerpo.append(f'poner(caja({x1 - x0 + 2 * m:.3f}, {y1 - y0 + 2 * m:.3f}, 0.10, '
+                      f'{(x0 + x1) / 2:.3f}, {(y0 + y1) / 2:.3f}, {base - 0.15:.3f}, 0), '
+                      f'"{CAPA_SITIO}", mPasto); n++;')
     if sidewalk:
         cuerpo.append(f'poner(caja({x1 - x0 + 2 * m:.3f}, 1.50, 0.12, {(x0 + x1) / 2:.3f}, '
                       f'{y0 - m + 0.75:.3f}, {base - 0.08:.3f}, 0), "{CAPA_SITIO}", mBanqueta); n++;')
@@ -577,14 +875,18 @@ def set_3d_view(camera: list[float], target: list[float], lens: float = 35.0,
     techo = ""
     if roof_visible is not None:
         capa = slab_layer + "_CUBIERTA"
+        # El techo es la losa de azotea Y lo que va arriba (pretil, tinaco):
+        # apagando solo la losa, el tinaco quedaba flotando.
         techo = (f'var tl = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);\n'
-                 f'if (tl.Has("{capa}")) ((LayerTableRecord)tr.GetObject(tl["{capa}"], '
+                 f'foreach (var nc in new string[] {{ "{capa}", "{CAPA_AZOTEA}" }}) '
+                 f'if (tl.Has(nc)) ((LayerTableRecord)tr.GetObject(tl[nc], '
                  f'OpenMode.ForWrite)).IsOff = {str(not roof_visible).lower()};')
     if isolate_3d is not None:
         cond = '!c.Name.StartsWith("3D-")' if isolate_3d else "false"
         techo += ("\nforeach (ObjectId lid in (LayerTable)tr.GetObject(db.LayerTableId, "
                   "OpenMode.ForRead)) { var c = (LayerTableRecord)tr.GetObject(lid, OpenMode.ForRead);"
-                  f" bool apagar = {cond}; if (c.IsOff != apagar && !(c.Name == \"{slab_layer}_CUBIERTA\" && "
+                  f" bool apagar = {cond}; if (c.IsOff != apagar && !((c.Name == \"{slab_layer}_CUBIERTA\""
+                  f" || c.Name == \"{CAPA_AZOTEA}\") && "
                   f"{'true' if roof_visible is not None else 'false'})) {{ c.UpgradeOpen(); c.IsOff = apagar; }} }}")
     alto = dist * 0.75
     codigo = _VISTA.format(tx=tx, ty=ty, tz=tz, vx=vx, vy=vy, vz=vz, alto=alto, ancho=alto * 1.6,

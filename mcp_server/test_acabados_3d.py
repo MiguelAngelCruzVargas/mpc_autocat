@@ -97,8 +97,47 @@ def test_vista_aisla_el_2d(monkeypatch=None) -> None:
         check("cámara = objetivo falla", True)
 
 
+def test_detalle_completo() -> None:
+    # Todo el detalle de la etapa A en el código que se manda a AutoCAD.
+    capturado = {}
+
+    def falso(code, description="", **k):
+        capturado["code"] = code
+        return {"compiled": True, "executed": True, "output": "@@PIEZAS|300"}
+    original = engine.run_code
+    engine.run_code = falso
+    try:
+        nivel = {"rooms": ROOMS, "doors": DOORS, "windows": WINS, "base_z": 0.0,
+                 "wall_height": 2.75, "slab_thickness": 0.15, "offset": 0.0, "facade": "aplanado"}
+        esc = {"flights": [{"start": [10.0, 1.3], "direction_deg": 90, "width": 1.2, "risers": 8,
+                            "riser": 0.17, "tread": 0.27, "base_z": 0.0, "railing": "right"}],
+               "landings": [{"box": [9.4, 3.2, 11.9, 4.4], "z": 1.36}],
+               "openings": [{"box": [9.4, 1.0, 11.9, 4.4], "z0": 2.6, "z1": 3.0}],
+               "guards": [{"from": [9.4, 1.0], "to": [10.6, 1.0], "z": 2.9}]}
+        r = acab.dress_3d_model([nivel], stairs=[esc], tank={"point": [2.0, 3.0]},
+                                terraces=[{"box": [3.6, 6.0, 12.0, 9.0]}],
+                                lot=[[0, 0], [12, 0], [12, 25], [0, 25]],
+                                paving=[{"box": [0, 6, 3.6, 8]}])
+    finally:
+        engine.run_code = original
+    c = capturado["code"]
+    check("ok y cuenta piezas", r["ok"] and r["pieces"] == 300, str(r))
+    check("fachada de aplanado en ese nivel", "mFachada); n++; }" in c)
+    check("pretil con remate (anillo)", c.count("anillo(") >= 2)
+    check("tinaco", "mTinaco" in c)
+    check("escalera: escalones, huella de madera y barandal", c.count("3D-ESCALERA") > 15)
+    check("hueco de escalera en losa y piso", "perforar(" in c)
+    check("losa de entrepiso deja de ser cubierta", 'e.Layer = "3D-LOSA"' in c)
+    check("calle de asfalto y banqueta con el lote", "mAsfalto" in c and "mBanqueta" in c)
+    check("barda en 3 lados (no al frente)", c.count("mRepison); n++;") >= 3)
+    import re
+    vigas = [float(m) for m in re.findall(r"poner\(caja\(0\.05, ([\d.]+), 0\.15", c)]
+    check("vigas de pérgola sin entrar a la casa", vigas and all(v < 3.4 for v in vigas), str(vigas[:3]))
+
+
 def main() -> int:
-    for t in (test_texturas, test_codigo_del_nivel, test_mueble_girado, test_vista_aisla_el_2d):
+    for t in (test_texturas, test_codigo_del_nivel, test_mueble_girado, test_vista_aisla_el_2d,
+              test_detalle_completo):
         print(t.__name__)
         t()
     if FAILED:
