@@ -116,6 +116,20 @@ def test_fachada_no_dibuja_losas() -> None:
     check("fachada no achura nada", len(hatches) == 0, str(len(hatches)))
 
 
+def test_fachada_con_contorno_y_terreno() -> None:
+    # Una fachada sin el contorno de cada nivel ni línea de terreno eran
+    # "ventanas flotando" (visto grabando una demo).
+    limpiar()
+    r = sections.create_building_section(0.0, 0.0, 6.45, UNA_CASA, view="fachada")
+    polis = [e for e in preview.DRAWN if e["cmd"] == "create_polyline"]
+    contornos = [p for p in polis if p.get("lineweight", 0) >= 35]
+    check("un contorno por nivel", len(contornos) >= len(UNA_CASA), str(len(contornos)))
+    terreno = [e for e in preview.DRAWN if e["cmd"] == "create_line"
+               and e.get("layer") == "CORTES-TERRENO"]
+    check("línea de terreno más larga que el edificio", len(terreno) == 1
+          and terreno[0]["x1"] < 0 and terreno[0]["x2"] > 6.45, str(terreno))
+
+
 def test_cotas_de_nivel() -> None:
     limpiar()
     r = sections.create_building_section(0.0, 0.0, 6.45, UNA_CASA,
@@ -155,7 +169,8 @@ def test_hatch_que_falla_no_tumba_el_corte() -> None:
 def main() -> int:
     for fn in [test_niveles_acumulados, test_cut_wall_pisados,
                test_elemento_fuera_de_rango, test_sill_mayor_que_head,
-               test_fachada_no_dibuja_losas, test_cotas_de_nivel,
+               test_fachada_no_dibuja_losas, test_fachada_con_contorno_y_terreno,
+               test_cotas_de_nivel,
                test_hatch_que_falla_no_tumba_el_corte]:
         print(fn.__name__)
         fn()

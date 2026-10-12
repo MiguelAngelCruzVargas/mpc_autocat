@@ -44,18 +44,24 @@ ANCHO = 1600                            # ancho del video de salida
 PW_RENDERFULLCONTENT = 2
 
 
-def ventana_autocad() -> tuple[int, str]:
+def ventana(texto: str = "Autodesk AutoCAD") -> tuple[int, str]:
+    """La primera ventana visible cuyo título contiene 'texto' (AutoCAD por
+    defecto; 'Excel' para grabar el catálogo de conceptos)."""
     hallados: list[tuple[int, str]] = []
 
     def cb(h, _):
         if win32gui.IsWindowVisible(h):
             t = win32gui.GetWindowText(h)
-            if t.startswith("Autodesk AutoCAD"):
+            if texto in t:
                 hallados.append((h, t))
     win32gui.EnumWindows(cb, None)
     if not hallados:
-        raise RuntimeError("No encuentro la ventana de AutoCAD abierta.")
+        raise RuntimeError(f"No encuentro una ventana abierta con '{texto}' en el título.")
     return hallados[0]
+
+
+def ventana_autocad() -> tuple[int, str]:
+    return ventana("Autodesk AutoCAD")
 
 
 def _visible_al_fondo(h: int) -> bool:
@@ -81,23 +87,37 @@ def _volver_a_minimizar(h: int) -> None:
 class _Captura:
     """Cuadros de la ventana (BGRA) con PrintWindow, sin traerla al frente."""
 
-    def __init__(self, h: int):
+    def __init__(self, h: int, ancho: int = ANCHO):
         self.h = h
         x0, y0, x1, y1 = win32gui.GetWindowRect(h)
-        self.w, self.hh = (x1 - x0) // 2 * 2, (y1 - y0) // 2 * 2
+        self.W, self.HH = x1 - x0, y1 - y0
+        # Se reduce AL CAPTURAR: a tamaño completo eran 12 MB por cuadro y
+        # ffmpeg no llegaba a codificarlos -- se perdían cuadros y el video
+        # salía acelerado sin decirlo (149 s reales quedaron en 29 s).
+        self.w = min(ancho, self.W) // 2 * 2
+        self.hh = int(self.HH * self.w / self.W) // 2 * 2
         self.wdc = win32gui.GetWindowDC(h)
         self.mdc = win32ui.CreateDCFromHandle(self.wdc)
         self.sdc = self.mdc.CreateCompatibleDC()
         self.bmp = win32ui.CreateBitmap()
-        self.bmp.CreateCompatibleBitmap(self.mdc, self.w, self.hh)
+        self.bmp.CreateCompatibleBitmap(self.mdc, self.W, self.HH)
         self.sdc.SelectObject(self.bmp)
+        self.cdc = self.mdc.CreateCompatibleDC()
+        self.chico = win32ui.CreateBitmap()
+        self.chico.CreateCompatibleBitmap(self.mdc, self.w, self.hh)
+        self.cdc.SelectObject(self.chico)
+        win32gui.SetStretchBltMode(self.cdc.GetSafeHdc(), 4)       # HALFTONE
 
     def cuadro(self) -> bytes:
         ctypes.windll.user32.PrintWindow(self.h, self.sdc.GetSafeHdc(), PW_RENDERFULLCONTENT)
-        return self.bmp.GetBitmapBits(True)
+        self.cdc.StretchBlt((0, 0), (self.w, self.hh), self.sdc, (0, 0), (self.W, self.HH),
+                            0x00CC0020)                            # SRCCOPY
+        return self.chico.GetBitmapBits(True)
 
     def cerrar(self) -> None:
         try:
+            win32gui.DeleteObject(self.chico.GetHandle())
+            self.cdc.DeleteDC()
             win32gui.DeleteObject(self.bmp.GetHandle())
             self.sdc.DeleteDC()
             self.mdc.DeleteDC()
@@ -122,16 +142,17 @@ def _filtro_bandas(f_pedido: str, f_paso: Optional[str]) -> str:
     vf = (f"scale={ANCHO}:-2,"
           f"pad=iw:ih+{alto_banda + alto_pie}:0:{alto_banda}:color={FONDO},"
           f"drawtext=fontfile='{FUENTE_B}':textfile='{_ruta_filtro(f_pedido)}':"
-          f"reload=1:fontcolor=white:fontsize=28:x=24:y=({alto_banda}-th)/2")
+          f"reload=1:expansion=none:fontcolor=white:fontsize=28:x=24:y=({alto_banda}-th)/2")
     if f_paso:
         vf += (f",drawtext=fontfile='{FUENTE}':textfile='{_ruta_filtro(f_paso)}':"
-               f"reload=1:fontcolor=0xffb347:fontsize=24:x=24:y=h-{alto_pie}+(({alto_pie}-th)/2)")
+               f"reload=1:expansion=none:fontcolor=0xffb347:fontsize=24:x=24:y=h-{alto_pie}+(({alto_pie}-th)/2)")
     return vf
 
 
 class Grabacion:
     def __init__(self, salida: str, pedido: str, fps: int = 8,
-                 max_segundos: float = 600.0, titulo: str = "PEDIDO"):
+                 max_segundos: float = 900.0, titulo: str = "PEDIDO",
+                 de: str = "Autodesk AutoCAD"):
         if not shutil.which("ffmpeg"):
             raise RuntimeError("Falta ffmpeg en el PATH.")
         self.salida = os.path.abspath(salida)
@@ -143,6 +164,8 @@ class Grabacion:
         self.fps, self.max_segundos = fps, max_segundos
         self._parar = threading.Event()
         self.duracion = 0.0
+        self.cuadros = 0
+        self.de = de
 
     def paso(self, texto: str) -> None:
         _escribir(self.f_paso, f"»  {texto}")
@@ -154,6 +177,7 @@ class Grabacion:
             while not self._parar.is_set() and time.time() - self.t0 < self.max_segundos:
                 datos = self.cap.cuadro()
                 self.proc.stdin.write(datos)
+                self.cuadros += 1
                 siguiente += intervalo
                 espera = siguiente - time.time()
                 if espera > 0:
@@ -161,13 +185,14 @@ class Grabacion:
                 else:                   # se atrasó: repite el cuadro para no acelerar
                     while espera < -intervalo / 2 and not self._parar.is_set():
                         self.proc.stdin.write(datos)
+                        self.cuadros += 1
                         siguiente += intervalo
                         espera = siguiente - time.time()
         except (BrokenPipeError, OSError):
             pass
 
     def __enter__(self) -> "Grabacion":
-        h, _ = ventana_autocad()
+        h, _ = ventana(self.de)
         self.h, self.estaba_min = h, _visible_al_fondo(h)
         self.cap = _Captura(h)
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgra",
@@ -203,12 +228,20 @@ class Grabacion:
                 pass
         if not os.path.exists(self.salida):
             raise RuntimeError(f"ffmpeg no dejó el video: {err.decode(errors='replace')}")
+        # El video tiene que durar lo que duró de verdad: si faltan cuadros
+        # se vería acelerado sin decirlo, y eso no se entrega.
+        grabado = self.cuadros / self.fps
+        self.desfase = round(self.duracion - grabado, 1)
+        if abs(self.desfase) > max(2.0, 0.03 * self.duracion):
+            raise RuntimeError(f"El video dura {grabado:.1f} s y la grabación {self.duracion:.1f} s: "
+                               "se perdieron cuadros, no es tiempo real.")
 
 
-def foto_ventana(salida: str, pedido: Optional[str] = None) -> str:
+def foto_ventana(salida: str, pedido: Optional[str] = None,
+                 de: str = "Autodesk AutoCAD") -> str:
     """Una foto de la ventana de AutoCAD tal como se ve (con la interfaz),
     con el pedido arriba si se pasa. No la trae al frente."""
-    h, _ = ventana_autocad()
+    h, _ = ventana(de)
     estaba_min = _visible_al_fondo(h)
     cap = _Captura(h)
     try:

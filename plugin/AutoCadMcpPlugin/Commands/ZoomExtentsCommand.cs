@@ -19,8 +19,8 @@ namespace AutoCadMcpPlugin.Commands
         /// tiempo y tokens, y la segunda vez pasaba. Ahora cuando esto
         /// devuelve, el zoom YA está hecho.
         ///
-        /// Asume vista en planta sin twist (WCS ≈ DCS), que es como trabaja
-        /// todo este plugin — planos 2D.
+        /// Deja la vista en planta sin twist (WCS = DCS), que es como trabaja
+        /// todo este plugin — planos 2D: si venía de un 3D, la restaura.
         /// </summary>
         public static JsonObject Run(Document doc, JsonObject pars)
         {
@@ -57,6 +57,25 @@ namespace AutoCadMcpPlugin.Commands
 
             using (var view = doc.Editor.GetCurrentView())
             {
+                // Un zoom de planta VUELVE a la planta. Después de un modelo
+                // 3D la vista queda isométrica y en estilo realista; con el
+                // cálculo de abajo (que supone WCS = DCS) los dibujos
+                // siguientes salían encuadrados en cualquier lado y vistos
+                // de costado (pasó grabando una demo).
+                if (!view.ViewDirection.IsParallelTo(Vector3d.ZAxis) || view.ViewTwist != 0.0
+                    || view.Target.DistanceTo(Point3d.Origin) > 1e-9)
+                {
+                    view.ViewDirection = Vector3d.ZAxis;
+                    view.Target = Point3d.Origin;
+                    view.ViewTwist = 0.0;
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var estilos = (DBDictionary)tr.GetObject(db.VisualStyleDictionaryId, OpenMode.ForRead);
+                        foreach (var nombre in new[] { "2dWireframe", "2D Wireframe", "Estructura alámbrica 2D" })
+                            if (estilos.Contains(nombre)) { view.VisualStyleId = estilos.GetAt(nombre); break; }
+                        tr.Commit();
+                    }
+                }
                 view.CenterPoint = new Point2d((min.X + max.X) / 2.0,
                                                (min.Y + max.Y) / 2.0);
                 // 3% de aire alrededor, como hace el ZOOM Extents de verdad.

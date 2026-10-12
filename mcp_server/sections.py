@@ -29,6 +29,7 @@ import space
 LAYER_CUT = "CORTES-ARQ"          # no "CORTES": ya lo usa annotation.py
 LAYER_SEEN = "CORTES-ARQ-VISTO"   # ni "SECCIONES": ya lo usa profile.py
 LAYER_FACADE = "FACHADAS"
+LAYER_GROUND = "CORTES-TERRENO"
 
 LW_CUT = 50     # muros/losas cortados: el trazo más grueso del corte
 LW_SEEN = 25    # contornos vistos: aberturas, muros de fondo, envolvente
@@ -311,6 +312,15 @@ def create_building_section(
                 h = _rect(PX(x0), PY(bottom + sill), PX(x1), PY(bottom + head),
                          seen_layer, LW_SEEN)
                 seen_handles.append(h)
+                # Marco: un rectángulo interior a 5 cm. Sin él una ventana
+                # vista es un rectángulo suelto y la fachada parecía tener
+                # cajas flotando (visto en una demo).
+                m = 0.05
+                if x1 - x0 > 4 * m and head - sill > 4 * m:
+                    seen_handles.append(_rect(PX(x0 + m), PY(bottom + sill + (m if tipo == "window"
+                                                                               else 0.0)),
+                                              PX(x1 - m), PY(bottom + head - m),
+                                              seen_layer, LW_HATCH))
                 space.track(PX(x0), PY(bottom + sill), PX(x1), PY(bottom + head),
                            what=f"{tipo} {nombre}")
 
@@ -321,10 +331,27 @@ def create_building_section(
                 space.track(PX(x0), PY(bottom), PX(x1), PY(wall_top),
                            what=f"visto {nombre}")
 
+        # Fachada: el CONTORNO del nivel (de muro extremo a muro extremo, del
+        # piso a lo alto del nivel). Es el borde de cada entrepiso y lo que
+        # hace que la fachada se lea como un edificio y no como vanos sueltos.
+        if es_fachada:
+            ex0 = min((b[0] for b in bandas_muro), default=0.0)
+            ex1 = max((b[1] for b in bandas_muro), default=length)
+            seen_handles.append(_rect(PX(ex0), PY(bottom), PX(ex1), PY(top), seen_layer,
+                                      LW_CUT if i == 0 else LW_SEEN + 10))
+
         story_handles.append({
             "story": nombre, "slabHandle": slab_handle,
             "cutWallHandles": cut_handles, "seenHandles": seen_handles,
         })
+
+    # --- Línea de terreno, más larga que el edificio: sin ella el corte o
+    # la fachada flota en el papel. ---
+    _layer(LAYER_GROUND, LW_CUT)
+    acad.call("create_line", {"x1": PX(-1.0), "y1": PY(0.0), "z1": 0.0,
+                              "x2": PX(length + 1.0), "y2": PY(0.0), "z2": 0.0,
+                              "layer": LAYER_GROUND, "lineweight": LW_CUT + 20,
+                              "colorIndex": None})
 
     # --- Rótulos de nivel, del lado OPUESTO a la cadena de cotas. ---
     niveles: list[dict[str, Any]] = []
