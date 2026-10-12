@@ -137,18 +137,97 @@ def _piso(path: str) -> tuple[float, float]:
     return 0.60, 0.60
 
 
+def _duela(path: str) -> tuple[float, float]:
+    """Duela de madera de 19 x 120 cm, juntas cuatrapeadas. 1 px = 5 mm."""
+    W, H = 240, 152                                   # 1.20 x 0.76 m: 4 duelas
+    rnd = random.Random(21)
+    tonos = [rnd.randint(-16, 16) for _ in range(8)]
+
+    def px(x, y):
+        fila = y // 38
+        desfase = (fila * 97) % W
+        xx = (x + desfase) % W
+        if y % 38 == 0 or xx == 0:
+            return 92, 62, 38
+        t = tonos[fila * 2 + (1 if xx > W // 2 else 0)]
+        veta = int(6 * math.sin((xx + fila * 13) / 7.0 + math.sin(y / 5.0)))
+        n = rnd.randint(-5, 5)
+        return 168 + t + veta + n, 122 + t + veta + n, 80 + t // 2 + n
+    _bmp(path, W, H, px)
+    return 1.20, 0.76
+
+
+def _porcelanato(path: str) -> tuple[float, float]:
+    """Porcelanato claro de 60 x 120 cm con junta de 2 mm. 1 px = 5 mm."""
+    W, H = 240, 120
+    rnd = random.Random(31)
+
+    def px(x, y):
+        if x == 0 or y == 0:
+            return 176, 172, 164
+        n = rnd.randint(-4, 4)
+        nube = int(5 * math.sin(x / 31.0) * math.cos(y / 23.0))
+        return 228 + n + nube, 225 + n + nube, 218 + n + nube
+    _bmp(path, W, H, px)
+    return 1.20, 0.60
+
+
+def _loseta(path: str) -> tuple[float, float]:
+    """Loseta de 30 x 30 cm, gris cálido, para baño y cocina. 1 px = 3 mm."""
+    W = 100
+    rnd = random.Random(41)
+
+    def px(x, y):
+        if x < 1 or y < 1:
+            return 140, 136, 128
+        n = rnd.randint(-6, 6)
+        return 196 + n, 190 + n, 180 + n
+    _bmp(path, W, W, px)
+    return 0.30, 0.30
+
+
+def _azulejo(path: str) -> tuple[float, float]:
+    """Azulejo blanco de 20 x 30 cm en muro de baño, junta gris. 1 px = 2 mm."""
+    W, H = 100, 150
+    rnd = random.Random(51)
+
+    def px(x, y):
+        if x < 1 or y < 1:
+            return 168, 168, 166
+        n = rnd.randint(-3, 3)
+        return 242 + n, 243 + n, 244 + n
+    _bmp(path, W, H, px)
+    return 0.20, 0.30
+
+
+def _concreto_pulido(path: str) -> tuple[float, float]:
+    W = 128
+    rnd = random.Random(61)
+
+    def px(x, y):
+        n = rnd.randint(-10, 10)
+        m = int(8 * math.sin(x / 17.0 + y / 29.0))
+        return 160 + n + m, 158 + n + m, 154 + n + m
+    _bmp(path, W, W, px)
+    return 1.5, 1.5
+
+
 def texturas() -> dict[str, tuple[str, float, float]]:
     """Genera (una vez) las imágenes y devuelve {nombre: (ruta, ancho m, alto m)}."""
     os.makedirs(CARPETA_TEXTURAS, exist_ok=True)
     salida = {}
     for nombre, fn in (("ladrillo", _ladrillo), ("madera", _madera), ("pasto", _pasto),
-                       ("follaje", _follaje), ("piso", _piso)):
+                       ("follaje", _follaje), ("piso", _piso), ("duela", _duela),
+                       ("porcelanato", _porcelanato), ("loseta", _loseta), ("azulejo", _azulejo),
+                       ("concreto_pulido", _concreto_pulido)):
         ruta = os.path.join(CARPETA_TEXTURAS, f"mcp_{nombre}.bmp")
         if not os.path.exists(ruta):
             tam = fn(ruta)
         else:
             tam = {"ladrillo": (0.50, 0.14), "madera": (0.40, 0.80), "pasto": (1.0, 1.0),
-                   "follaje": (0.6, 0.6), "piso": (0.60, 0.60)}[nombre]
+                   "follaje": (0.6, 0.6), "piso": (0.60, 0.60), "duela": (1.20, 0.76),
+                   "porcelanato": (1.20, 0.60), "loseta": (0.30, 0.30), "azulejo": (0.20, 0.30),
+                   "concreto_pulido": (1.5, 1.5)}[nombre]
         salida[nombre] = (ruta, tam[0], tam[1])
     return salida
 
@@ -361,10 +440,23 @@ def _piezas(tipo: str, w: float, d: float) -> list[tuple]:
         return [(0, 0, w, d, 0, 0.55, "mMadera")]
     if tipo == "closet":
         return [(0, 0, w, d, 0, 2.10, "mMadera")]
+    # Cocina: gabinete con zoclo, cubierta de granito y alacena arriba (a
+    # 1.45 del piso, 35 cm de fondo); sobre la estufa, campana. En todos
+    # y=0 es el muro, igual que en furniture.py.
     if tipo in ("counter", "kitchen_sink"):
-        return [(0, 0, w, d, 0, 0.86, "mAplanado"), (0, 0, w, d, 0.86, 0.90, "mGranito")]
+        p = [(0, 0, w, d - 0.05, 0, 0.10, "mNegro"), (0, 0, w, d, 0.10, 0.86, "mMadera"),
+             (0, 0, w, d + 0.02, 0.86, 0.90, "mGranito"), (0, 0, w, 0.35, 1.45, 2.15, "mMadera"),
+             (0, 0, w, 0.008, 0.90, 1.45, "mAzulejo")]
+        if tipo == "kitchen_sink":
+            p += [(0.06, 0.10, w * 0.56, d - 0.10, 0.90, 0.905, "mAcero"),
+                  (w * 0.31 - 0.015, 0.03, w * 0.31 + 0.015, 0.07, 0.90, 1.20, "mAcero"),
+                  (w * 0.31 - 0.015, 0.03, w * 0.31 + 0.015, 0.25, 1.17, 1.20, "mAcero")]
+        return p
     if tipo == "stove":
-        return [(0, 0, w, d, 0, 0.92, "mAcero")]
+        return [(0, 0, w, d, 0, 0.90, "mAcero"), (0.02, 0.02, w - 0.02, d - 0.02, 0.90, 0.92, "mNegro"),
+                (0, 0, w, 0.008, 0.92, 1.60, "mAzulejo"),
+                (0, 0, w, 0.50, 1.60, 1.75, "mAcero"),
+                (w / 2 - 0.13, 0, w / 2 + 0.13, 0.26, 1.75, 2.40, "mAcero")]
     if tipo == "fridge":
         return [(0, 0, w, d, 0, 1.75, "mAcero")]
     if tipo == "laundry_sink":
@@ -372,12 +464,28 @@ def _piezas(tipo: str, w: float, d: float) -> list[tuple]:
     if tipo == "washer":
         return [(0, 0, w, d, 0, 0.90, "mPorcelana")]
     if tipo == "wc":
-        return [(0, 0, w, 0.18, 0, 0.80, "mPorcelana"), (0.03, 0.18, w - 0.03, d, 0, 0.42, "mPorcelana")]
+        # Tanque contra el muro con su tapa, pedestal y taza con asiento.
+        return [(0.02, 0, w - 0.02, 0.18, 0.40, 0.78, "mPorcelana"), (0, 0, w, 0.20, 0.78, 0.81, "mPorcelana"),
+                (0.10, 0.12, w - 0.10, d - 0.15, 0, 0.36, "mPorcelana"),
+                (0.02, 0.15, w - 0.02, d, 0.36, 0.42, "mPorcelana")]
     if tipo == "lavatory":
-        return [(0, 0, w, d, 0.65, 0.85, "mPorcelana"), (w / 2 - 0.08, 0.05, w / 2 + 0.08, 0.21, 0, 0.65,
-                                                           "mPorcelana")]
+        # Mueble de lavabo con cubierta, ovalín, llave y espejo en el muro.
+        return [(0, 0.02, w, d, 0.10, 0.80, "mMadera"), (0, 0, w, d + 0.02, 0.80, 0.83, "mGranito"),
+                (w / 2 - 0.20, 0.09, w / 2 + 0.20, d - 0.06, 0.83, 0.88, "mPorcelana"),
+                (w / 2 - 0.015, 0.03, w / 2 + 0.015, 0.07, 0.83, 1.02, "mAcero"),
+                (w / 2 - 0.015, 0.03, w / 2 + 0.015, 0.18, 0.99, 1.02, "mAcero"),
+                (0.03, 0, w - 0.03, 0.015, 1.05, 1.85, "mEspejo")]
     if tipo == "shower":
-        return [(0, 0, w, d, 0, 0.06, "mPorcelana")]
+        # Plato, cancel de vidrio templado con perfil negro en el lado
+        # abierto (y=d), regadera de brazo y mezcladora en el muro (y=0).
+        p = [(0, 0, w, d, 0, 0.06, "mPorcelana"), (0, d - 0.012, w, d, 0.06, 1.95, "mVidrio"),
+             (0, d - 0.025, w, d + 0.005, 1.95, 1.98, "mAluminio"),
+             (w / 2 - 0.015, 0, w / 2 + 0.015, 0.32, 2.02, 2.05, "mAcero"),
+             (w / 2 - 0.11, 0.21, w / 2 + 0.11, 0.43, 1.99, 2.02, "mAcero"),
+             (w / 2 - 0.06, 0, w / 2 + 0.06, 0.03, 1.10, 1.24, "mAcero")]
+        for xp in (0, w / 2 - 0.0125, w - 0.025):
+            p.append((xp, d - 0.025, xp + 0.025, d + 0.005, 0.06, 1.95, "mAluminio"))
+        return p
     return []
 
 
@@ -419,11 +527,73 @@ def _lado_exterior(c: dict[str, Any], adentro: list, tw: float) -> int:
     return 0 if a == b else (1 if not a else -1)
 
 
+BARANDAL_ALTO = 0.90       # sobre la línea de narices o el piso
+BARROTE_CLARO = 0.10       # claro libre máximo entre barrotes (que no pase un niño)
+
+
+def _barandal(ax: float, ay: float, bx: float, by: float, za: float, zb: float,
+              base, alto: float = BARANDAL_ALTO, zoclo: bool = False,
+              nudos: Optional[set] = None) -> list[str]:
+    """Barandal completo de A a B: pasamanos que va de za+alto a zb+alto,
+    postes en los extremos y a no más de 1.20, y barrotes con claro libre de
+    BARROTE_CLARO que nacen en base(d) (el escalón o el piso) y MUEREN EN el
+    pasamanos. Postes de altura fija contra un pasamanos inclinado quedaban
+    unos cortos y otros pasados, y sin barrotes el barandal se veía a medias.
+
+    El pasamanos se corta justo en A y B, y en cada extremo va un codo (un
+    nudo de 6 cm): dos tubos rectos que se encuentran en ángulo dejan la
+    esquina abierta y las puntas salidas. 'nudos' (compartido entre los
+    tramos de una escalera) evita poner dos codos en la misma unión."""
+    L = math.hypot(bx - ax, by - ay)
+    if L < 0.05:
+        return []
+    ux, uy = (bx - ax) / L, (by - ay) / L
+    yaw = math.atan2(uy, ux)
+    pend = (zb - za) / L
+
+    def riel(d):
+        return za + alto + pend * d
+    p = []
+    sube = zb - za
+    p.append(f'poner(barra({math.hypot(L, sube):.4f}, 0.05, 0.04, {math.atan2(sube, L):.6f}, '
+             f'{yaw:.6f}, {ax + ux * L / 2:.4f}, {ay + uy * L / 2:.4f}, {riel(L / 2) + 0.02:.4f}), '
+             f'"{CAPA_ESCALERA}", mAcero); n++;')
+    for d in (0.0, L):
+        clave = (round(ax + ux * d, 2), round(ay + uy * d, 2), round(riel(d), 2))
+        if nudos is not None:
+            if clave in nudos:
+                continue
+            nudos.add(clave)
+        p.append(f'poner(caja(0.06, 0.06, 0.06, {ax + ux * d:.4f}, {ay + uy * d:.4f}, '
+                 f'{riel(d) + 0.02:.4f}, {yaw:.6f}), "{CAPA_ESCALERA}", mAcero); n++;')
+
+    def vertical(d, lado, alto_extra=0.0):
+        z0_, z1_ = base(d), riel(d) + alto_extra
+        if z1_ - z0_ < 0.05:
+            return
+        p.append(f'poner(caja({lado:.3f}, {lado:.3f}, {z1_ - z0_:.4f}, {ax + ux * d:.4f}, '
+                 f'{ay + uy * d:.4f}, {(z0_ + z1_) / 2:.4f}, {yaw:.6f}), "{CAPA_ESCALERA}", mAcero); n++;')
+    k = max(1, math.ceil(L / 1.20))
+    for i in range(k + 1):
+        vertical(min(max(L * i / k, 0.02), L - 0.02), 0.04)
+    paso = BARROTE_CLARO + 0.016
+    m = max(1, round(L / paso))
+    for i in range(1, m):
+        vertical(L * i / m, 0.016)
+    if zoclo:
+        p.append(f'poner(barra({math.hypot(L, sube):.4f}, 0.04, 0.03, {math.atan2(sube, L):.6f}, {yaw:.6f}, '
+                 f'{ax + ux * L / 2:.4f}, {ay + uy * L / 2:.4f}, {base(L / 2) + 0.015:.4f}), '
+                 f'"{CAPA_ESCALERA}", mAcero); n++;')
+    return p
+
+
 def _codigo_escalera(st: dict[str, Any], dx: float) -> str:
     """Escalera de concreto por tramos rectos (los mismos datos de
     create_stairs: arranque = centro de la primera contrahuella), descansos,
     huella de madera, barandal del lado indicado y el hueco en la losa."""
     p = []
+    rieles = []          # (arranque, final, nivel de llegada) de cada barandal
+    nudos: set = set()
     for f in st.get("flights", []):
         sx, sy = float(f["start"][0]) + dx, float(f["start"][1])
         a = math.radians(float(f.get("direction_deg", 90.0)))
@@ -447,20 +617,29 @@ def _codigo_escalera(st: dict[str, Any], dx: float) -> str:
         if lado in ("left", "right"):
             sg = 1 if lado == "left" else -1
             px_, py_ = -uy * sg * (w / 2 - 0.04), ux * sg * (w / 2 - 0.04)
-            run = (n_ - 1) * t
-            rise = (n_ - 1) * r
-            for k in range(int(run // 0.9) + 2):
-                dk = min(k * 0.9, run - 0.05) + 0.05
-                zk = z0 + (min(int(dk // t), n_ - 2) + 1) * r
-                p.append(f'poner(caja(0.035, 0.035, 0.95, {sx + ux * dk + px_:.4f}, '
-                         f'{sy + uy * dk + py_:.4f}, {zk + 0.475:.4f}, 0), "{CAPA_ESCALERA}", '
-                         'mAcero); n++;')
-            largo = math.hypot(run, rise)
-            pitch = math.atan2(rise, run)
-            mx, my = sx + ux * run / 2 + px_, sy + uy * run / 2 + py_
-            mz = z0 + r + rise / 2 + 0.95
-            p.append(f'poner(barra({largo + 0.10:.4f}, 0.05, 0.04, {pitch:.6f}, {a:.6f}, {mx:.4f}, '
-                     f'{my:.4f}, {mz:.4f}), "{CAPA_ESCALERA}", mAcero); n++;')
+            # De la nariz del primer escalón a la del último: el pasamanos
+            # corre paralelo a la línea de narices, a BARANDAL_ALTO de ella.
+            # Llega hasta el borde de lo que sigue (descanso o losa), donde
+            # la línea de narices alcanza el nivel de llegada: ahí empalma
+            # el tramo de unión del descanso.
+            d0 = 0.03
+            d1 = (n_ - 1) * t + 0.02
+            za, zb = z0 + r, z0 + r + r / t * (d1 - d0)
+
+            def escalon(d, z0=z0, r=r, t=t, n_=n_, d0=d0):
+                return z0 + (min(int((d + d0) // t), n_ - 1) + 1) * r
+            a3 = (sx + ux * d0 + px_, sy + uy * d0 + py_, za)
+            b3 = (sx + ux * d1 + px_, sy + uy * d1 + py_, zb)
+            p += _barandal(a3[0], a3[1], b3[0], b3[1], za, zb, escalon, nudos=nudos)
+            rieles.append((a3, b3, z0 + n_ * r))
+    # Unión en el descanso: el pasamanos no se corta entre una rampa y la
+    # siguiente. Va del final de una al arranque de la otra, con postes y
+    # barrotes que nacen en el descanso.
+    for (_a, fin, llegada), (ini, _b, _l) in zip(rieles, rieles[1:]):
+        if math.hypot(ini[0] - fin[0], ini[1] - fin[1]) > 1.5:
+            continue
+        p += _barandal(fin[0], fin[1], ini[0], ini[1], fin[2], ini[2],
+                       lambda d, z=llegada: z, nudos=nudos)
     for d in st.get("landings", []):
         x0, y0, x1, y1 = (float(v) for v in d["box"])
         z = float(d["z"])
@@ -473,21 +652,80 @@ def _codigo_escalera(st: dict[str, Any], dx: float) -> str:
         ax, ay = float(g["from"][0]) + dx, float(g["from"][1])
         bx, by = float(g["to"][0]) + dx, float(g["to"][1])
         z = float(g.get("z", 0.0))
-        L = math.hypot(bx - ax, by - ay)
-        a = math.atan2(by - ay, bx - ax)
-        k = max(1, int(L // 0.9))
-        for i in range(k + 1):
-            f_ = i / k
-            p.append(f'poner(caja(0.035, 0.035, 0.95, {ax + (bx - ax) * f_:.4f}, '
-                     f'{ay + (by - ay) * f_:.4f}, {z + 0.475:.4f}, 0), "{CAPA_ESCALERA}", mAcero); n++;')
-        for hz in (0.95, 0.50):
-            p.append(f'poner(barra({L:.4f}, 0.04, 0.04, 0, {a:.6f}, {(ax + bx) / 2:.4f}, '
-                     f'{(ay + by) / 2:.4f}, {z + hz:.4f}), "{CAPA_ESCALERA}", mAcero); n++;')
+        za_, zb_ = z, z
+        # El extremo que cae a menos de 30 cm del final de un pasamanos se
+        # pega a él: arrancar unos centímetros al lado dejaba el tubo cortado
+        # justo donde la escalera llega a la planta alta.
+        extremos = [pt for a3, b3, _l in rieles for pt in (a3, b3)]
+
+        def pegar(x, y, zz):
+            for px, py, pz in extremos:
+                if math.hypot(px - x, py - y) < 0.30 and abs(pz - zz) < 0.30:
+                    return px, py, pz
+            return x, y, zz
+        ax, ay, za_ = pegar(ax, ay, z)
+        bx, by, zb_ = pegar(bx, by, z)
+        # Protección en planta alta o descanso: barandal con zoclo; 'height'
+        # por defecto 0.90 (en un vacío alto, pedir 1.00+).
+        p += _barandal(ax, ay, bx, by, za_, zb_, lambda d, z=z: z, float(g.get("height", BARANDAL_ALTO)),
+                       zoclo=True, nudos=nudos)
     for h in st.get("openings", []):
         x0, y0, x1, y1 = (float(v) for v in h["box"])
         p.append(f'perforar(new string[] {{ "{model3d.LAYER_LOSA_3D}", "{CAPA_PISO}" }}, '
                  f'{x0 + dx:.4f}, {y0:.4f}, {x1 + dx:.4f}, {y1:.4f}, {float(h["z0"]):.4f}, '
                  f'{float(h["z1"]):.4f});')
+    return "\n".join(p)
+
+
+PISOS_POR_USO = (("RECÁMARA", "mDuela"), ("RECAMARA", "mDuela"), ("ESTANCIA", "mDuela"),
+                 ("VESTIDOR", "mDuela"), ("CLÓSET", "mDuela"), ("CLOSET", "mDuela"),
+                 ("BAÑO", "mLoseta"), ("BANO", "mLoseta"), ("COCINA", "mLoseta"),
+                 ("LAVADO", "mLoseta"), ("COCHERA", "mConcretoPulido"),
+                 ("BODEGA", "mConcretoPulido"))
+
+
+def _piso_de(nombre: str, propios: Optional[dict[str, str]] = None) -> str:
+    """Material de piso por el nombre del recinto; 'floors' del nivel manda
+    ({"SALA": "duela"}). Lo que no está en la lista: porcelanato claro."""
+    u = nombre.upper()
+    nombres = {"duela": "mDuela", "porcelanato": "mPorcelanato", "loseta": "mLoseta",
+               "concreto": "mConcretoPulido", "madera": "mDuela"}
+    for k, v in (propios or {}).items():
+        if k.upper() in u:
+            return nombres.get(v, "mPorcelanato")
+    for clave, mat in PISOS_POR_USO:
+        if clave in u:
+            return mat
+    return "mPorcelanato"
+
+
+def _azulejo_bano(r: dict[str, Any], adentro: list, cajas: list, ext: float, inter: float,
+                  dx: float, z0: float, alto: float = 2.10) -> str:
+    """Azulejo en los muros del baño hasta 2.10 m: un forro de 8 mm sobre la
+    cara interior de cada muro, con puertas y ventanas restadas. Cada lado
+    se separa del eje lo que mide medio muro (exterior o divisorio)."""
+    def afuera(x, y):
+        return not any(model3d.point_in_polygon(x, y, e) for e, _h in adentro)
+    cx, cy = (r["x0"] + r["x1"]) / 2, (r["y0"] + r["y1"]) / 2
+    medio = {
+        "x0": ext / 2 if afuera(r["x0"] - 0.2, cy) else inter / 2,
+        "x1": ext / 2 if afuera(r["x1"] + 0.2, cy) else inter / 2,
+        "y0": ext / 2 if afuera(cx, r["y0"] - 0.2) else inter / 2,
+        "y1": ext / 2 if afuera(cx, r["y1"] + 0.2) else inter / 2,
+    }
+    x0, x1 = r["x0"] + medio["x0"], r["x1"] - medio["x1"]
+    y0, y1 = r["y0"] + medio["y0"], r["y1"] - medio["y1"]
+    e = 0.008
+    caras = _arr([(x0 + dx, y0), (x1 + dx, y0), (x1 + dx, y1), (x0 + dx, y1)])
+    dentro = _arr([(x0 + e + dx, y0 + e), (x1 - e + dx, y0 + e), (x1 - e + dx, y1 - e),
+                   (x0 + e + dx, y1 - e)])
+    p = [f"{{ var az = extruir({caras}, new double[][] {{ {dentro} }}, {z0 + 0.012:.4f}, {alto:.3f});"]
+    for c in cajas:
+        if (r["x0"] - 0.3 <= c["cx"] <= r["x1"] + 0.3) and (r["y0"] - 0.3 <= c["cy"] <= r["y1"] + 0.3):
+            p.append(f"  {{ var v = caja({c['largo']:.4f}, {c['ancho'] + 0.06:.4f}, {c['alto']:.4f}, "
+                     f"{c['cx'] + dx:.4f}, {c['cy']:.4f}, {c['cz']:.4f}, {c['angulo']:.6f}); "
+                     "az.BooleanOperation(BooleanOperationType.BoolSubtract, v); v.Dispose(); }")
+    p.append(f'  poner(az, "{CAPA_PISO}", mAzulejo); n++; }}')
     return "\n".join(p)
 
 
@@ -535,12 +773,16 @@ def _codigo_nivel(nivel: dict[str, Any], ext: float, inter: float, ventana: floa
                           "forro.BooleanOperation(BooleanOperationType.BoolSubtract, v); "
                           "v.Dispose(); }")
         partes.append(f'  poner(forro, "{CAPA_FORRO}", {fachada}); n++; }}')
-    # Piso cerámico sobre todo lo techado del nivel.
-    for e_in, huecos in adentro:
-        partes.append("poner(extruir(" + _arr([(p[0] + dx, p[1]) for p in e_in]) +
-                      ", new double[][] { " + ", ".join(_arr([(p[0] + dx, p[1]) for p in h])
-                                                      for h in huecos) +
-                      f" }}, {z0:.4f}, 0.012), \"{CAPA_PISO}\", mPiso); n++;")
+    # Piso según el uso de cada recinto (duela en recámaras, porcelanato en
+    # lo social, loseta en baño y cocina, concreto pulido en cochera): un
+    # solo piso para toda la casa se veía de maqueta.
+    for r in rooms:
+        mat = _piso_de(r["name"], nivel.get("floors"))
+        partes.append(f'poner(caja({r["x1"] - r["x0"]:.4f}, {r["y1"] - r["y0"]:.4f}, 0.012, '
+                      f'{(r["x0"] + r["x1"]) / 2 + dx:.4f}, {(r["y0"] + r["y1"]) / 2:.4f}, '
+                      f'{z0 + 0.006:.4f}, 0), "{CAPA_PISO}", {mat}); n++;')
+        if "BAÑO" in r["name"].upper() or "BANO" in r["name"].upper():
+            partes.append(_azulejo_bano(r, adentro, cajas, ext, inter, dx, z0))
     for f in nivel.get("furniture") or []:
         linea = _mueble(f, dx, z0)
         if linea:
@@ -610,7 +852,10 @@ def dress_3d_model(levels: list[dict[str, Any]],
                    lot: Optional[list[list[float]]] = None,
                    fence_height: float = 2.40,
                    paving: Optional[list[dict[str, Any]]] = None,
-                   site_offset: float = 0.0) -> dict[str, Any]:
+                   site_offset: float = 0.0,
+                   cladding: Optional[list[dict[str, Any]]] = None,
+                   canopies: Optional[list[dict[str, Any]]] = None,
+                   hedges: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     """Acabados sobre un modelo ya levantado con create_3d_model (uno por
     nivel). Cada nivel: los mismos {rooms, doors, windows, base_z,
     wall_height, slab_thickness, offset} que se usaron para levantarlo, y
@@ -634,8 +879,9 @@ def dress_3d_model(levels: list[dict[str, Any]],
         # Losas: plafón blanco (arriba se lee como impermeabilizante blanco);
         # en concreto gris el techo interior salía casi negro.
         'var mLosa = material("MCP Losa (plafon blanco)", 232, 230, 224, "", 1, 1, 1.0);\n'
-        'var mVidrio = material("MCP Vidrio", 120, 170, 200, "", 1, 1, 0.35);\n'
-        'var mAluminio = material("MCP Aluminio", 70, 72, 76, "", 1, 1, 1.0);\n'
+        'var mVidrio = material("MCP Vidrio claro", 150, 188, 205, "", 1, 1, 0.28);\n'
+        # Cancelería negra mate: lo que se usa hoy; la gris se leía de 1990.
+        'var mAluminio = material("MCP Aluminio negro", 36, 36, 38, "", 1, 1, 1.0);\n'
         f'var mMadera = material("MCP Madera", 128, 82, 46, "{ruta("madera")}", '
         f'{tx["madera"][1]}, {tx["madera"][2]}, 1.0);\n'
         f'var mPasto = material("MCP Pasto", 70, 120, 50, "{ruta("pasto")}", '
@@ -655,7 +901,21 @@ def dress_3d_model(levels: list[dict[str, Any]],
         'var mRepison = material("MCP Repison de concreto", 200, 198, 192, "", 1, 1, 1.0);\n'
         'var mConcretoAparente = material("MCP Concreto aparente", 182, 180, 174, "", 1, 1, 1.0);\n'
         'var mTinaco = material("MCP Tinaco", 34, 34, 36, "", 1, 1, 1.0);\n'
-        'var mAsfalto = material("MCP Asfalto", 58, 60, 62, "", 1, 1, 1.0);\n')
+        'var mAsfalto = material("MCP Asfalto", 58, 60, 62, "", 1, 1, 1.0);\n'
+        f'var mDuela = material("MCP Duela de madera", 168, 122, 80, "{ruta("duela")}", '
+        f'{tx["duela"][1]}, {tx["duela"][2]}, 1.0);\n'
+        f'var mPorcelanato = material("MCP Porcelanato claro", 228, 225, 218, "{ruta("porcelanato")}", '
+        f'{tx["porcelanato"][1]}, {tx["porcelanato"][2]}, 1.0);\n'
+        f'var mLoseta = material("MCP Loseta", 196, 190, 180, "{ruta("loseta")}", '
+        f'{tx["loseta"][1]}, {tx["loseta"][2]}, 1.0);\n'
+        f'var mAzulejo = material("MCP Azulejo blanco", 242, 243, 244, "{ruta("azulejo")}", '
+        f'{tx["azulejo"][1]}, {tx["azulejo"][2]}, 1.0);\n'
+        f'var mConcretoPulido = material("MCP Concreto pulido", 160, 158, 154, '
+        f'"{ruta("concreto_pulido")}", {tx["concreto_pulido"][1]}, {tx["concreto_pulido"][2]}, 1.0);\n'
+        'var mEspejo = material("MCP Espejo", 196, 208, 214, "", 1, 1, 1.0);\n'
+        'var mNegro = material("MCP Negro mate", 22, 22, 24, "", 1, 1, 1.0);\n'
+        'var mSeto = material("MCP Seto", 52, 98, 44, "", 1, 1, 1.0);\n'
+        'var mFollaje2 = material("MCP Follaje claro", 78, 126, 56, "", 1, 1, 1.0);\n')
     # El plafón y el aplanado con algo de luz propia: la iluminación por
     # defecto viene de arriba y el techo interior salía casi negro.
     mats += ('((Material)tr.GetObject(mLosa, OpenMode.ForWrite)).SelfIllumination = 0.55;\n'
@@ -751,6 +1011,46 @@ foreach (ObjectId id in space)
                               f'{(ya + yb) / 2:.4f}, {z + h + 0.075:.4f}, 0), "{CAPA_SITIO}", '
                               'mMadera); n++;')
                 xv += 0.50
+    # Lambrín de duelas de madera sobre la fachada: un acento entre vanos.
+    for cl in cladding or []:
+        ax, ay = float(cl["from"][0]) + so, float(cl["from"][1])
+        bx, by = float(cl["to"][0]) + so, float(cl["to"][1])
+        za, zb = float(cl["z0"]), float(cl["z1"])
+        L = math.hypot(bx - ax, by - ay)
+        a = math.atan2(by - ay, bx - ax)
+        nx, ny = -math.sin(a), math.cos(a)
+        # Del eje a la cara del forro (medio muro + 12 mm) y media duela afuera.
+        sal = exterior_thickness / 2 + 0.012 + 0.015 + float(cl.get("gap", 0.0))
+        # side: de qué mano queda la calle caminando de from a to.
+        sg = 1 if cl.get("side", "left") == "left" else -1
+        paso, ancho = 0.10, 0.075
+        t = paso / 2
+        while t < L:
+            px_, py_ = ax + (bx - ax) * t / L + nx * sg * sal, ay + (by - ay) * t / L + ny * sg * sal
+            cuerpo.append(f'poner(caja({ancho:.3f}, 0.03, {zb - za:.3f}, {px_:.4f}, {py_:.4f}, '
+                          f'{(za + zb) / 2:.4f}, {a:.6f}), "{CAPA_FORRO}", mMadera); n++;')
+            t += paso
+    # Marquesinas de concreto (sobre accesos).
+    for mq in canopies or []:
+        x0_, y0_, x1_, y1_ = (float(v) for v in mq["box"])
+        z = float(mq.get("z", 2.40))
+        e = float(mq.get("thickness", 0.12))
+        cuerpo.append(f'poner(caja({x1_ - x0_:.3f}, {y1_ - y0_:.3f}, {e:.3f}, {(x0_ + x1_) / 2 + so:.4f}, '
+                      f'{(y0_ + y1_) / 2:.4f}, {z + e / 2:.4f}, 0), "{CAPA_FORRO}", mRepison); n++;')
+    # Setos: una hilera de matas que se enciman, con dos verdes.
+    for se in hedges or []:
+        ax, ay = float(se["from"][0]) + so, float(se["from"][1])
+        bx, by = float(se["to"][0]) + so, float(se["to"][1])
+        h = float(se.get("height", 1.0))
+        L = math.hypot(bx - ax, by - ay)
+        k = max(1, int(L / 0.55))
+        for i in range(k + 1):
+            f_ = i / k
+            rr = h / 2 * (0.9 + 0.2 * ((i * 7) % 3) / 2)
+            mat = "mSeto" if i % 2 else "mFollaje2"
+            cuerpo.append(f'{{ var sb = new Solid3d(); sb.SetDatabaseDefaults(); sb.CreateSphere({rr:.3f});'
+                          f' sb.TransformBy(Matrix3d.Displacement(new Vector3d({ax + (bx - ax) * f_:.4f}, '
+                          f'{ay + (by - ay) * f_:.4f}, {rr * 0.85:.4f}))); poner(sb, "{CAPA_ARBOLES}", {mat}); n++; }}')
     # Pavimentos (cochera, andadores).
     for pv in paving or []:
         x0_, y0_, x1_, y1_ = (float(v) for v in pv["box"])
@@ -807,18 +1107,28 @@ foreach (ObjectId id in space)
                  [x0 - m * 0.55, y1 + m * 0.45], [x1 + m * 0.6, y1 + m * 0.5],
                  [(x0 + x1) / 2, y1 + m * 0.6]]
     for k, (tx_, ty_) in enumerate(trees):
-        h = 2.4 + 0.3 * (k % 3)
-        r = 1.2 + 0.2 * (k % 2)
+        # Copa de varias esferas en dos verdes, tronco ahusado: una sola
+        # esfera se leía como paleta.
+        h = 2.3 + 0.35 * (k % 3)
+        r = 1.05 + 0.2 * (k % 2)
+        # La copa no se mete en la casa: un árbol de banqueta a 75 cm de la
+        # fachada la atravesaba y aparecía adentro, junto a la escalera. La
+        # copa alcanza ~1.27 r de lado; se achica hasta librar el paño.
+        libre = math.hypot(max(x0 - tx_, 0.0, tx_ - x1), max(y0 - ty_, 0.0, ty_ - y1))
+        r = min(r, max(0.40, (libre - 0.10) / 1.27))
         cuerpo.append(
-            f'{{ var t = new Solid3d(); t.SetDatabaseDefaults(); t.CreateFrustum({h:.2f}, 0.13, 0.13, 0.09);'
+            f'{{ var t = new Solid3d(); t.SetDatabaseDefaults(); t.CreateFrustum({h:.2f}, 0.14, 0.14, 0.07);'
             f' t.TransformBy(Matrix3d.Displacement(new Vector3d({tx_:.3f}, {ty_:.3f}, {base + h / 2 - 0.1:.3f})));'
-            f' poner(t, "{CAPA_ARBOLES}", mTronco);'
-            f' var c1 = new Solid3d(); c1.SetDatabaseDefaults(); c1.CreateSphere({r:.2f});'
-            f' c1.TransformBy(Matrix3d.Displacement(new Vector3d({tx_:.3f}, {ty_:.3f}, {base + h + r * 0.6:.3f})));'
-            f' var c2 = new Solid3d(); c2.SetDatabaseDefaults(); c2.CreateSphere({r * 0.75:.2f});'
-            f' c2.TransformBy(Matrix3d.Displacement(new Vector3d({tx_ + r * 0.5:.3f}, {ty_ - r * 0.3:.3f}, {base + h + r * 0.2:.3f})));'
-            f' c1.BooleanOperation(BooleanOperationType.BoolUnite, c2); c2.Dispose();'
-            f' poner(c1, "{CAPA_ARBOLES}", mFollaje); n += 2; }}')
+            f' poner(t, "{CAPA_ARBOLES}", mTronco); n++; }}')
+        bolas = [(0, 0, h + r * 0.55, r), (r * 0.55, r * 0.2, h + r * 0.25, r * 0.72),
+                 (-r * 0.5, r * 0.3, h + r * 0.3, r * 0.68), (0.1, -r * 0.5, h + r * 0.2, r * 0.7),
+                 (0.05, 0.1, h + r * 1.15, r * 0.6)]
+        for j_, (ox, oy, oz, rb) in enumerate(bolas):
+            mat = "mFollaje" if j_ % 2 == 0 else "mFollaje2"
+            cuerpo.append(
+                f'{{ var c = new Solid3d(); c.SetDatabaseDefaults(); c.CreateSphere({rb:.2f});'
+                f' c.TransformBy(Matrix3d.Displacement(new Vector3d({tx_ + ox:.3f}, {ty_ + oy:.3f}, {base + oz:.3f})));'
+                f' poner(c, "{CAPA_ARBOLES}", {mat}); n++; }}')
     cuerpo.append("Print(\"@@PIEZAS|\" + n);\nreturn n;")
     codigo = _BASE + "\n".join(cuerpo)
     r = engine.run_code(codigo, description="dress_3d_model: acabados del 3D")
@@ -831,12 +1141,23 @@ foreach (ObjectId id in space)
         if linea.startswith("@@PIEZAS|"):
             piezas = int(linea.split("|")[1])
     return {"ok": True, "pieces": piezas, "box": [x0 - m, y0 - m, x1 + m, y1 + m],
-            "materials": ["Ladrillo aparente", "Aplanado blanco", "Concreto", "Vidrio",
-                          "Aluminio", "Madera", "Pasto", "Follaje", "Tronco", "Banqueta"],
+            "materials": _materiales_usados(codigo),
             "textures": CARPETA_TEXTURAS, "roofVisible": roof_visible}
 
 
+def _materiales_usados(codigo: str) -> list[str]:
+    """Los materiales que de verdad se asignaron, por su nombre en AutoCAD:
+    los declarados que aparecen como último argumento de algún poner()."""
+    import re
+    declarados = dict(re.findall(r'var (m\w+) = material\("MCP ([^"]+)"', codigo))
+    usados = set(re.findall(r'", (m\w+)\)', codigo))
+    return sorted(nombre for var, nombre in declarados.items() if var in usados)
+
+
 _VISTA = r"""
+// El ícono de ejes quedaba flotando en medio de la vista en perspectiva.
+var vpr = (ViewportTableRecord)tr.GetObject(ed.ActiveViewportId, OpenMode.ForWrite);
+if (vpr.IconEnabled != {icono}) {{ vpr.IconEnabled = {icono}; ed.UpdateTiledViewportsFromDatabase(); }}
 var v = ed.GetCurrentView();
 v.Target = new Point3d({tx:.4f}, {ty:.4f}, {tz:.4f});
 v.ViewDirection = new Vector3d({vx:.4f}, {vy:.4f}, {vz:.4f});
@@ -890,7 +1211,8 @@ def set_3d_view(camera: list[float], target: list[float], lens: float = 35.0,
                   f"{'true' if roof_visible is not None else 'false'})) {{ c.UpgradeOpen(); c.IsOff = apagar; }} }}")
     alto = dist * 0.75
     codigo = _VISTA.format(tx=tx, ty=ty, tz=tz, vx=vx, vy=vy, vz=vz, alto=alto, ancho=alto * 1.6,
-                           persp="true" if perspective else "false", lente=lens, techo=techo)
+                           persp="true" if perspective else "false", lente=lens, techo=techo,
+                           icono="false" if isolate_3d else "true")
     r = engine.run_code(codigo, description="set_3d_view: cámara 3D")
     ok = bool(r.get("compiled")) and not r.get("exception") and not r.get("blocked")
     return {"ok": ok, "camera": [cx, cy, cz], "target": [tx, ty, tz], "lens": lens,

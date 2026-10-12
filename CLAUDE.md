@@ -558,6 +558,23 @@ planta (plugin 1.9.2+) vuelve solo a la vista 2D.
 Lo que no se ve en el interior es por la luz: la de AutoCAD viene de arriba y
 el techo salía negro; el plafón tiene autoiluminación por eso.
 
+Detalle que separa una maqueta de un 3D profesional, ya resuelto en la tool:
+piso por USO (duela en recámaras, loseta en baño/cocina, concreto pulido en
+cochera, porcelanato lo demás; `floors` por nivel manda), azulejo en baños a
+2.10, cancelería negra, baño con cancel de vidrio, mueble de lavabo y espejo,
+cocina con alacena, campana y lambrín. Opcionales: `cladding` (lambrín de
+madera en fachada), `canopies` (marquesina), `hedges` (setos).
+
+**Barandal de escalera: continuo y cerrado.** Lo marcó el usuario mirando el
+3D: los postes de altura fija contra un pasamanos inclinado quedaban unos
+cortos y otros pasados, sin barrotes se veía a medias, y en el descanso y al
+llegar arriba el tubo se cortaba. Ahora el pasamanos va a 0.90 sobre la línea
+de narices, los barrotes (claro ≤ 10 cm) nacen en su escalón y mueren EN el
+pasamanos, cada rampa se une con la siguiente por el descanso, el barandal
+de planta alta se pega al final del pasamanos y cada quiebre lleva su codo.
+**Mirarlo de cerca** (cámara a 1 m de la unión): de lejos todo se ve unido.
+Los árboles achican la copa para no atravesar la fachada.
+
 ## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta

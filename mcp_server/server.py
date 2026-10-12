@@ -5126,7 +5126,18 @@ def dress_3d_model(levels: list[dict[str, Any]],
                    exterior_thickness: float = 0.15, interior_thickness: float = 0.10,
                    window_width: float = 1.20, roof_visible: bool = True,
                    site_margin: float = 6.0, trees: Optional[list[list[float]]] = None,
-                   sidewalk: bool = True) -> dict[str, Any]:
+                   sidewalk: bool = True,
+                   stairs: Optional[list[dict[str, Any]]] = None,
+                   parapet_height: float = 0.60,
+                   tank: Optional[dict[str, Any]] = None,
+                   terraces: Optional[list[dict[str, Any]]] = None,
+                   lot: Optional[list[list[float]]] = None,
+                   fence_height: float = 2.40,
+                   paving: Optional[list[dict[str, Any]]] = None,
+                   site_offset: float = 0.0,
+                   cladding: Optional[list[dict[str, Any]]] = None,
+                   canopies: Optional[list[dict[str, Any]]] = None,
+                   hedges: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     """ACABADOS del 3D: que se vea como casa y no como maqueta gris. Va
     DESPUÉS de create_3d_model (uno por nivel) y recibe, por nivel, los
     MISMOS {rooms, doors, windows, base_z, wall_height, slab_thickness,
@@ -5140,12 +5151,38 @@ def dress_3d_model(levels: list[dict[str, Any]],
     de madera; muebles por piezas (cama con cabecera, sofá con respaldo, mesa
     con patas y sillas, cocina con granito); terreno con pasto, banqueta y
     árboles (trees=[[x, y], ...] o automáticos). Necesita run_code activado.
-    Para mirarlo: set_3d_view."""
+    Para mirarlo: set_3d_view.
+
+    Piso por USO del recinto: duela en recámaras/estancia, loseta en baño,
+    cocina y lavado, concreto pulido en cochera, porcelanato en lo demás
+    (cada nivel puede mandar con "floors": {"SALA": "duela"}). Los baños
+    llevan azulejo hasta 2.10 m con puerta y ventana restadas. Cancelería
+    negra mate. 'facade' por nivel: "ladrillo" o "aplanado".
+
+    Detalle del conjunto (todo opcional, en coordenadas de la PLANTA; con
+    site_offset se corre a donde se levantó el 3D):
+    - stairs=[{flights, landings, openings, guards}]: escalera por rampas
+      con huella de madera, descanso, barandal y hueco en la losa.
+    - tank={"point": [x, y]}: tinaco con base sobre la azotea; pretil con
+      remate de parapet_height.
+    - terraces=[{"box", "z", "pergola", "height"}]: deck y pérgola.
+    - lot=[[x, y], ...]: pasto en el lote, barda de fence_height en los
+      lados que no dan a la calle, banqueta, guarnición y calle.
+    - paving=[{"box"}]: pavimento (patio, andador).
+    - cladding=[{"from", "to", "z0", "z1", "side"}]: lambrín de duelas de
+      madera sobre la fachada, como acento entre vanos.
+    - canopies=[{"box", "z", "thickness"}]: marquesina de concreto sobre un
+      acceso (z = cara inferior).
+    - hedges=[{"from", "to", "height"}]: seto en hilera."""
     import model3d_acabados as acab_mod
     return acab_mod.dress_3d_model(levels, exterior_thickness=exterior_thickness,
                                    interior_thickness=interior_thickness,
                                    window_width=window_width, roof_visible=roof_visible,
-                                   site_margin=site_margin, trees=trees, sidewalk=sidewalk)
+                                   site_margin=site_margin, trees=trees, sidewalk=sidewalk,
+                                   stairs=stairs, parapet_height=parapet_height, tank=tank,
+                                   terraces=terraces, lot=lot, fence_height=fence_height,
+                                   paving=paving, site_offset=site_offset, cladding=cladding,
+                                   canopies=canopies, hedges=hedges)
 
 
 @mcp.tool()
