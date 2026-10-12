@@ -5116,5 +5116,50 @@ def create_3d_model(rooms: list[dict[str, Any]],
         fence_height=fence_height)
 
 
+@mcp.tool()
+def dress_3d_model(levels: list[dict[str, Any]],
+                   exterior_thickness: float = 0.15, interior_thickness: float = 0.10,
+                   window_width: float = 1.20, roof_visible: bool = True,
+                   site_margin: float = 6.0, trees: Optional[list[list[float]]] = None,
+                   sidewalk: bool = True) -> dict[str, Any]:
+    """ACABADOS del 3D: que se vea como casa y no como maqueta gris. Va
+    DESPUÉS de create_3d_model (uno por nivel) y recibe, por nivel, los
+    MISMOS {rooms, doors, windows, base_z, wall_height, slab_thickness,
+    offset} con que se levantó, más 'furniture' (los items de
+    suggest_furniture) para amueblarlo en 3D con alturas reales.
+
+    Pone: ladrillo aparente en fachada (textura real a escala: tabique de
+    24 x 6 cm con junta de 1 cm) con los vanos restados y los vanos abiertos
+    (cochera) libres; aplanado blanco por dentro; plafón blanco; piso
+    cerámico; vidrio con marco de aluminio en ventanas y corredizas; puertas
+    de madera; muebles por piezas (cama con cabecera, sofá con respaldo, mesa
+    con patas y sillas, cocina con granito); terreno con pasto, banqueta y
+    árboles (trees=[[x, y], ...] o automáticos). Necesita run_code activado.
+    Para mirarlo: set_3d_view."""
+    import model3d_acabados as acab_mod
+    return acab_mod.dress_3d_model(levels, exterior_thickness=exterior_thickness,
+                                   interior_thickness=interior_thickness,
+                                   window_width=window_width, roof_visible=roof_visible,
+                                   site_margin=site_margin, trees=trees, sidewalk=sidewalk)
+
+
+@mcp.tool()
+def set_3d_view(camera: list[float], target: list[float], lens: float = 35.0,
+                perspective: bool = True, roof_visible: Optional[bool] = None,
+                isolate_3d: Optional[bool] = True) -> dict[str, Any]:
+    """Cámara del 3D en perspectiva y estilo Realista (con texturas).
+    camera = [x, y, z] del ojo, target = [x, y, z] adonde mira.
+    - Exterior: desde afuera, z 6-9 m, lente 30-50.
+    - Interior: el ojo a 1.60 m sobre el piso DENTRO de un recinto, lente
+      18-24 (gran angular), mirando a lo más amplio de la casa.
+    - Corte sin techo: roof_visible=False y desde arriba.
+    isolate_3d=True apaga los planos 2D (si no, se ven flotando en el cielo);
+    isolate_3d=False los vuelve a prender: hacelo antes de guardar.
+    Un zoom de planta (zoom_window/zoom_extents) vuelve solo a la vista 2D."""
+    import model3d_acabados as acab_mod
+    return acab_mod.set_3d_view(camera=camera, target=target, lens=lens, perspective=perspective,
+                                roof_visible=roof_visible, isolate_3d=isolate_3d)
+
+
 if __name__ == "__main__":
     mcp.run()

@@ -78,7 +78,9 @@ def main() -> int:
                  # entregables: carpeta del proyecto y juego en un PDF (sin AutoCAD).
                  "ent_mod.",
                  # vistas: check_view_titles (list_entities con cajas).
-                 "vistas_mod.")
+                 "vistas_mod.",
+                 # acabados del 3D (run_code): dress_3d_model y set_3d_view.
+                 "acab_mod.")
     patron = "|".join(re.escape(d) for d in delegados)
     silent = sorted(t for t in exposed if not re.search(
         r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|" + patron + ")",

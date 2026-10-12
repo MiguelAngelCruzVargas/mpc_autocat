@@ -528,6 +528,26 @@ TrueType y, chica en pantalla, sale hueca ("ESC. 1:20" se leía "CJO, 7:00").
 **A0 apaisado:** DWG To PDF trae el A0 solo vertical; `compose_layout(...,
 paper_size="A0", orientation="horizontal")` rota el plot 90° (plugin 1.8.9).
 
+## 4.nonies 3D para mostrar: `create_3d_model` → `dress_3d_model` → `set_3d_view`
+
+`create_3d_model` levanta muros, vanos y losas en gris: sirve para revisar
+volúmenes, no para mostrarle la casa a nadie. `dress_3d_model` le pone
+encima, con los MISMOS rooms/doors/windows de cada nivel: ladrillo aparente
+en fachada (textura real a escala, generada en Python porque run_code no
+escribe archivos), aplanado y plafón blancos, piso cerámico, vidrio con marco
+en ventanas, puertas de madera, muebles por piezas (con `furniture` = los
+items de `suggest_furniture`), pasto, banqueta y árboles. Los vanos ABIERTOS
+(la cochera) quedan libres: el forro los tapaba.
+
+`set_3d_view(camera, target, lens)` pone la cámara en perspectiva: interior
+con el ojo a 1.60 m y lente 18-24; exterior lente 30-50; `roof_visible=False`
+para el corte sin techo. Aísla el 3D (los planos 2D flotaban en el cielo) y
+`isolate_3d=False` vuelve a prender todo: hacelo antes de guardar. Un zoom de
+planta (plugin 1.9.2+) vuelve solo a la vista 2D.
+
+Lo que no se ve en el interior es por la luz: la de AutoCAD viene de arriba y
+el techo salía negro; el plafón tiene autoiluminación por eso.
+
 ## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta
