@@ -23,6 +23,7 @@ codificar su perfil (ver PERFILES) con la fuente en la mano.
 """
 from __future__ import annotations
 
+import contextvars
 import functools
 import inspect
 import typing
@@ -30,6 +31,64 @@ import unicodedata
 from typing import Any, Callable, Optional
 
 MX = "MX"
+
+# Valores locales de la llamada en curso (los pasa el usuario o la IA tras
+# investigarlos, SIEMPRE con su fuente). Las reglas los leen con local().
+_LOCAL: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
+    "normativa_local", default={})
+
+# Qué valores locales entiende cada regla HOY. Todo lo demás se rechaza en
+# vez de aceptarlo y no usarlo: eso sería aparentar que se aplicó.
+SOPORTADOS = {"minimos": "dimensiones mínimas por uso en check_geometry "
+                         "({'recamara': {'lado': m, 'area': m2}, ...}; usos: "
+                         "recamara, bano, social, circulacion, servicio)"}
+
+
+def local(clave: str, defecto: Any) -> Any:
+    """Valor local de esta llamada para 'clave', o 'defecto' (México)."""
+    return _LOCAL.get().get(clave, defecto)
+
+
+def validar_local(local_norms: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if not local_norms:
+        return {}
+    fuente = str(local_norms.get("fuente", "")).strip()
+    if not fuente:
+        raise ValueError(
+            "local_norms necesita 'fuente': la norma, artículo/tabla, año y "
+            "URL de donde salen los valores. Un valor sin fuente es un valor "
+            "inventado.")
+    valores = {k: v for k, v in local_norms.items() if k != "fuente"}
+    raros = [k for k in valores if k not in SOPORTADOS]
+    if raros:
+        raise ValueError(
+            f"local_norms no sabe aplicar {raros} todavía. Soportado hoy: "
+            + "; ".join(f"{k} = {v}" for k, v in SOPORTADOS.items()) + ". "
+            "El resto de la normativa (eléctrica, sanitaria, cimentación...) "
+            "se investiga igual, pero se aplica con las tools manuales "
+            "(place_devices, create_conduit...), no con suggest_*.")
+    return {"fuente": fuente, **valores}
+
+
+INVESTIGAR = [
+    "NO responder de memoria: investigar la normativa VIGENTE del país con "
+    "WebSearch/WebFetch, en fuentes oficiales (ministerio de vivienda o "
+    "construcción, reglamento nacional/municipal, colegio de ingenieros o "
+    "arquitectos, ente de normalización).",
+    "Buscar: dimensiones mínimas de recámara, baño, sala/estancia, cocina y "
+    "área de servicio (lado y superficie); ancho mínimo de pasillos y "
+    "puertas; altura libre mínima; iluminación y ventilación; norma de "
+    "instalaciones eléctricas, de agua y de desagüe; norma de concreto y "
+    "cimentaciones.",
+    "Anotar cada valor con su fuente: norma, artículo o tabla, año y URL. Si "
+    "dos fuentes no coinciden, o la vigente es dudosa, preguntarle al usuario "
+    "en vez de elegir.",
+    "Mostrarle al usuario lo encontrado y confirmar antes de aplicarlo: la "
+    "norma puede variar por ciudad o municipio.",
+    "Pasar lo confirmado en local_norms={'fuente': '...', 'minimos': {...}} "
+    "(hoy soportado: minimos en check_geometry). Lo demás se aplica a mano "
+    "con las tools de dibujo.",
+]
 
 # Codificada = los valores de las tools salen de esa normativa.
 PERFILES: dict[str, dict[str, Any]] = {
@@ -112,9 +171,11 @@ def resolver(pais: Optional[str]) -> dict[str, Any]:
             "aplicada": "México (solo referencia)",
             "advertencia": (
                 f"No hay normativa de {nombre} codificada: los valores son "
-                "los de México y NO valen para ese país. Hay que pedirle al "
-                "usuario los valores de su normativa local."),
+                "los de México y NO valen para ese país. Hay que investigar "
+                "su normativa vigente (ver 'investigar') y confirmarla con "
+                "el usuario."),
             "orientacion": [],
+            "investigar": INVESTIGAR,
         }
     p = PERFILES[codigo]
     if p["estado"] == "codificada":
@@ -127,9 +188,10 @@ def resolver(pais: Optional[str]) -> dict[str, Any]:
         "advertencia": (
             f"La normativa de {p['nombre']} no está codificada en este "
             "servidor: los valores que devuelve la tool son los de México y "
-            f"NO son válidos para {p['nombre']}. Decirle al usuario, y pedirle "
-            "los mínimos y criterios de su norma local para aplicarlos."),
+            f"NO son válidos para {p['nombre']}. Decirle al usuario e "
+            "INVESTIGAR su norma vigente (ver 'investigar')."),
         "orientacion": p["orientacion"],
+        "investigar": INVESTIGAR,
     }
 
 
@@ -137,8 +199,11 @@ NOTA_DOC = (
     "\n\n    NORMATIVA: los valores de esta tool son de MÉXICO. Preguntale al "
     "usuario de qué país es el proyecto y pasalo en `country` (p.ej. "
     "'México', 'Perú'). Para un país sin normativa codificada la tool lo "
-    "avisa en `normativa` y NO dibuja salvo accept_reference=True (que el "
-    "usuario acepte usar la norma mexicana solo como referencia)."
+    "avisa en `normativa` (con el plan de 'investigar') y NO dibuja salvo "
+    "accept_reference=True. Si no está codificada: INVESTIGAR la norma "
+    "vigente en fuentes oficiales (no de memoria), confirmarla con el "
+    "usuario y pasarla en local_norms={'fuente': norma+artículo+año+URL, "
+    "'minimos': {...}} (hoy lo entiende check_geometry)."
 )
 
 
@@ -159,7 +224,15 @@ def con_pais(dibuja: Optional[str] = None) -> Callable:
         def envoltura(*args: Any, **kwargs: Any) -> Any:
             country = kwargs.pop("country", None)
             acepta = bool(kwargs.pop("accept_reference", False))
+            locales = validar_local(kwargs.pop("local_norms", None))
             info = resolver(country)
+            if locales:
+                info = dict(info, valores_locales=locales)
+                if info["estado"] != "codificada":
+                    info["advertencia"] = (
+                        "Se aplicaron valores locales con fuente: "
+                        f"{locales['fuente']}. Lo que no se pasó en "
+                        "local_norms sigue siendo referencia de México.")
             dibujara = False
             if dibuja:
                 bound_draw = kwargs.get(dibuja, None)
@@ -171,7 +244,11 @@ def con_pais(dibuja: Optional[str] = None) -> Callable:
                     "pasa los valores de su país, o acepta la norma mexicana "
                     "solo como referencia (accept_reference=True), o usá "
                     "draw=False para ver el proyecto sin dibujarlo.")
-            res = fn(*args, **kwargs)
+            token = _LOCAL.set(locales)
+            try:
+                res = fn(*args, **kwargs)
+            finally:
+                _LOCAL.reset(token)
             if isinstance(res, dict):
                 res = dict(res)
                 res["normativa"] = info
@@ -186,6 +263,8 @@ def con_pais(dibuja: Optional[str] = None) -> Callable:
                               default=None, annotation=Optional[str]),
             inspect.Parameter("accept_reference", inspect.Parameter.KEYWORD_ONLY,
                               default=False, annotation=bool),
+            inspect.Parameter("local_norms", inspect.Parameter.KEYWORD_ONLY,
+                              default=None, annotation=Optional[dict]),
         ]
         # Las anotaciones de la tool vienen como texto (from __future__):
         # se resuelven acá, contra el módulo de la tool, porque pydantic

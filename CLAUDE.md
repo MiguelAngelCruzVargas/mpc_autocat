@@ -32,13 +32,20 @@ Por eso, **antes de proyectar, preguntar el país** (o llamar a
 - **México** → `codificada`: se usa tal cual.
 - **Otro país** → `no_codificada`: la tool NO dibuja (ni notas ni valores
   ajenos) salvo que el usuario acepte la norma mexicana solo como referencia
-  (`accept_reference=True`) o se use `draw=False`. Decírselo al usuario y
-  pedirle los mínimos de su norma local; `get_normative` trae, como
-  orientación, qué normas buscar (verificar nombre y versión vigente).
+  (`accept_reference=True`) o se use `draw=False`. **Hay que investigar la
+  norma vigente del país** con WebSearch/WebFetch en fuentes oficiales (el
+  resultado trae el plan en `investigar`): nunca de memoria, anotando norma,
+  artículo/tabla, año y URL de cada valor, y confirmando con el usuario antes
+  de aplicarlo (puede variar por ciudad). Lo confirmado se pasa en
+  `local_norms={"fuente": "...", "minimos": {"recamara": {"lado": 2.7,
+  "area": 8.0}}}`: sin `fuente` se rechaza, y hoy lo aplica `check_geometry`
+  (mínimos por uso). Lo demás (eléctrica, sanitaria, cimentación) se
+  investiga igual y se dibuja con las tools manuales; `local_norms` rechaza
+  una clave que no sabe aplicar en vez de fingir que la usó.
 - Sin `country` la tool corre con la referencia de México y lo advierte.
 
-Agregar un país = codificar su perfil en `normativa.py` y sus valores en las
-reglas, con la fuente en la mano; nunca inventarlos.
+Un país que se usa seguido conviene codificarlo en `normativa.py` (perfil +
+valores en las reglas) con la fuente en la mano; nunca inventarlos.
 
 ## 0. Antes de dibujar: validar
 

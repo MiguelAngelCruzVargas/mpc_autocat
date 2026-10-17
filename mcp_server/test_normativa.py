@@ -64,6 +64,36 @@ def test_decorador() -> None:
           "country" in sig.parameters and "accept_reference" in sig.parameters)
 
 
+def test_investigar_y_valores_locales() -> None:
+    p = normativa.resolver("Perú")
+    check("no codificada trae plan para investigar", len(p["investigar"]) >= 4
+          and "WebSearch" in p["investigar"][0])
+    import rules
+    rooms = [{"name": "RECAMARA", "x0": 0, "y0": 0, "x1": 2.6, "y1": 3.0}]
+    base = rules.check_geometry(rooms, [])
+    check("México: 2.6 m de lado pasa", not any(
+        "dimension minima" == q["rule"] for q in base["problems"]))
+
+    @normativa.con_pais()
+    def revisa(rooms: list, doors: list) -> dict:
+        return rules.check_geometry(rooms, doors)
+    r = revisa(rooms, [], country="Perú", local_norms={
+        "fuente": "Norma X art. 5 (2024) https://ejemplo", "minimos": {"recamara": {"lado": 2.8}}})
+    check("el valor local manda sobre el de México", any(
+        q["rule"] == "dimension minima" for q in r["problems"]), r["problems"])
+    check("la fuente queda en el resultado",
+          r["normativa"]["valores_locales"]["fuente"].startswith("Norma X"))
+    check("el valor local no se filtra a la llamada siguiente", not any(
+        q["rule"] == "dimension minima" for q in rules.check_geometry(rooms, [])["problems"]))
+    for malo, motivo in (({"minimos": {}}, "sin fuente"),
+                         ({"fuente": "x", "pasillo": 1.2}, "clave no soportada")):
+        try:
+            revisa(rooms, [], country="Perú", local_norms=malo)
+            check(f"rechaza {motivo}", False)
+        except ValueError:
+            check(f"rechaza {motivo}", True)
+
+
 def test_tools_del_servidor() -> None:
     import server
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}

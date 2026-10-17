@@ -13,6 +13,7 @@ import math
 from typing import Any, Optional
 
 import geom
+import normativa
 import space
 
 # Ambientes a los que una puerta de calle NUNCA debe abrir directo.
@@ -235,11 +236,14 @@ def check_geometry(rooms: list[dict[str, Any]],
     por_nombre = {r["name"].upper(): r for r in rooms}
 
     # --- 1. Dimensiones minimas segun el uso ---
+    minimos = {**MINIMOS, **{
+        k: {**MINIMOS.get(k, {"nombre": k}), **v}
+        for k, v in normativa.local("minimos", {}).items()}}
     for r in rooms:
         w = float(r["x1"]) - float(r["x0"])
         h = float(r["y1"]) - float(r["y0"])
         area = w * h
-        m = MINIMOS.get(_clase(r["name"]))
+        m = minimos.get(_clase(r["name"]))
         if not m:
             continue
         lado_menor = min(w, h)
