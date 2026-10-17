@@ -140,6 +140,10 @@ namespace AutoCadMcpPlugin
                     return UnionRegionsCommand.Run(doc, pars);
                 case "fillet_solid_edges":
                     return FilletSolidEdgesCommand.Run(doc, pars);
+                case "extrude_profile":
+                    return SolidCommands.Extrude(doc, pars);
+                case "solid_boolean":
+                    return SolidCommands.Boolean(doc, pars);
 
                 // Medicion
                 case "get_extents":

@@ -20,6 +20,7 @@ import compose as compose_mod
 import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
+import phone3d as phone3d_mod
 import profile as profile_mod
 import isometric as iso_mod
 import quantities as qty_mod
@@ -4768,6 +4769,82 @@ def fillet_solid_edges(handle: str, radius: float,
         "handle": handle, "radius": radius,
         "zPlanes": z_planes, "outerOnly": outer_only,
     })
+
+
+@mcp.tool()
+def extrude_profile(points: list[list[float]], height: float,
+                    bulges: Optional[list[float]] = None, z0: float = 0.0,
+                    taper: float = 0.0, layer: Optional[str] = None,
+                    color_index: Optional[int] = None) -> dict[str, Any]:
+    """Extruye un contorno CERRADO de líneas y arcos a un sólido 3D, sin
+    run_code. points: vértices [[x, y], ...]; bulges: uno por vértice (0 =
+    tramo recto, tan(ángulo/4) = arco hasta el vértice siguiente; 1 = semi-
+    círculo) — lo mismo que líneas y arcos unidos con JOIN. z0 es la cota
+    de la base; height > 0 sube, < 0 baja. taper en grados. Devuelve handle,
+    volume y z0/z1. Con solid_boolean y fillet_solid_edges alcanza para
+    modelar una pieza."""
+    return acad.call("extrude_profile", {
+        "points": points, "bulges": bulges, "z0": z0, "height": height,
+        "taper": taper, "layer": layer, "colorIndex": color_index,
+    })
+
+
+@mcp.tool()
+def solid_boolean(target: str, tools: list[str], op: str = "subtract",
+                  delete_tools: bool = True) -> dict[str, Any]:
+    """Booleana entre sólidos 3D: op = 'subtract' (resta tools de target),
+    'union' o 'intersect'. El target conserva su handle, capa y color; las
+    herramientas se consumen salvo delete_tools=False."""
+    return acad.call("solid_boolean", {
+        "target": target, "tools": tools, "op": op,
+        "deleteTools": delete_tools,
+    })
+
+
+@mcp.tool()
+def create_phone_3d(width: float, height: float, thickness: float,
+                    corner_radius: float,
+                    edge_radius: Optional[float] = None,
+                    screen: Optional[dict[str, Any]] = None,
+                    plateau: Optional[dict[str, Any]] = None,
+                    lenses: Optional[list[dict[str, Any]]] = None,
+                    buttons: Optional[list[dict[str, Any]]] = None,
+                    finish: Optional[str] = None,
+                    colors: Optional[dict[str, int]] = None,
+                    origin: Optional[list[float]] = None,
+                    layer_prefix: Optional[str] = None) -> dict[str, Any]:
+    """Teléfono en 3D a partir de SUS DIMENSIONES (ningún modelo viene
+    cableado: las medidas las trae quien llama; si falta una, preguntarla).
+    No usa run_code: extrude_profile + solid_boolean + fillet_solid_edges.
+
+    Marco: vista frontal, X a la derecha, Y arriba; el dorso en Z=0 y la
+    pantalla mira a +Z. Plateau y lentes salen del dorso hacia -Z. Unidades
+    del dibujo (mm). width/height/thickness = caja; corner_radius = radio de
+    las esquinas en planta; edge_radius (opcional) = fillet real del canto
+    de abajo y de arriba (<= thickness/2).
+
+    screen = {bezel: n | [izq, der, arriba, abajo], depth: espesor del vidrio,
+      corner_radius?, island?: {width, height, from_top, offset_x?}} — rebaja
+      el cuerpo y pone el vidrio (pieza aparte).
+    plateau = {width, height, protrusion, from_left, from_top, corner_radius?}
+      — from_* desde el borde izquierdo / superior del frente.
+    lenses = [{dx, dy (centro desde la esquina sup-izq del plateau), diameter,
+      protrusion (sobre el dorso), ring_diameter?, glass_recess?}].
+    buttons = [{side: left|right|top|bottom, from_start (desde arriba en los
+      laterales, desde la izquierda en top/bottom), length, protrusion,
+      height? (alto en Z), z_center?, corner_radius?}].
+
+    Color por pieza (body, screen, island, plateau, lens_ring, lens_glass,
+    button): finish = 'grafito' | 'plata' | 'dorado' | 'azul' trae una paleta
+    base y colors={'body': 150} pisa piezas sueltas (índices ACI). Cada pieza
+    es un sólido aparte en su capa TEL-*. Si algo falla se borra lo creado.
+    Para mirarlo: set_3d_view."""
+    return phone3d_mod.create_phone(
+        width=width, height=height, thickness=thickness,
+        corner_radius=corner_radius, edge_radius=edge_radius, screen=screen,
+        plateau=plateau, lenses=lenses, buttons=buttons, finish=finish,
+        colors=colors, origin=tuple(origin) if origin else (0.0, 0.0),
+        layer_prefix=layer_prefix)
 
 
 @mcp.tool()

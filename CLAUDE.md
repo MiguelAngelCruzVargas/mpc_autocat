@@ -798,6 +798,30 @@ Pasó: quedaron cuatro pestañas abiertas en AutoCAD, una de ellas en solo
 lectura con una corrida dibujada encima de otra. `test_live_instalaciones.py`
 trabaja así: reusa la pestaña del plano, y si la base ya está, no la rehace.
 
+## 6.sexies Piezas 3D sueltas: `create_phone_3d` y los comandos de sólidos
+
+Un objeto 3D (teléfono, carcasa, pieza) se modela con tools, **no con
+`run_code`** (apagado por defecto): `extrude_profile` (contorno cerrado de
+líneas y arcos con `bulges` -> sólido, el equivalente a líneas+arcos unidos con
+JOIN), `solid_boolean` (`subtract` / `union` / `intersect`) y
+`fillet_solid_edges` (canto redondeado real, aristas elegidas por geometría).
+
+**`create_phone_3d`** (módulo `phone3d.py`) arma un teléfono completo a partir
+de DIMENSIONES: caja (`width`, `height`, `thickness`), `corner_radius`,
+`edge_radius`, `screen` (marco, espesor del vidrio, isla), `plateau` de
+cámara, `lenses` y `buttons`. Ningún modelo viene cableado: las medidas las
+trae el pedido, y si falta una (radio de esquina, tamaño de lente...) se
+pregunta o se informa que es una estimación — nunca se inventa en silencio.
+Cada pieza es un sólido aparte en su capa `TEL-*` y su color; `finish`
+(`grafito`/`plata`/`dorado`/`azul`) trae la paleta y `colors={"body": 150}`
+pisa piezas sueltas. Todo se valida antes de dibujar (lente fuera del plateau,
+marco que se come la pantalla, fillet mayor que medio espesor) y, si algo
+falla a mitad, borra lo creado. Para mirarlo: `set_3d_view`.
+
+Estos comandos viven en el plugin (`SolidCommands.cs`): recompilar y reiniciar
+AutoCAD, y guardar el DWG con nombre ANTES de reiniciar
+(`tools/install_bundle.ps1 -CloseAutoCad -Reopen`).
+
 ## 7. Capas
 
 Una capa por tipo de elemento, creada con `set_layer` antes de dibujar (color y
