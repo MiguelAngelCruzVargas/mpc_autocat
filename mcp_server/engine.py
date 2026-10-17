@@ -165,11 +165,16 @@ def _red_de_seguridad(force: bool) -> tuple[bool, list[str], str]:
     motivo_del_rechazo)."""
     notas: list[str] = []
     activo = _documento_activo()
-    recordado = session.last_save_path()
+    clave = session.doc_key(activo)
+    # El path recordado es el de ESTE documento. Nunca el "último guardado de
+    # la sesión": con dos dibujos abiertos eso escribía el activo encima del
+    # archivo del otro (pasó: un modelo quedó pisado por el plano de otro
+    # proyecto). Si no se sabe cuál es el activo, no hay path recordado.
+    recordado = session.last_save_path(clave) if clave else None
     propio = activo.get("fullPath") if activo else None
-    # Mismo orden que save_drawing() sin path: el path de la sesión manda (el
-    # plugin guarda con SaveAs y el nombre del documento no cambia), y si no
-    # hay, el archivo propio del documento.
+    # El path guardado con save_drawing(path=...) manda (el plugin guarda con
+    # SaveAs y el nombre del documento no cambia), y si no hay, el archivo
+    # propio del documento.
     destino = recordado or (propio if _es_archivo_real(propio) else None)
 
     # Si no se pudo preguntar, se asume lo peor: perder trabajo cuesta más
@@ -208,7 +213,7 @@ def _red_de_seguridad(force: bool) -> tuple[bool, list[str], str]:
             f"No se ejecutó: falló el guardado previo ({exc}). Sin ese "
             "guardado una caída de AutoCAD se lleva lo no guardado. Revisá "
             "el path con save_drawing, o pasá force=True.")
-    session.note_saved(destino)
+    session.note_saved(destino, doc=clave)
     notas.append(f"Antes de ejecutar se guardó el dibujo en '{destino}' "
                  "(red de seguridad: una caída de AutoCAD no se ataja).")
     return True, notas, ""

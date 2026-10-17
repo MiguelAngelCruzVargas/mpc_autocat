@@ -70,12 +70,18 @@ def test_no_pisa_un_warning_existente() -> None:
 
 
 def test_save_sin_path_reusa_el_ultimo() -> None:
-    session.reset()
-    session.note_saved("C:/obra/casa.dwg")
+    session.reset_all()
+    # Dibujo sin guardar (Drawing1) que ya se guardó una vez con path.
+    doc = {"name": "Drawing1.dwg", "fullPath": "Drawing1.dwg",
+           "isActive": True, "hasUnsavedChanges": True}
+    clave = session.doc_key(doc)
+    session.note_saved("C:/obra/casa.dwg", doc=clave)
     capturado = {}
     real = server.acad.call
 
     def mock(cmd, params=None):
+        if cmd == "list_documents":
+            return {"documents": [doc]}
         capturado.update({"cmd": cmd, **(params or {})})
         return {"saved": True}
 
@@ -93,14 +99,46 @@ def test_save_sin_path_reusa_el_ultimo() -> None:
         check("un path explícito manda",
               capturado.get("path") == "C:/obra/casa_v2.dwg", str(capturado))
         check("y queda como el nuevo recordado",
-              session.last_save_path() == "C:/obra/casa_v2.dwg",
-              str(session.last_save_path()))
+              session.last_save_path(clave) == "C:/obra/casa_v2.dwg",
+              str(session.last_save_path(clave)))
     finally:
         server.acad.call = real
-        session.reset()
+        session.reset_all()
+
+
+def test_save_sin_path_no_usa_el_de_otro_documento() -> None:
+    """El bug: con dos dibujos abiertos, save_drawing() sin path escribía el
+    activo sobre el archivo guardado del otro."""
+    session.reset_all()
+    otro = {"name": "Drawing1.dwg", "fullPath": "Drawing1.dwg",
+            "isActive": False}
+    activo = {"name": "plano.dwg", "fullPath": "C:/obra/plano.dwg",
+              "isActive": True}
+    session.note_saved("C:/modelos/iphone.dwg", doc=session.doc_key(otro))
+    capturado = {}
+    real = server.acad.call
+
+    def mock(cmd, params=None):
+        if cmd == "list_documents":
+            return {"documents": [otro, activo]}
+        capturado.update({"cmd": cmd, **(params or {})})
+        return {"saved": True}
+
+    try:
+        server.acad.call = mock
+        server.save_drawing()
+        check("el activo NO se guarda sobre el archivo del otro",
+              capturado.get("path") != "C:/modelos/iphone.dwg",
+              str(capturado))
+        check("guarda en su propio archivo (sin path: el plugin usa el suyo)",
+              capturado.get("path") is None, str(capturado))
+    finally:
+        server.acad.call = real
+        session.reset_all()
 
 
 def test_save_sin_ningun_path_no_inventa() -> None:
+    session.reset_all()
     session.reset()
     capturado = {}
     real = server.acad.call
@@ -298,6 +336,7 @@ def main() -> int:
     for fn in [test_conteo_de_operaciones, test_aviso_al_cruzar_el_umbral,
                test_no_pisa_un_warning_existente,
                test_save_sin_path_reusa_el_ultimo,
+               test_save_sin_path_no_usa_el_de_otro_documento,
                test_save_sin_ningun_path_no_inventa,
                test_open_document_siembra_el_path,
                test_cambiar_de_dibujo_olvida_la_sesion,
