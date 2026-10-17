@@ -67,7 +67,7 @@ def main() -> int:
                  # (describe_api, api_guide), que no tienen comando propio.
                  "engine_mod.",
                  # model3d: create_3d_model genera C# y lo corre con run_code.
-                 "model3d_mod.", "phone3d_mod.",
+                 "model3d_mod.", "phone3d_mod.", "normativa_mod.",
                  # instalaciones: eléctrica, hidráulica, sanitaria y su simbología.
                  "inst_mod.",
                  # capítulo de zapatas: diseño y dibujo de oficio.

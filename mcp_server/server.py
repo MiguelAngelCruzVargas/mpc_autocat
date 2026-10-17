@@ -20,6 +20,7 @@ import compose as compose_mod
 import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
+import normativa as normativa_mod
 import phone3d as phone3d_mod
 import profile as profile_mod
 import isometric as iso_mod
@@ -187,6 +188,7 @@ def check_walls(walls: list[dict[str, Any]], tolerance: float = 0.05,
 
 
 @mcp.tool()
+@normativa_mod.con_pais()
 def check_geometry(rooms: list[dict[str, Any]],
                     doors: list[dict[str, Any]]) -> dict[str, Any]:
     """Verifica que los recintos sean coherentes y construibles.
@@ -210,6 +212,26 @@ def check_geometry(rooms: list[dict[str, Any]],
 
 
 @mcp.tool()
+def get_normative(country: Optional[str] = None) -> dict[str, Any]:
+    """Qué normativa aplican las tools de proyecto para un país. LLAMALA (o
+    preguntale al usuario) ANTES de proyectar: las reglas y valores de las
+    tools son de MÉXICO (NOM-001-SEDE, INIFED, RCDF y NTC de la CDMX).
+
+    Sin country devuelve la pregunta que hay que hacerle al usuario y los
+    países con perfil. Con country devuelve si su normativa está codificada
+    ('codificada') o no ('no_codificada'); en ese caso NO se pueden dar por
+    válidos los números de las tools y hay que pedirle al usuario los
+    mínimos de su norma local (la respuesta trae, como orientación, qué
+    normas buscar — verificar nombre y versión vigente)."""
+    res = normativa_mod.resolver(country)
+    if country is None or not str(country).strip():
+        res["pregunta"] = normativa_mod.pregunta()
+        res["paises"] = normativa_mod.paises()
+    return res
+
+
+@mcp.tool()
+@normativa_mod.con_pais()
 def suggest_layout(lot_width: float, lot_depth: float,
                    bedrooms: int = 2, bathrooms: int = 1) -> dict[str, Any]:
     """Propone una distribución COMPLETA para un lote entre medianeras, ya
@@ -243,6 +265,7 @@ def suggest_layout(lot_width: float, lot_depth: float,
 
 
 @mcp.tool()
+@normativa_mod.con_pais()
 def check_layout(rooms: list[dict[str, Any]], doors: list[dict[str, Any]],
                   lot_width: Optional[float] = None,
                   lot_depth: Optional[float] = None,
@@ -277,6 +300,7 @@ def check_layout(rooms: list[dict[str, Any]], doors: list[dict[str, Any]],
 
 
 @mcp.tool()
+@normativa_mod.con_pais()
 def check_program(spaces: list[dict[str, Any]],
                    lot_width: Optional[float] = None,
                    lot_depth: Optional[float] = None,
@@ -1845,6 +1869,7 @@ def place_devices(devices: list[dict[str, Any]],
 
 
 @mcp.tool()
+@normativa_mod.con_pais(dibuja="draw")
 def suggest_electrical(rooms: list[dict[str, Any]],
                        doors: Optional[list[dict[str, Any]]] = None,
                        fixtures: Optional[list[dict[str, Any]]] = None,
@@ -1889,6 +1914,7 @@ def suggest_electrical(rooms: list[dict[str, Any]],
 
 
 @mcp.tool()
+@normativa_mod.con_pais(dibuja="draw")
 def suggest_hydraulic(rooms: list[dict[str, Any]],
                       doors: Optional[list[dict[str, Any]]] = None,
                       fixtures: Optional[list[dict[str, Any]]] = None,
@@ -1934,6 +1960,7 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
 
 
 @mcp.tool()
+@normativa_mod.con_pais(dibuja="draw")
 def suggest_sanitary(rooms: list[dict[str, Any]],
                      doors: Optional[list[dict[str, Any]]] = None,
                      fixtures: Optional[list[dict[str, Any]]] = None,
@@ -2651,6 +2678,7 @@ def create_footing_section(x: float, y: float,
 # ------------------------------------------- primitivas de detalle
 
 @mcp.tool()
+@normativa_mod.con_pais()
 def design_footing(kind: str, dead_load: float, live_load: float,
                    allowable_bearing: float, fc: float, depth: float,
                    column: Optional[list[float]] = None,

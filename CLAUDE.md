@@ -14,6 +14,32 @@ ni pedir la contraseña. Red de seguridad: corre en una transacción (si falla,
 el dibujo queda intacto) y antes guarda solo; sin archivo no ejecuta salvo
 `force=True`.
 
+## 0.0 Primero: ¿de qué país es el proyecto?
+
+Las reglas y los valores de las tools de proyecto (mínimos de recintos,
+instalación eléctrica, hidráulica, sanitaria, cimentación) están codificados
+con la normativa de **México**: NOM-001-SEDE-2012, INIFED, Reglamento de
+Construcciones y NTC de la CDMX. Si el proyecto es de otro lugar, esos números
+no valen, y un plano con notas de norma ajena es un plano con la norma
+equivocada.
+
+Por eso, **antes de proyectar, preguntar el país** (o llamar a
+`get_normative`) y pasarlo en `country` a las tools que dependen de norma
+(`suggest_layout`, `check_program`, `check_layout`, `check_geometry`,
+`suggest_electrical`, `suggest_hydraulic`, `suggest_sanitary`,
+`design_footing`). El resultado trae `normativa` con lo que se aplicó:
+
+- **México** → `codificada`: se usa tal cual.
+- **Otro país** → `no_codificada`: la tool NO dibuja (ni notas ni valores
+  ajenos) salvo que el usuario acepte la norma mexicana solo como referencia
+  (`accept_reference=True`) o se use `draw=False`. Decírselo al usuario y
+  pedirle los mínimos de su norma local; `get_normative` trae, como
+  orientación, qué normas buscar (verificar nombre y versión vigente).
+- Sin `country` la tool corre con la referencia de México y lo advierte.
+
+Agregar un país = codificar su perfil en `normativa.py` y sus valores en las
+reglas, con la fuente en la mano; nunca inventarlos.
+
 ## 0. Antes de dibujar: validar
 
 **Para una vivienda entre medianeras, el partido no se inventa: `suggest_layout`.**
