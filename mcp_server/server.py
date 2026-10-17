@@ -4837,7 +4837,7 @@ def create_phone_3d(width: float, height: float, thickness: float,
     Color por pieza (body, screen, island, plateau, lens_ring, lens_glass,
     button): finish = 'grafito' | 'plata' | 'dorado' | 'azul' trae una paleta
     base y colors={'body': 150} pisa piezas sueltas (índices ACI). Cada pieza
-    es un sólido aparte en su capa TEL-*. Si algo falla se borra lo creado.
+    es un sólido aparte en su capa 3D-TEL-* (el prefijo 3D- es el que set_3d_view deja visible). Si algo falla se borra lo creado.
     Para mirarlo: set_3d_view."""
     return phone3d_mod.create_phone(
         width=width, height=height, thickness=thickness,

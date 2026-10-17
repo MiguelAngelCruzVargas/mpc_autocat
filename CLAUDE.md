@@ -812,7 +812,7 @@ de DIMENSIONES: caja (`width`, `height`, `thickness`), `corner_radius`,
 cámara, `lenses` y `buttons`. Ningún modelo viene cableado: las medidas las
 trae el pedido, y si falta una (radio de esquina, tamaño de lente...) se
 pregunta o se informa que es una estimación — nunca se inventa en silencio.
-Cada pieza es un sólido aparte en su capa `TEL-*` y su color; `finish`
+Cada pieza es un sólido aparte en su capa `3D-TEL-*` y su color; `finish`
 (`grafito`/`plata`/`dorado`/`azul`) trae la paleta y `colors={"body": 150}`
 pisa piezas sueltas. Todo se valida antes de dibujar (lente fuera del plateau,
 marco que se come la pantalla, fillet mayor que medio espesor) y, si algo

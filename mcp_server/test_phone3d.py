@@ -100,11 +100,11 @@ def test_completo() -> None:
     check("cantidad de sólidos", len(ext) == 1 + 1 + 1 + 1 + 1 + 4 + 2, len(ext))
     check("cuerpo de Z=0 a espesor", ext[0]["z0"] == 0.0 and ext[0]["height"] == 8.75)
     check("plateau baja hacia -Z",
-          any(p["layer"] == "TEL-PLATEAU" and p["height"] < 0 for p in ext))
+          any(p["layer"] == "3D-TEL-PLATEAU" and p["height"] < 0 for p in ext))
     check("colores del acabado + override",
           r["colors"]["body"] == 150 and r["colors"]["button"] == 8, r["colors"])
     check("cada pieza lleva su colorIndex",
-          {p["layer"]: p["colorIndex"] for p in ext}["TEL-CUERPO"] == 150)
+          {p["layer"]: p["colorIndex"] for p in ext}["3D-TEL-CUERPO"] == 150)
     check("el rebaje se resta del cuerpo y se consume",
           any(c == "solid_boolean" and p["op"] == "subtract"
               and p["deleteTools"] and p["target"] == r["pieces"]["body"]
@@ -112,7 +112,7 @@ def test_completo() -> None:
     check("handles del rebaje no quedan en la lista",
           len(r["handles"]) == len(ext) - 1, len(r["handles"]))
     check("botón izquierdo sale del costado",
-          any(p["layer"] == "TEL-BOTONES" and
+          any(p["layer"] == "3D-TEL-BOTONES" and
               min(q[0] for q in p["points"]) < 0 for p in ext))
 
 

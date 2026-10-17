@@ -26,9 +26,9 @@ K90 = math.tan(math.radians(90) / 4)   # bulge de un arco de 90 grados
 PIEZAS = ("body", "screen", "island", "plateau", "lens_ring", "lens_glass",
           "button")
 CAPA = {
-    "body": "TEL-CUERPO", "screen": "TEL-PANTALLA", "island": "TEL-PANTALLA",
-    "plateau": "TEL-PLATEAU", "lens_ring": "TEL-LENTES",
-    "lens_glass": "TEL-LENTES", "button": "TEL-BOTONES",
+    "body": "3D-TEL-CUERPO", "screen": "3D-TEL-PANTALLA", "island": "3D-TEL-PANTALLA",
+    "plateau": "3D-TEL-PLATEAU", "lens_ring": "3D-TEL-LENTES",
+    "lens_glass": "3D-TEL-LENTES", "button": "3D-TEL-BOTONES",
 }
 
 # Acabados: color ACI por pieza. Del 10 al 255 para que se lean en pantalla
@@ -255,7 +255,7 @@ def create_phone(width: float, height: float, thickness: float,
     piezas: dict[str, Any] = {"buttons": [], "lensRings": [], "lensGlasses": []}
 
     def capa(p: str) -> Optional[str]:
-        return (layer_prefix + CAPA[p].split("-", 1)[1]) if layer_prefix else None
+        return (layer_prefix + CAPA[p].rsplit("-", 1)[1]) if layer_prefix else None
 
     try:
         # 1. Cuerpo: contorno de líneas y arcos extruido, y su canto redondeado
