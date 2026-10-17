@@ -161,6 +161,24 @@ el nombre del archivo:
 - Escuela: UNID (la plataforma de la materia "14956-EMIQ-INR19 Dibujo y Diseño
   en Ingeniería").
 
+**El guardado automático de `run_code` escribe en el ÚLTIMO path guardado, no
+en el del dibujo activo.** Con dos dibujos abiertos eso pisa uno con el
+contenido del otro (pasó: el modelo de un iPhone quedó sobrescrito por el
+plano de otro proyecto y se salvó porque seguía en memoria). Al cambiar de
+documento con `set_active_document`/`open_document`, lo primero es
+`save_drawing(path=<el de ESE documento>)`, antes de cualquier `run_code`. Y
+después de mover cosas "temporalmente" (apartarlas para una captura),
+verificar que volvieron antes de guardar.
+
+## 2.pre.bis Corregir al usuario cuando algo está mal
+
+Si lo que pide va a dejar el plano peor (vistas que quedan fuera de la hoja,
+un formato que no entra, una medida inventada, un paso del enunciado que se
+saltea), decirlo ANTES de hacerlo y proponer la alternativa; no ejecutarlo en
+silencio y esperar a que lo note. Y si lo hice yo y después lo veo mal,
+avisarlo y corregirlo sin que me lo pidan. Antes de dar una lámina por
+buena, verificar que TODAS las vistas dibujadas quedaron dentro del cajón.
+
 ## 2.bis Guardar seguido: AutoCAD se puede caer a mitad de sesión
 
 `Drawing1.dwg` (el que arranca sin nombre) vive solo en memoria. Un plano
