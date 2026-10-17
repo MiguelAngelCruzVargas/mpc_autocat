@@ -141,6 +141,26 @@ unidades del modelo. Si el terreno mide 40x25m y el área útil da 80.6x51.8,
 entra; si no entra, subí el denominador de escala o el formato — **nunca**
 achiques el dibujo fuera de escala.
 
+## 2.pre Regla fija: al empezar un plano, guardarlo CON NOMBRE
+
+Antes de dibujar la primera entidad (y siempre antes de reiniciar AutoCAD,
+instalar el plugin o correr algo que pueda tirarlo): `save_drawing(path=...)`
+con un nombre propio. Nunca trabajar sobre `Drawing1.dwg`. Un reinicio de
+AutoCAD tira lo que solo vive en memoria.
+
+Para trabajos de la escuela el nombre sigue el formato que pide la plataforma:
+`ApellidoP_ApellidoM_Nombres_S<n>.dwg` (S4 = sesión 4).
+
+**Datos del autor — no se vuelven a preguntar.** Salen en el rótulo
+(`create_sheet`: `drawn_by`, `location`, `client`, `date`, `sheet_number`) y en
+el nombre del archivo:
+
+- Alumno: JOSUE DANIEL DIAZ PEREZ (en el rótulo, si el nombre no cabe en la
+  celda, `J. D. DIAZ PEREZ`; el nombre completo va en el nombre del archivo y
+  en la carátula).
+- Escuela: UNID (la plataforma de la materia "14956-EMIQ-INR19 Dibujo y Diseño
+  en Ingeniería").
+
 ## 2.bis Guardar seguido: AutoCAD se puede caer a mitad de sesión
 
 `Drawing1.dwg` (el que arranca sin nombre) vive solo en memoria. Un plano

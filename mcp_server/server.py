@@ -4744,6 +4744,33 @@ def union_regions(handles: list[str],
 
 
 @mcp.tool()
+def fillet_solid_edges(handle: str, radius: float,
+                        z_planes: Optional[list[float]] = None,
+                        outer_only: bool = False) -> dict[str, Any]:
+    """Redondea aristas de un sólido 3D con un fillet real (el FILLETEDGE de
+    AutoCAD, por API) — el canto de un teléfono, de una carcasa, de una pieza.
+
+    handle: el Solid3d (el que devuelve run_code / una extrusión).
+    radius: radio del fillet, en unidades del dibujo.
+
+    Las aristas se eligen por GEOMETRÍA, no por número, porque un índice cambia
+    en cuanto el sólido se edita:
+    z_planes: solo aristas planas que yacen en alguna de esas cotas Z. Para una
+        pieza extruida de Z=0 a Z=7.3, [0, 7.3] redondea el canto de abajo y de
+        arriba, esquinas incluidas.
+    outer_only: solo aristas que tocan el perímetro de la caja del sólido. Deja
+        afuera los bordes de rebajes y agujeros (una pantalla empotrada, un
+        botón), que no se quieren redondear junto con el canto exterior.
+
+    Si el radio no cabe (mayor que una pared o que un radio de esquina vecino)
+    AutoCAD lo rechaza y el dibujo queda como estaba."""
+    return acad.call("fillet_solid_edges", {
+        "handle": handle, "radius": radius,
+        "zPlanes": z_planes, "outerOnly": outer_only,
+    })
+
+
+@mcp.tool()
 def get_extents(layers: Optional[list[str]] = None,
                  exclude_layers: Optional[list[str]] = None) -> dict[str, Any]:
     """Cuánto ocupa lo que ya está dibujado en el espacio ACTIVO (el modelo, o

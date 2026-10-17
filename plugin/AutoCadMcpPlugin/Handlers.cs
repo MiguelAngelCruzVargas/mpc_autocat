@@ -138,6 +138,8 @@ namespace AutoCadMcpPlugin
                 // Limpieza de geometria
                 case "union_regions":
                     return UnionRegionsCommand.Run(doc, pars);
+                case "fillet_solid_edges":
+                    return FilletSolidEdgesCommand.Run(doc, pars);
 
                 // Medicion
                 case "get_extents":
