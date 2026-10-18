@@ -31,6 +31,12 @@
   No pregunta nada (acepta instalar Python con winget si falta).
 .PARAMETER Desinstalar
   Quita el plugin, el acceso directo y el alta en los clientes.
+.PARAMETER Destino
+  Dónde queda el programa instalado (default: %LOCALAPPDATA%\AutoCadIA\app).
+  Desde un paquete se COPIA ahí: así se puede borrar el .zip y la carpeta
+  descomprimida sin romper nada.
+.PARAMETER EnPlace
+  No copiar: usar la carpeta donde está el instalador (modo desarrollo).
 #>
 [CmdletBinding()]
 param(
@@ -38,11 +44,33 @@ param(
     [switch]$SinPlugin,
     [switch]$SinAtajo,
     [switch]$Si,
-    [switch]$Desinstalar
+    [switch]$Desinstalar,
+    [string]$Destino = '',
+    [switch]$EnPlace
 )
 
 $ErrorActionPreference = 'Stop'
-$raiz = Split-Path -Parent $PSScriptRoot
+$origen = Split-Path -Parent $PSScriptRoot
+$raiz = $origen
+# Desde un paquete (trae plugin-bundle) se instala en una carpeta permanente
+# del usuario; desde el repo (sin plugin-bundle) se trabaja en el lugar.
+$esPaquete = Test-Path (Join-Path $origen 'plugin-bundle\AutoCadMcp.bundle')
+if ($esPaquete -and -not $EnPlace -and -not $Desinstalar) {
+    $appDir = if ($Destino) { $Destino } else { Join-Path $env:LOCALAPPDATA 'AutoCadIA\app' }
+    if ((Resolve-Path $origen).Path.TrimEnd('') -ne $appDir.TrimEnd('')) {
+        Write-Host ""
+        Write-Host "[0] Copiando el programa a $appDir" -ForegroundColor Cyan
+        New-Item -ItemType Directory -Force -Path $appDir | Out-Null
+        # /E copia todo; el entorno virtual (.venv) y las claves no se tocan al reinstalar.
+        & robocopy $origen $appDir /E /XD '.venv' '__pycache__' /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw 'No se pudo copiar el programa.' }
+        Write-Host "    OK  programa copiado" -ForegroundColor Green
+    }
+    $raiz = $appDir
+} elseif ($Desinstalar -and $env:LOCALAPPDATA) {
+    $cand = Join-Path $env:LOCALAPPDATA 'AutoCadIA\app'
+    if (Test-Path $cand) { $raiz = $cand }
+}
 $venv = Join-Path $raiz 'mcp_server\.venv'
 $pyVenv = Join-Path $venv 'Scripts\python.exe'
 $server = Join-Path $raiz 'mcp_server\server.py'
@@ -83,7 +111,8 @@ if ($Desinstalar) {
         & python $registrar --quitar --clientes $(if ($Clientes -eq 'ninguno') { '' } else { $Clientes })
     }
     Write-Host ""
-    Write-Host 'Listo. La carpeta del programa y tu clave guardada en %LOCALAPPDATA%\AutoCadMcp no se borran.'
+    Write-Host "Listo. Quedan sin borrar la carpeta del programa ($raiz) y tu clave guardada en %LOCALAPPDATA%\AutoCadMcp: borralas a mano si querés."
+
     return
 }
 
