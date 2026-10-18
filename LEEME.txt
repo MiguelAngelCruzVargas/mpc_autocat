@@ -1,0 +1,26 @@
+AUTOCAD IA - Instalación (Windows)
+==================================
+
+1. Cerrá AutoCAD.
+2. Doble clic en  INSTALAR.bat  (no pide administrador).
+   Instala el plugin de AutoCAD, el servidor y crea el acceso directo
+   "AutoCAD IA" en el escritorio. Si falta Python 3.10+, ofrece instalarlo.
+3. Abrí AutoCAD. En la línea de comandos debe decir:
+   [MCP] Plugin cargado. Escuchando en 127.0.0.1:8765
+4. Doble clic en "AutoCAD IA" del escritorio: se abre el panel en el
+   navegador. Ahí elegís la IA (OpenRouter, OpenAI, Anthropic, DeepSeek, una
+   local) y pegás tu clave. La clave se guarda cifrada en tu usuario.
+
+Claude Desktop, Claude Code y OpenCode: el instalador les agrega las
+herramientas de AutoCAD solo (sin pisar tu configuración). Reiniciálos.
+ChatGPT de escritorio no soporta herramientas locales: usá el panel con tu
+clave de OpenAI.
+
+Versiones de AutoCAD: 2019 a 2025 (2022 es la que se probó).
+AutoCAD 2026: debería funcionar (usa el mismo plugin que 2025) pero NO está
+probado. AutoCAD 2027: no soportado todavía.
+
+Desinstalar:  powershell -File tools\instalar.ps1 -Desinstalar
+
+IMPORTANTE: es un asistente de ayuda. Puede equivocarse y todo lo que dibuja
+debe revisarlo un ingeniero o arquitecto. No reemplaza a un profesional.

@@ -10,7 +10,12 @@
   simplemente ignora el otro.
 
   Códigos de versión: R23.0=2019, R23.1=2020, R24.0=2021, R24.1=2022,
-  R24.2=2023, R24.3=2024, R25.0=2025.
+  R24.2=2023, R24.3=2024, R25.0=2025, R25.1=2026, R26.0=2027.
+
+  2026 (R25.1) usa el mismo DLL de .NET 8 que 2025: el rango lo cubre, pero ESTE
+  REPO SOLO SE PROBÓ EN AUTOCAD 2022. 2027 (R26.0) pasa a .NET 10: el DLL de
+  .NET 8 no sirve ahí, por eso el tope SeriesMax="R25.1" (sin tope, AutoCAD 2027
+  intentaría cargarlo y fallaría).
 -->
 <ApplicationPackage
     SchemaVersion="1.0"
@@ -35,7 +40,7 @@
 
   <Components Description="AutoCAD 2025 en adelante (.NET 8)">
     <RuntimeRequirements OS="Win64" Platform="AutoCAD*"
-                         SeriesMin="R25.0" />
+                         SeriesMin="R25.0" SeriesMax="R25.1" />
     <ComponentEntry
         AppName="AutoCadMcpPlugin"
         Version="1.9.2"

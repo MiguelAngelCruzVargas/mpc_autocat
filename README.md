@@ -97,6 +97,30 @@ Si todo anda, vas a ver una capa "MUROS" nueva, una línea, un cuadrado, un
 círculo y un texto en el dibujo abierto, y las respuestas de cada llamada
 impresas en consola.
 
+## Instalar en otra computadora (paquete)
+
+Quien desarrolla arma el paquete una vez por versión (compila el plugin y deja
+todo en un `.zip`; `dist/` no se versiona):
+
+```powershell
+powershell -File tools\empaquetar.ps1        # -> dist\AutoCAD-IA-<version>.zip
+```
+
+Quien lo recibe descomprime y hace doble clic en **`INSTALAR.bat`** (no pide
+administrador, no necesita .NET). `tools\instalar.ps1` detecta AutoCAD, busca
+Python 3.10+ (ofrece instalarlo con winget), arma el entorno, instala el
+plugin como App Bundle, crea el acceso directo **«AutoCAD IA»** en el escritorio
+(abre el panel web donde se elige la IA y se pega la clave) y registra el
+servidor MCP en Claude Desktop, Claude Code y OpenCode sin pisar su
+configuración (`toolsegistrar_clientes.py`, con prueba en
+`mcp_server/test_registrar_clientes.py`). `-Desinstalar` lo deshace.
+
+- **AutoCAD 2026 (R25.1)**: el bundle lo cubre con el mismo DLL de .NET 8 que
+  2025, pero **solo se probó en 2022**. 2027 (R26.0, .NET 10) no está soportado
+  y el bundle no intenta cargarse ahí (`SeriesMax="R25.1"`).
+- **ChatGPT de escritorio** no carga servidores MCP locales: con esa IA se usa
+  el panel con una clave de OpenAI.
+
 ## 4. Conectar el servidor MCP a Claude Code
 
 El repo ya trae un [`.mcp.json`](.mcp.json) con rutas **relativas** a la raíz
