@@ -122,6 +122,29 @@ def test_peru_sanitaria() -> None:
         check("Perú eléctrica sigue sin dibujar", True)
 
 
+def test_quito_arquitectura() -> None:
+    import server
+    check("Ecuador/Quito alias, arquitectura codificada, el resto no",
+          normativa.resolver("Quito", "arquitectura")["estado"] == "codificada"
+          and normativa.resolver("Ecuador", "sanitaria")["estado"] == "no_codificada")
+    rooms = [
+        {"name": "SALA", "x0": 0, "y0": 0, "x1": 3.0, "y1": 2.5},
+        {"name": "RECÁMARA", "x0": 3.0, "y0": 0, "x1": 5.0, "y1": 3.0},
+    ]
+    r = server.check_geometry(rooms=rooms, doors=[{"from": "EXTERIOR", "to": "SALA", "width": 0.90, "x": 1, "y": 0}],
+                              country="Quito")
+    reglas = {p["rule"] for p in r["problems"]}
+    check("RTAU: sala de 2,5 m de lado útil no llega a 2,70",
+          "dimension minima (norma local)" in reglas, reglas)
+    check("RTAU: puerta de acceso de 0,90 < 0,96", "puerta minima (norma local)" in reglas, reglas)
+    check("RTAU: falta programa (baño, cocina, comedor, lavado)",
+          "programa minimo (norma local)" in reglas, reglas)
+    check("México no aplica la RTAU", not any("norma local" in p["rule"] for p in
+          server.check_geometry(rooms=rooms, doors=[], country="México")["problems"]))
+    check("la fuente de la RTAU viaja en el resultado", "RTAU" in r["normativa"]["fuente"])
+    check("el perfil no se filtra", normativa.perfil("arquitectura") is None)
+
+
 def test_tools_del_servidor() -> None:
     import server
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}

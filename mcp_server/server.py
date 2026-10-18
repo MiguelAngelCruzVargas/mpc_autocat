@@ -188,7 +188,7 @@ def check_walls(walls: list[dict[str, Any]], tolerance: float = 0.05,
 
 
 @mcp.tool()
-@normativa_mod.con_pais()
+@normativa_mod.con_pais(dominio="arquitectura")
 def check_geometry(rooms: list[dict[str, Any]],
                     doors: list[dict[str, Any]]) -> dict[str, Any]:
     """Verifica que los recintos sean coherentes y construibles.

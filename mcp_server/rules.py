@@ -223,6 +223,98 @@ def _en_frontera(puerta: dict[str, Any], a: dict[str, Any], b: dict[str, Any],
     return toca(a) and toca(b)
 
 
+def cajas_utiles(rooms: list[dict[str, Any]], ext: float = 0.15,
+                 inter: float = 0.10) -> dict[str, tuple[float, float, float, float]]:
+    """Caja ÚTIL (cara interior de muros) de cada recinto: las normas piden
+    dimensiones útiles, no a eje. ext/inter = espesor de muro exterior/interior;
+    el perímetro del conjunto de recintos se toma como exterior."""
+    bx0 = min(q["x0"] for q in rooms); bx1 = max(q["x1"] for q in rooms)
+    by0 = min(q["y0"] for q in rooms); by1 = max(q["y1"] for q in rooms)
+
+    def medio(c: float, lo: float, hi: float) -> float:
+        return (ext if abs(c - lo) < 1e-6 or abs(c - hi) < 1e-6 else inter) / 2.0
+    return {q["name"]: (q["x0"] + medio(q["x0"], bx0, bx1), q["y0"] + medio(q["y0"], by0, by1),
+                        q["x1"] - medio(q["x1"], bx0, bx1), q["y1"] - medio(q["y1"], by0, by1))
+            for q in rooms}
+
+
+def _minimo_local(nombre: str, perfil: dict[str, Any], dorms: int
+                  ) -> Optional[dict[str, Any]]:
+    n = nombre.lower()
+    for palabras, m in perfil["minimos"]:
+        # 'sala-comedor' exige las dos palabras; el resto, cualquiera.
+        ok = all(p in n for p in palabras) if len(palabras) == 2 and palabras == ("sala", "comedor") \
+            else any(p in n for p in palabras)
+        if ok:
+            area = m["area"]
+            if isinstance(area, dict):
+                area = area[min(max(dorms, 1), 3)]
+            return {**m, "area": float(area)}
+    return None
+
+
+def _check_arquitectura(rooms: list[dict[str, Any]], doors: list[dict[str, Any]],
+                        perfil: dict[str, Any]) -> list[dict[str, str]]:
+    """Mínimos de la normativa local de arquitectura (RTAU de Quito): lado y
+    área por recinto, ancho de puertas y de pasillos, y el programa mínimo
+    de una vivienda. Cada problema cita la fuente."""
+    fuente = perfil["fuente"].split(" http")[0]
+    out: list[dict[str, str]] = []
+    dorms = sum(1 for r in rooms if _clase(r["name"]) == "recamara")
+    utiles = cajas_utiles(rooms)        # la norma pide dimensiones ÚTILES
+    for r in rooms:
+        u = utiles[r["name"]]
+        w, h = u[2] - u[0], u[3] - u[1]
+        if _clase(r["name"]) == "circulacion" and min(w, h) < perfil["pasillo_min"] - 1e-6:
+            out.append({"rule": "pasillo minimo (norma local)",
+                        "problem": f"'{r['name']}' mide {min(w, h):.2f} m útiles de ancho: el mínimo "
+                                   f"en vivienda unifamiliar es {perfil['pasillo_min']:.2f} m ({fuente}).",
+                        "fix": "Ensanchá la circulación."})
+            continue
+        m = _minimo_local(r["name"], perfil, dorms)
+        if m is None:
+            continue
+        lado = min(w, h)
+        if lado < m["lado"] - 1e-6:
+            out.append({"rule": "dimension minima (norma local)",
+                        "problem": f"'{r['name']}' tiene lado útil menor de {lado:.2f} m: "
+                                   f"el mínimo para {m['nombre']} es {m['lado']:.2f} m ({fuente}).",
+                        "fix": "Reacomodá la distribución."})
+        elif w * h < m["area"] - 1e-6:
+            out.append({"rule": "superficie minima (norma local)",
+                        "problem": f"'{r['name']}' tiene {w * h:.2f} m2: el mínimo para "
+                                   f"{m['nombre']} es {m['area']:.2f} m2 ({fuente}).",
+                        "fix": "Agrandá el recinto o cambiale el uso."})
+    # Programa mínimo de la vivienda
+    nombres = " ".join(r["name"].lower() for r in rooms)
+    for clave in perfil["programa_minimo"]:
+        alias = {"baño": ("baño", "bano"), "dormitorio": ("recámara", "recamara", "dormitorio")}
+        if not any(a in nombres for a in alias.get(clave, (clave,))):
+            out.append({"rule": "programa minimo (norma local)",
+                        "problem": f"Falta '{clave}': toda vivienda dispone de baño completo, "
+                                   f"dormitorio, cocina, sala, comedor y lavado ({fuente}).",
+                        "fix": "Agregá el recinto."})
+    # Puertas (Cuadro 24)
+    for d in doors:
+        destino = str(d.get("to", "")).lower()
+        origen = str(d.get("from", "")).upper()
+        if d.get("open") or d.get("type") == "pass":
+            continue
+        ancho = float(d.get("width", 0.80))
+        if origen in ("EXTERIOR", "CALLE", "FACHADA"):
+            minimo, que = perfil["puerta_acceso"], "acceso principal"
+        elif any(k in destino for k in ("baño", "bano", "lav", "bodega", "servicio")):
+            minimo, que = perfil["puerta_aseo_servicio"], "aseo y servicio"
+        else:
+            minimo, que = perfil["puerta_estar_dormir_comer"], "dormitorios, estar y alimentación"
+        if ancho < minimo - 1e-6:
+            out.append({"rule": "puerta minima (norma local)",
+                        "problem": f"La puerta {d.get('from')} -> {d.get('to')} mide "
+                                   f"{ancho:.2f} m: el mínimo para {que} es {minimo:.2f} m ({fuente}).",
+                        "fix": f"Ensanchala a {minimo:.2f} m."})
+    return out
+
+
 def check_geometry(rooms: list[dict[str, Any]],
                    doors: list[dict[str, Any]]) -> dict[str, Any]:
     """Verifica que los recintos sean coherentes y construibles.
@@ -235,6 +327,14 @@ def check_geometry(rooms: list[dict[str, Any]],
     problemas: list[dict[str, str]] = []
     por_nombre = {r["name"].upper(): r for r in rooms}
 
+    # --- 0. Normativa local de arquitectura (p.ej. RTAU de Quito) ---
+    pa = normativa.perfil("arquitectura")
+    if pa is not None:
+        problemas += _check_arquitectura(rooms, doors, pa)
+        minimos_locales = True
+    else:
+        minimos_locales = False
+
     # --- 1. Dimensiones minimas segun el uso ---
     minimos = {**MINIMOS, **{
         k: {**MINIMOS.get(k, {"nombre": k}), **v}
@@ -244,7 +344,7 @@ def check_geometry(rooms: list[dict[str, Any]],
         h = float(r["y1"]) - float(r["y0"])
         area = w * h
         m = minimos.get(_clase(r["name"]))
-        if not m:
+        if minimos_locales or not m:
             continue
         lado_menor = min(w, h)
         if lado_menor < m["lado"] - 1e-6:

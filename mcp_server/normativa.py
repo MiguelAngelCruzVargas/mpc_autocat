@@ -159,6 +159,63 @@ PERU_SANITARIA: dict[str, Any] = {
     ],
 }
 
+URL_RTAU = ("https://www.ecp.ec/wp-content/uploads/2024/10/"
+            "RTAU-Tomo2-EDIFICABILIDAD-v2.0-23-10-2024.pdf")
+
+# Valores LEÍDOS del texto de las Reglas Técnicas de Arquitectura y
+# Urbanismo (RTAU) del Distrito Metropolitano de Quito, Tomo 2 Edificabilidad,
+# v2.0 (23-10-2024), capítulo 2.1 Edificaciones Residenciales. La copia
+# consultada la aloja la Cámara de la Construcción de Quito: confirmar contra
+# la publicación oficial del Municipio antes de presentar un proyecto.
+QUITO_ARQUITECTURA: dict[str, Any] = {
+    "fuente": "RTAU Quito, Tomo 2 Edificabilidad v2.0 (oct. 2024), 2.1 "
+              "Edificaciones Residenciales, Cuadros 23, 24 y 25 " + URL_RTAU,
+    "normas": ["Reglas Técnicas de Arquitectura y Urbanismo (RTAU), Distrito "
+               "Metropolitano de Quito, Tomo 2: 2.1.1 a 2.1.9"],
+    "verificar": [
+        "Copia alojada por la Cámara de la Construcción de Quito (ecp.ec): "
+        "contrastar con la publicación oficial del Municipio de Quito.",
+        "La RTAU da áreas de dormitorio principal (9,00 m2, lado 2,50) y "
+        "secundario (8,00 m2, lado 2,20) por separado: check_geometry trata "
+        "'recámara' como una sola clase y aplica la secundaria; el principal "
+        "se revisa aparte.",
+        "Lavado: la RTAU permite elegir entre cuarto de lavado (3,00 m2, lado "
+        "1,50), armario o módulo (0,95 m2, lado 0,70) o patio de servicio "
+        "(Cuadro 23); se aplicó el módulo, el más permisivo: el proyecto "
+        "debe declarar qué opción adopta.",
+        "Cocina: el cuadro llega a 3 dormitorios (6,50 m2); con más se aplicó "
+        "6,50 m2.",
+        "Dimensiones ÚTILES (cara interior de muros): se supuso muro exterior "
+        "de 0,15 m e interior de 0,10 m; el perímetro de los recintos es "
+        "exterior.",
+        "Solo es la parte de arquitectura de vivienda: las instalaciones "
+        "(desagüe, agua, eléctrica) de Ecuador NO están codificadas.",
+    ],
+    # (palabras del nombre del recinto) -> mínimos. 'area' puede depender del
+    # número de dormitorios: {1: m2, 2: m2, 3: m2}.
+    "minimos": [
+        (("sala", "comedor"), {"nombre": "sala-comedor", "lado": 2.70,
+                               "area": {1: 13.0, 2: 13.0, 3: 16.0}}),
+        (("comedor",), {"nombre": "comedor", "lado": 2.70, "area": 8.10}),
+        (("sala", "estar", "estancia"), {"nombre": "sala", "lado": 2.70, "area": 8.10}),
+        (("cocina",), {"nombre": "cocina", "lado": 1.50,
+                       "area": {1: 4.0, 2: 5.5, 3: 6.5}}),
+        (("baño", "bano"),
+         {"nombre": "baño completo", "lado": 1.30, "area": 2.50}),
+        (("principal",), {"nombre": "dormitorio principal", "lado": 2.50, "area": 9.0}),
+        (("recamara", "recámara", "dormitorio"),
+         {"nombre": "dormitorio secundario", "lado": 2.20, "area": 8.0}),
+        (("lav",), {"nombre": "módulo de lavado y secado", "lado": 0.70, "area": 0.95}),
+        (("patio",), {"nombre": "patio de servicio", "lado": 3.00, "area": 9.0}),
+    ],
+    "pasillo_min": 0.90,       # Cuadro 25, vivienda unifamiliar
+    "altura_min": 2.40,        # 2.1.1 A
+    # Cuadro 24: ancho mínimo de vano (m)
+    "puerta_acceso": 0.96, "puerta_estar_dormir_comer": 0.86,
+    "puerta_aseo_servicio": 0.76,
+    "programa_minimo": ("baño", "dormitorio", "cocina", "sala", "comedor", "lav"),
+}
+
 PERFILES: dict[str, dict[str, Any]] = {
     "MX": {
         "nombre": "México",
@@ -178,6 +235,11 @@ PERFILES: dict[str, dict[str, Any]] = {
         "RNE: A.010 (condiciones generales de diseño), A.020 (vivienda)",
         "RNE: EM.010 (instalaciones eléctricas), IS.010 (instalaciones sanitarias)",
         "RNE: E.050 (suelos y cimentaciones), E.060 (concreto armado), E.070 (albañilería)"]},
+    "EC": {"nombre": "Ecuador (Quito)", "estado": "no_codificada",
+           "dominios": {"arquitectura": QUITO_ARQUITECTURA}, "orientacion": [
+        "RTAU Quito (Reglas Técnicas de Arquitectura y Urbanismo): codificada solo la parte de vivienda",
+        "NEC-11 Capítulo 16, Norma Hidrosanitaria NHE Agua (solo AGUA: no trae desagüe)",
+        "Instalaciones sanitarias (desagüe) y eléctricas: norma oficial vigente no verificada; consultar INEN, MIDUVI y EPMAPS-Q"]},
     "CO": {"nombre": "Colombia", "estado": "no_codificada", "orientacion": [
         "NSR-10 (sismo resistencia), RETIE (eléctrico), RETILAP (iluminación)",
         "Norma NTC 1500 (código de fontanería) y POT/normas urbanas del municipio"]},
@@ -199,6 +261,7 @@ _ALIAS = {
     "mexico": "MX", "mx": "MX", "mex": "MX", "cdmx": "MX",
     "peru": "PE", "pe": "PE",
     "colombia": "CO", "co": "CO",
+    "ecuador": "EC", "ec": "EC", "quito": "EC",
     "argentina": "AR", "ar": "AR",
     "chile": "CL", "cl": "CL",
     "espana": "ES", "es": "ES", "spain": "ES",
