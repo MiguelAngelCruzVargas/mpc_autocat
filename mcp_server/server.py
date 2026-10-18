@@ -1960,7 +1960,7 @@ def suggest_hydraulic(rooms: list[dict[str, Any]],
 
 
 @mcp.tool()
-@normativa_mod.con_pais(dibuja="draw")
+@normativa_mod.con_pais(dibuja="draw", dominio="sanitaria")
 def suggest_sanitary(rooms: list[dict[str, Any]],
                      doors: Optional[list[dict[str, Any]]] = None,
                      fixtures: Optional[list[dict[str, Any]]] = None,

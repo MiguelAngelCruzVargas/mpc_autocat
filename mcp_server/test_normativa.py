@@ -94,6 +94,34 @@ def test_investigar_y_valores_locales() -> None:
             check(f"rechaza {motivo}", True)
 
 
+def test_peru_sanitaria() -> None:
+    import server
+    check("Perú sanitaria codificada, eléctrica no",
+          normativa.resolver("Perú", "sanitaria")["estado"] == "codificada"
+          and normativa.resolver("Perú", "electrica")["estado"] == "no_codificada")
+    r = server.suggest_layout(lot_width=9, lot_depth=16, bedrooms=3, bathrooms=2)
+    pe = server.suggest_sanitary(rooms=r["rooms"], doors=r["doors"], country="Perú", draw=False)
+    mx = server.suggest_sanitary(rooms=r["rooms"], doors=r["doors"], country="México", draw=False)
+    pend = {p["diameter_mm"]: p["slope"] for p in pe["pipes"]}
+    check("Perú: 1,5 % en Ø<=75 y 1 % en Ø>=100 (IS.010 6.2 c)",
+          all(s == 0.015 for d, s in pend.items() if d <= 75)
+          and all(s == 0.01 for d, s in pend.items() if d >= 100), pend)
+    check("Perú: el inodoro llega con Ø100", any(d >= 100 for d in pend))
+    check("Perú: registros cada 15 m y cajas CR", pe["criteria"]["registro_max_m"] == 15.0
+          and pe["registers"][0]["name"].startswith("CR"))
+    check("México no cambia: 2 %, albañal 150, R-n",
+          mx["criteria"]["pendiente_drenaje"] == 0.02
+          and mx["sewer"]["diameter_mm"] == 150 and mx["registers"][0]["name"] == "R-1")
+    check("la fuente y lo por verificar viajan en el resultado",
+          "IS.010" in pe["normativa"]["fuente"] and pe["normativa"]["verificar"])
+    check("el perfil no se filtra a la llamada siguiente", normativa.perfil("sanitaria") is None)
+    try:
+        server.suggest_electrical(rooms=r["rooms"], doors=r["doors"], country="Perú")
+        check("Perú eléctrica sigue sin dibujar", False)
+    except ValueError:
+        check("Perú eléctrica sigue sin dibujar", True)
+
+
 def test_tools_del_servidor() -> None:
     import server
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}

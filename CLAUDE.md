@@ -42,6 +42,15 @@ Por eso, **antes de proyectar, preguntar el país** (o llamar a
   (mínimos por uso). Lo demás (eléctrica, sanitaria, cimentación) se
   investiga igual y se dibuja con las tools manuales; `local_norms` rechaza
   una clave que no sabe aplicar en vez de fingir que la usó.
+- **Perú, solo `suggest_sanitary` (desagüe)**: codificado con el RNE IS.010
+  (DS 017-2012-VIVIENDA, texto oficial de vivienda.gob.pe): pendiente 1 % en
+  Ø≥100 y 1,5 % en Ø≤75, cajas de registro cada 15 m, inodoro Ø100, unidades
+  de descarga y diámetros de los anexos 6 y 8, notas de la norma en el plano.
+  El resultado trae `normativa.verificar`: los anexos son imagen escaneada de
+  baja resolución, y eso se le dice al usuario. Agua, eléctrica y el resto de
+  Perú siguen sin codificar (investigar, como arriba). Un dominio nuevo de
+  un país = su perfil en `normativa.PERFILES[..]["dominios"]` y la tool con
+  `dominio=...` en `con_pais`.
 - Sin `country` la tool corre con la referencia de México y lo advierte.
 
 Un país que se usa seguido conviene codificarlo en `normativa.py` (perfil +

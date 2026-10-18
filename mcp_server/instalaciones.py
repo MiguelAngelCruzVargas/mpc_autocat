@@ -27,6 +27,7 @@ import electrical
 import furniture
 import instalaciones_geom as geo
 import layers
+import normativa
 import space
 
 # ------------------------------------------------------------------ NORMA
@@ -87,6 +88,45 @@ UNIDADES_DESCARGA = {"wc": 6, "lavatory": 1, "shower": 3, "kitchen_sink": 2,
 
 # Ramal horizontal: diámetro mínimo según UD acumuladas, [INIFED] Tabla 3.3.
 DIAMETRO_RAMAL = [(1, 32), (3, 38), (6, 50), (32, 75), (160, 100), (640, 150)]
+
+def _perfil_san() -> Optional[dict[str, Any]]:
+    """Perfil sanitario del país de la llamada (Perú...), o None = México."""
+    return normativa.perfil("sanitaria")
+
+
+def _tab(nombre: str) -> Any:
+    """Tabla sanitaria vigente: la del país de la llamada o la de México."""
+    p = _perfil_san()
+    if p is not None:
+        return p[nombre]
+    return {"descarga_mm": DESCARGA_MM, "ud": UNIDADES_DESCARGA,
+            "ramal": DIAMETRO_RAMAL}[nombre]
+
+
+def _norma_san(clave: str) -> Any:
+    p = _perfil_san()
+    return p[clave] if p is not None and clave in p else NORMA[clave]
+
+
+def _pendiente(diametro_mm: float) -> float:
+    """Pendiente mínima de un tramo de desagüe. En México es una sola
+    (NTC 6.1.3.1); en Perú depende del diámetro (IS.010 6.2 c)."""
+    p = _perfil_san()
+    if p is None:
+        return NORMA["pendiente_drenaje"]
+    return (p["pendiente_chico"] if diametro_mm <= p["pendiente_hasta_mm"]
+            else p["pendiente_grande"])
+
+
+def _criterios() -> dict[str, Any]:
+    p = _perfil_san()
+    if p is None:
+        return {k: NORMA[k] for k in ("pendiente_drenaje", "albanal_min_mm",
+                                      "registro_max_m")}
+    return {"pendiente_drenaje": {"Ø<=%d mm" % p["pendiente_hasta_mm"]: p["pendiente_chico"],
+                                  "Ø>%d mm" % p["pendiente_hasta_mm"]: p["pendiente_grande"]},
+            "albanal_min_mm": p["albanal_min_mm"], "registro_max_m": p["registro_max_m"]}
+
 
 # Unidades mueble de agua: [INIFED] Tabla 2.2 (1 UM ≈ 6 L/min). OJO: no se
 # mezcla con la escala de Hunter (1 UM ≈ 25 L/min, WC=3): cada escala va
@@ -944,7 +984,8 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
     for r in registros:
         local = geo.recinto_de(tuple(r["point"]), rooms)
         # [NTC] 6.1.3.2-VII: registro bajo un local habitable, doble tapa.
-        if local and "PATIO" not in local.upper() and "COCHERA" not in local.upper():
+        if (_perfil_san() is None and local and "PATIO" not in local.upper()
+                and "COCHERA" not in local.upper()):
             r["double_lid"] = True
             r["room"] = local
     # [NTC] 6.1.3.2-III: tubo ventilador en el ORIGEN del albañal: el WC
@@ -956,20 +997,19 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
         lejos = max(wcs, key=lambda m: abs(m["conexion"][0] - reg_final[0])
                     + abs(m["conexion"][1] - reg_final[1]))
         ventilador = {"point": [round(v, 3) for v in lejos["conexion"]],
-                      "diameter_mm": NORMA["ventilador_min_mm"],
+                      "diameter_mm": _norma_san("ventilador_min_mm"),
                       "room": lejos["room"]}
     albanal = {"from": list(reg_final), "to": list(salida),
-               "diameter_mm": NORMA["albanal_min_mm"],
-               "slope": NORMA["pendiente_drenaje"]}
+               "diameter_mm": _norma_san("albanal_min_mm"),
+               "slope": _pendiente(_norma_san("albanal_min_mm"))}
     resultado: dict[str, Any] = {
         "outlet": list(salida),
         "pipes": [{**_tramo_publico(t), "drains": t["drena"],
-                   "slope": NORMA["pendiente_drenaje"]} for t in tramos],
+                   "slope": _pendiente(t["diametro_mm"])} for t in tramos],
         "registers": registros,
         "sewer": albanal,
         "vent": ventilador,
-        "criteria": {k: NORMA[k] for k in ("pendiente_drenaje", "albanal_min_mm",
-                                           "registro_max_m")},
+        "criteria": _criterios(),
     }
     llegadas = [{"name": m["label"], "point": list(m["conexion"]), "diameter_mm": m["boca"]}
                 for m in muebles if m["type"] == "extra"]
@@ -988,19 +1028,19 @@ def suggest_sanitary(rooms: list[dict[str, Any]],
 
 
 def _ud(m: dict[str, Any]) -> float:
-    return m["ud"] if m["type"] == "extra" else UNIDADES_DESCARGA[m["type"]]
+    return m["ud"] if m["type"] == "extra" else _tab("ud")[m["type"]]
 
 
 def _boca(m: dict[str, Any]) -> int:
-    return m["boca"] if m["type"] == "extra" else DESCARGA_MM[m["type"]]
+    return m["boca"] if m["type"] == "extra" else _tab("descarga_mm")[m["type"]]
 
 
 def _diametro_desague(abajo: list[dict[str, Any]]) -> int:
     """El mayor entre la boca del mueble más grande que drena y lo que pide
     la suma de unidades de descarga (INIFED Tabla 3.3)."""
     ud = sum(_ud(m) for m in abajo)
-    por_ud = next((d for lim, d in DIAMETRO_RAMAL if ud <= lim), 150)
-    return max(max(_boca(m) for m in abajo), por_ud, NORMA["desague_min_mm"])
+    por_ud = next((d for lim, d in _tab("ramal") if ud <= lim), 150)
+    return max(max(_boca(m) for m in abajo), por_ud, _norma_san("desague_min_mm"))
 
 
 def _tramos_desague(red: geo.Red) -> list[dict[str, Any]]:
@@ -1040,11 +1080,10 @@ def _sanitaria_planta_alta(rooms, muebles, stacks, draw, legend, legend_x, legen
     resultado: dict[str, Any] = {
         "outlet": None,
         "pipes": [{**_tramo_publico(t), "drains": t["drena"],
-                   "slope": NORMA["pendiente_drenaje"]} for t in tramos],
+                   "slope": _pendiente(t["diametro_mm"])} for t in tramos],
         "registers": [], "sewer": None, "vent": None,
         "stacks": bajadas,
-        "criteria": {k: NORMA[k] for k in ("pendiente_drenaje", "albanal_min_mm",
-                                           "registro_max_m")},
+        "criteria": _criterios(),
         "warnings": [f"{b['name']}: pasala a la planta baja como inlets="
                      f"[{{'point': {b['point']}, 'ud': {b['ud']:g}, 'diameter_mm': "
                      f"{b['diameter_mm']}, 'label': '{b['name']}'}}] (mismo punto en "
@@ -1088,17 +1127,19 @@ def _registros(red: geo.Red, principal: list[dict[str, Any]],
             puntos.append(red.nodos[n])
     # A no más de 10 m sobre cada tramo principal largo.
     for t in principal:
-        n = math.floor(t["largo"] / NORMA["registro_max_m"])
+        n = math.floor(t["largo"] / _norma_san("registro_max_m"))
         for k in range(1, n + 1):
-            f = k * NORMA["registro_max_m"] / t["largo"]
+            f = k * _norma_san("registro_max_m") / t["largo"]
             a, b = t["desde"], t["hasta"]
             puntos.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
     unicos: list[tuple[float, float]] = []
     for p in puntos:
         if all(math.dist(p, q) > 0.5 for q in unicos):
             unicos.append(p)
-    return [{"name": f"R-{i + 1}", "point": [round(p[0], 3), round(p[1], 3)],
-             "size_cm": "40x60"} for i, p in enumerate(unicos)]
+    pre = _perfil_san()["registro_prefijo"] if _perfil_san() else "R"
+    size = _perfil_san()["registro_size"] if _perfil_san() else "40x60"
+    return [{"name": f"{pre}-{i + 1}", "point": [round(p[0], 3), round(p[1], 3)],
+             "size_cm": size} for i, p in enumerate(unicos)]
 
 
 def _dibujar_sanitaria(tramos, registros, albanal, ventilador=None, bajadas=None,
@@ -1120,7 +1161,8 @@ def _dibujar_sanitaria(tramos, registros, albanal, ventilador=None, bajadas=None
         _rect(x - 0.2, y - 0.3, x + 0.2, y + 0.3, CAPA_REGISTRO)
         if r.get("double_lid"):
             _rect(x - 0.15, y - 0.25, x + 0.15, y + 0.25, CAPA_REGISTRO, 18)
-        rot.append({"text": f"{r['name']} {r['size_cm']}" + (" D.T." if r.get("double_lid") else ""),
+        rot.append({"text": f"{r['name']}" + (f" {r['size_cm']}" if r.get("size_cm") else "")
+                    + (" D.T." if r.get("double_lid") else ""),
                     "box": [x - 0.2, y - 0.3, x + 0.2, y + 0.3]})
     # Bajadas de aguas negras: la que SALE de esta planta (planta alta) y la
     # que LLEGA de arriba (planta baja). Círculo del diámetro del tubo, no
@@ -1157,12 +1199,14 @@ def _dibujar_sanitaria(tramos, registros, albanal, ventilador=None, bajadas=None
             continue
         a, b = t["desde"], t["hasta"]
         vertical = abs(a[0] - b[0]) < 1e-9
-        rot.append({"text": f"Ø{t['diametro_mm']} P={NORMA['pendiente_drenaje'] * 100:.0f}%",
+        rot.append({"text": f"Ø{t['diametro_mm']} P={_pendiente(t['diametro_mm']) * 100:g}%",
                     "x": (a[0] + b[0]) / 2.0 + (0.18 if vertical else 0.0),
                     "y": (a[1] + b[1]) / 2.0 + (0.0 if vertical else 0.18),
                     "rotation": 90.0 if vertical else 0.0})
     if albanal:
-        rot.append({"text": f"ALBAÑAL Ø{albanal['diameter_mm']} A RED MUNICIPAL",
+        rot.append({"text": (f"{_perfil_san()['colector']} Ø{albanal['diameter_mm']} A RED PÚBLICA"
+                             if _perfil_san() else
+                             f"ALBAÑAL Ø{albanal['diameter_mm']} A RED MUNICIPAL"),
                     "x": albanal["to"][0] + 0.25, "y": albanal["to"][1] - 0.4})
     lab = annotation.place_labels(rot, height=h, layer=CAPA_TEXTO_INST)
     return {"drainSegments": len(tramos), "registersDrawn": len(registros),
@@ -1202,6 +1246,8 @@ def _notas_norma(kind: str) -> list[str]:
             f"RETORNO DE AGUA CALIENTE SI EL RECORRIDO SUPERA {n['retorno_ac_m']:.0f} m "
             "(INIFED 2.8).",
         ]
+    if _perfil_san() is not None:
+        return list(_perfil_san()["notas"])
     return [
         f"PENDIENTE MÍNIMA {n['pendiente_drenaje'] * 100:.0f} % EN TODO DESAGÜE; "
         f"NINGUNO MENOR DE {n['desague_min_mm']} mm (NTC CDMX 6.1.3.1).",
@@ -1276,6 +1322,15 @@ def _filas_simbologia(kind: str) -> list[tuple[str, Any]]:
              lambda cx, cy, w: _rect(cx - 0.25, cy - 0.25, cx + 0.25, cy + 0.25, CAPA_HID_SIMB)),
             ("SALIDA A MUEBLE", lambda cx, cy, w: _circulo((cx, cy), 0.06, CAPA_HID_SIMB)),
             ("DIÁMETRO NOMINAL DEL TRAMO, EN mm", texto("AF Ø19")),
+        ]
+    if _perfil_san() is not None:
+        return [
+            ("DESAGÜE CON SENTIDO DEL FLUJO", drenaje),
+            ("CAJA DE REGISTRO (CR-n)", registro(False)),
+            ("TV: TUBO DE VENTILACIÓN",
+             lambda cx, cy, w: _circulo((cx, cy), 0.10, CAPA_DRENAJE)),
+            ("COLECTOR A LA RED PÚBLICA", linea(CAPA_DRENAJE, 50)),
+            ("DIÁMETRO Y PENDIENTE DEL TRAMO", texto("Ø100 P=1%")),
         ]
     return [
         ("DESAGÜE CON SENTIDO DEL FLUJO", drenaje),

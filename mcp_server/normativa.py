@@ -39,6 +39,16 @@ _LOCAL: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
 
 # Qué valores locales entiende cada regla HOY. Todo lo demás se rechaza en
 # vez de aceptarlo y no usarlo: eso sería aparentar que se aplicó.
+_PERFIL: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
+    "normativa_perfil", default={})
+
+
+def perfil(dominio: str) -> Optional[dict[str, Any]]:
+    """Perfil de un dominio (p.ej. 'sanitaria') del país de la llamada en
+    curso, o None si rige la referencia por defecto (México)."""
+    return _PERFIL.get().get(dominio)
+
+
 SOPORTADOS = {"minimos": "dimensiones mínimas por uso en check_geometry "
                          "({'recamara': {'lado': m, 'area': m2}, ...}; usos: "
                          "recamara, bano, social, circulacion, servicio)"}
@@ -91,6 +101,64 @@ INVESTIGAR = [
 ]
 
 # Codificada = los valores de las tools salen de esa normativa.
+URL_IS010 = ("https://ww3.vivienda.gob.pe/DGPRVU/docs/RNE/T%C3%ADtulo%20III%20"
+             "Edificaciones/59%20IS.010%20INSTALACIONES%20SANITARIAS%20PARA%20"
+             "EDIFICACIONES%20DS%20N%C2%B0%20017-2012.pdf")
+
+# Valores LEÍDOS del texto oficial de la IS.010 (DS N° 017-2012-VIVIENDA).
+# Las tablas de los anexos 6, 8 y 9 vienen como imagen escaneada de baja
+# resolución: están en 'verificar' para que el usuario las confirme.
+PERU_SANITARIA: dict[str, Any] = {
+    "fuente": "RNE, Norma IS.010 Instalaciones Sanitarias para Edificaciones "
+              "(DS N° 017-2012-VIVIENDA) " + URL_IS010,
+    "normas": ["RNE IS.010 Instalaciones Sanitarias para Edificaciones, "
+               "numerales 1.4.2, 6.2 (red de colección) y 6.5 (ventilación); "
+               "anexos 6, 8 y 9"],
+    "verificar": [
+        "Los anexos 6, 8 y 9 (unidades de descarga y diámetros) están en la "
+        "norma como imagen escaneada de baja resolución: confirmar cada "
+        "cifra contra el texto vigente antes de construir.",
+        "Lavatorio: el anexo 6 da 1-2 UD; se usó 2 (valor alto del rango).",
+        "Inodoro: se usó 4 UD (con tanque); con descarga reducida son 2.",
+        "El diámetro mínimo del colector hacia la red pública lo fija la "
+        "empresa prestadora del servicio: se usó 100 mm (diámetro mínimo "
+        "que recibe un inodoro, IS.010 6.2 d).",
+        "Registros: se ponen en uniones, cambios de dirección y cada 15 m; "
+        "falta contrastar el criterio 'al comienzo de cada ramal horizontal' "
+        "y 'al pie de cada montante' (IS.010 6.2 j).",
+    ],
+    # diámetro de salida/trampa por mueble (anexo 6) y UD
+    "descarga_mm": {"wc": 100, "lavatory": 32, "shower": 50,
+                    "kitchen_sink": 50, "laundry_sink": 40},
+    "ud": {"wc": 4, "lavatory": 2, "shower": 2, "kitchen_sink": 2,
+           "laundry_sink": 2},
+    # UD máximas por diámetro en horizontal de desagüe (anexo 8)
+    "ramal": [(1, 32), (3, 40), (6, 50), (12, 65), (20, 75), (160, 100),
+              (360, 125), (620, 150)],
+    # IS.010 6.2 c: 1 % para Ø100 y mayores; 1,5 % para Ø75 o menores
+    "pendiente_hasta_mm": 75, "pendiente_chico": 0.015, "pendiente_grande": 0.01,
+    "desague_min_mm": 32,
+    "albanal_min_mm": 100,
+    "registro_max_m": 15.0,          # IS.010 6.2 j y k
+    "ventilador_min_mm": 50,         # IS.010 6.5 k
+    "registro_prefijo": "CR", "registro_size": None,
+    "doble_tapa": False,
+    "colector": "COLECTOR",
+    "notas": [
+        "PENDIENTE MÍNIMA 1 % EN Ø100 mm O MAYOR Y 1,5 % EN Ø75 mm O MENOR "
+        "(RNE IS.010 6.2 c).",
+        "DESCARGA DE INODORO Ø100 mm MÍNIMO; DIÁMETROS POR UNIDADES DE "
+        "DESCARGA, IS.010 ANEXOS 6 Y 8.",
+        "CAJAS DE REGISTRO EN CAMBIOS DE DIRECCIÓN, PENDIENTE, MATERIAL O "
+        "DIÁMETRO Y CADA 15 m COMO MÁXIMO (IS.010 6.2 k).",
+        "SELLO DE AGUA DE 0,05 A 0,10 m EN TODA TRAMPA O SIFÓN (IS.010 6.2 i).",
+        "TUBO DE VENTILACIÓN DE Ø50 mm COMO MÍNIMO; LA MONTANTE SOBRESALE "
+        "0,15 m DE UN TECHO INACCESIBLE (IS.010 6.5).",
+        "EL COLECTOR CRUZA POR DEBAJO DE TUBERÍAS DE AGUA, A 0,15 m MÍNIMO "
+        "(IS.010 6.2 b).",
+    ],
+}
+
 PERFILES: dict[str, dict[str, Any]] = {
     "MX": {
         "nombre": "México",
@@ -105,7 +173,8 @@ PERFILES: dict[str, dict[str, Any]] = {
                    "reglamento municipal o estatal puede pedir otros valores.",
     },
     # Sin codificar: solo orientación de qué buscar. Verificar versión vigente.
-    "PE": {"nombre": "Perú", "estado": "no_codificada", "orientacion": [
+    "PE": {"nombre": "Perú", "estado": "no_codificada",
+           "dominios": {"sanitaria": PERU_SANITARIA}, "orientacion": [
         "RNE: A.010 (condiciones generales de diseño), A.020 (vivienda)",
         "RNE: EM.010 (instalaciones eléctricas), IS.010 (instalaciones sanitarias)",
         "RNE: E.050 (suelos y cimentaciones), E.060 (concreto armado), E.070 (albañilería)"]},
@@ -154,7 +223,7 @@ def pregunta() -> str:
             "valores locales.")
 
 
-def resolver(pais: Optional[str]) -> dict[str, Any]:
+def resolver(pais: Optional[str], dominio: Optional[str] = None) -> dict[str, Any]:
     """Qué normativa corresponde a 'pais'. Nunca inventa: si no hay perfil
     codificado, devuelve estado 'no_codificada' y la advertencia."""
     if pais is None or not str(pais).strip():
@@ -178,6 +247,14 @@ def resolver(pais: Optional[str]) -> dict[str, Any]:
             "investigar": INVESTIGAR,
         }
     p = PERFILES[codigo]
+    dom = (p.get("dominios") or {}).get(dominio) if dominio else None
+    if dom is not None:
+        return {"codigo": codigo, "pais": p["nombre"], "estado": "codificada",
+                "aplicada": f"{p['nombre']} ({dominio})", "normas": dom["normas"],
+                "fuente": dom["fuente"], "verificar": dom["verificar"],
+                "alcance": f"Solo {dominio}: el resto de la normativa de "
+                           f"{p['nombre']} no está codificada.",
+                "advertencia": None, "dominio": dominio}
     if p["estado"] == "codificada":
         return {"codigo": codigo, "pais": p["nombre"], "estado": "codificada",
                 "aplicada": p["nombre"], "normas": p["normas"],
@@ -207,11 +284,14 @@ NOTA_DOC = (
 )
 
 
-def con_pais(dibuja: Optional[str] = None) -> Callable:
+def con_pais(dibuja: Optional[str] = None,
+             dominio: Optional[str] = None) -> Callable:
     """Decorador para tools que dependen de norma.
 
     dibuja: nombre del parámetro booleano que decide si la tool dibuja
     (p.ej. 'draw', default True). None = la tool nunca dibuja.
+    dominio: parte de la normativa que usa la tool ('sanitaria'). Un país
+    puede tener codificado un dominio sin tener el resto (Perú: sanitaria).
     """
     def deco(fn: Callable) -> Callable:
         sig = inspect.signature(fn)
@@ -225,7 +305,7 @@ def con_pais(dibuja: Optional[str] = None) -> Callable:
             country = kwargs.pop("country", None)
             acepta = bool(kwargs.pop("accept_reference", False))
             locales = validar_local(kwargs.pop("local_norms", None))
-            info = resolver(country)
+            info = resolver(country, dominio)
             if locales:
                 info = dict(info, valores_locales=locales)
                 if info["estado"] != "codificada":
@@ -245,10 +325,14 @@ def con_pais(dibuja: Optional[str] = None) -> Callable:
                     "solo como referencia (accept_reference=True), o usá "
                     "draw=False para ver el proyecto sin dibujarlo.")
             token = _LOCAL.set(locales)
+            tok2 = _PERFIL.set(
+                {dominio: PERFILES[info["codigo"]]["dominios"][dominio]}
+                if dominio and info.get("dominio") == dominio else {})
             try:
                 res = fn(*args, **kwargs)
             finally:
                 _LOCAL.reset(token)
+                _PERFIL.reset(tok2)
             if isinstance(res, dict):
                 res = dict(res)
                 res["normativa"] = info
