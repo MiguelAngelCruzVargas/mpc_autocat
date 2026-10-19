@@ -23,6 +23,7 @@ import model3d as model3d_mod
 import normativa as normativa_mod
 import parking as parking_mod
 import facade as facade_mod
+import vectorize as vec_mod
 import phone3d as phone3d_mod
 import profile as profile_mod
 import isometric as iso_mod
@@ -4982,6 +4983,31 @@ def create_steps(x0: float, x1: float, y: float, count: int, rise: float,
     """Escalones en alzado, centrados: el de abajo ocupa [x0, x1] y cada uno
     de arriba se retrae run por lado; rise = alzada de cada escalón."""
     return facade_mod.steps(x0, x1, y, count, rise, run)
+
+
+@mcp.tool()
+def vectorize_image(path: str, scale: float, origin_x: float = 0.0,
+                    origin_y: float = 0.0, crop: Optional[list[int]] = None,
+                    colors: Optional[list[str]] = None, epsilon: float = 0.9,
+                    min_length_px: float = 3.0,
+                    dry_run: bool = False) -> dict[str, Any]:
+    """CALCA un dibujo CAD que solo existe como imagen (una captura de
+    pantalla de líneas finas sobre fondo oscuro) a polilíneas reales: separa
+    los trazos por color (blanco, cian, rojo, amarillo, verde...), los adelgaza
+    y sigue cada uno; cada color va a su capa TRAZO-* y a su ACI.
+
+    scale = unidades del dibujo por píxel (calibrar con una cota conocida de
+    la imagen); (origin_x, origin_y) = dónde cae la esquina inferior izquierda
+    del recorte; crop = [x0, y0, x1, y1] en píxeles para quitar la cinta de
+    comandos. dry_run=True solo cuenta los trazos.
+
+    Es CALCADO, no diseño: fiel a la imagen (~1 px) pero no paramétrico, y el
+    ruido del JPEG se nota en las zonas de textura (celosías). Necesita
+    numpy, opencv-python-headless y scikit-image (opcionales). Decirle al
+    usuario que es un calco de una imagen y no un plano medido."""
+    return vec_mod.vectorizar(path, scale, (origin_x, origin_y),
+                              tuple(crop) if crop else None, colors, epsilon,
+                              min_length_px, 20000, dry_run)  # type: ignore[arg-type]
 
 
 @mcp.tool()
