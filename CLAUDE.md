@@ -880,7 +880,14 @@ medidas (nada de un edificio concreto vive en el código):
   rombos recortada al panel), `create_facade_column`, `create_balustrade`,
   `create_steps`. Una fachada se compone llamándolas con sus medidas.
 
-Lo que NO hacen: leer medidas de una captura. Las dimensiones salen del proyecto
+**`vectorize_image`** (`vectorize.py`) CALCA una captura de un plano de líneas
+finas sobre fondo oscuro a polilíneas reales, por color y a su capa `TRAZO-*`.
+Es lo único que reproduce un dibujo ajeno con fidelidad visual (~1 px), pero es
+un calco: no paramétrico, con ruido de JPEG en las texturas, y la escala hay que
+calibrarla con una cota conocida de la imagen. Hay que decírselo al usuario.
+Dependencias opcionales: numpy, opencv-python-headless, scikit-image.
+
+Lo que NO hacen las primitivas paramétricas: leer medidas de una captura. Las dimensiones salen del proyecto
 o de cotas que alguien lea; una réplica de un plano ajeno es una aproximación
 de su estructura, no una copia.
 
