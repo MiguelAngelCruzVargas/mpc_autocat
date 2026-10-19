@@ -1245,6 +1245,7 @@ def create_axis_grid(
     min_spacing: float = MIN_SEPARACION_EJES,
     x_labels: str = "numbers",
     y_labels: str = "letters",
+    y_top_down: bool = False,
 ) -> dict[str, Any]:
     """Ejes estructurales con globos: por defecto verticales 1,2,3 y horizontales A,B,C.
 
@@ -1339,6 +1340,8 @@ def create_axis_grid(
 
     etiquetas_x = [_rotulo(i, x_labels) for i in range(len(xs))]
     etiquetas_y = [_rotulo(i, y_labels) for i in range(len(ys))]
+    if y_top_down:      # A arriba (convención de muchos planos): ys van de abajo a arriba
+        etiquetas_y = etiquetas_y[::-1]
 
     for label, x in zip(etiquetas_x, xs):
         handles.append(_line((x, bottom - ext_v), (x, top + ext_v), layer,

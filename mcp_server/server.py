@@ -21,6 +21,8 @@ import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
 import normativa as normativa_mod
+import parking as parking_mod
+import facade as facade_mod
 import phone3d as phone3d_mod
 import profile as profile_mod
 import isometric as iso_mod
@@ -1395,6 +1397,7 @@ def create_axis_grid(
     min_spacing: float = 1.20,
     x_labels: str = "numbers",
     y_labels: str = "letters",
+    y_top_down: bool = False,
 ) -> dict[str, Any]:
     """Ejes estructurales con sus globos: los verticales numerados 1, 2, 3... y
     los horizontales con letras A, B, C..., en línea de eje y trazo.
@@ -1423,10 +1426,11 @@ def create_axis_grid(
     1,2,3 y los horizontales A,B,C, pero la convención no es universal: en
     mucho plano estructural las letras van en los ejes verticales. El nombre de
     cada intersección (B-2, A-1) sale de ahí, así que conviene fijarlo antes de
-    rotular nada.
+    rotular nada. y_top_down=True pone la A ARRIBA y la última letra abajo (las
+    letras suben de arriba hacia abajo, como en muchos planos).
     """
     return arch_mod.create_axis_grid(
-        x_labels=x_labels, y_labels=y_labels,
+        x_labels=x_labels, y_labels=y_labels, y_top_down=y_top_down,
         x_positions=x_positions, y_positions=y_positions,
         x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max,
         extension=extension, bubble_radius=bubble_radius,
@@ -4873,6 +4877,111 @@ def create_phone_3d(width: float, height: float, thickness: float,
         plateau=plateau, lenses=lenses, buttons=buttons, finish=finish,
         colors=colors, origin=tuple(origin) if origin else (0.0, 0.0),
         layer_prefix=layer_prefix)
+
+
+@mcp.tool()
+def create_parking_stalls(x: float, y: float, count: int, stall_width: float,
+                          stall_depth: float, along: str = "x", depth_sign: int = 1,
+                          start_number: int = 1, number_step: int = 1,
+                          car: bool = True, car_length: float = 0.0,
+                          number_radius: float = 0.0, text_height: float = 0.0,
+                          front_line: bool = True) -> dict[str, Any]:
+    """Una fila de cajones de estacionamiento con su número en círculo y su
+    coche en planta. (x, y) = esquina de arranque de la línea del FONDO del
+    primer cajón; along 'x' (cajones uno junto al otro en X, profundidad en
+    Y) o 'y'; depth_sign +1/-1 hacia dónde crece la profundidad. Numera desde
+    start_number con number_step (negativo = al revés). Cada línea una sola
+    vez. Las medidas son del proyecto (en cm: 278 x 550); text_height y
+    number_radius, en unidades del dibujo (mm de papel x escala). Devuelve
+    la caja de la fila para componer."""
+    return parking_mod.parking_stalls(
+        x, y, count, stall_width, stall_depth, along, depth_sign, start_number,
+        number_step, car, car_length, number_radius, text_height,
+        parking_mod.LAYER_CAJON, front_line)
+
+
+@mcp.tool()
+def create_car_symbol(x: float, y: float, length: float, width: float,
+                      angle_deg: float = 0.0) -> dict[str, Any]:
+    """Coche en planta (carrocería, cabina, capó, luneta y ruedas) centrado en
+    (x, y); length va a lo largo del eje del coche, que apunta a angle_deg
+    (0 = hacia +X)."""
+    return {"handles": parking_mod.car_symbol(x, y, length, width, angle_deg)}
+
+
+@mcp.tool()
+def create_ramp_track(outer: list[float], inner: list[float],
+                      pitch: float) -> dict[str, Any]:
+    """Rampa en anillo (de un estacionamiento): dos contornos redondeados
+    [x0, y0, x1, y1, radio] —el inner dentro del outer— y líneas radiales cada
+    pitch sobre el contorno exterior (en las curvas se abren en abanico).
+    Devuelve el número de líneas y los perímetros."""
+    if len(outer) != 5 or len(inner) != 5:
+        raise ValueError("outer e inner son [x0, y0, x1, y1, radio].")
+    return parking_mod.ramp_track(tuple(outer), tuple(inner), pitch)  # type: ignore[arg-type]
+
+
+@mcp.tool()
+def create_ramp_arc(center: list[float], r_in: float, r_out: float,
+                    start_deg: float, end_deg: float,
+                    pitch: float) -> dict[str, Any]:
+    """Tramo curvo de rampa entre dos arcos concéntricos (radios r_in < r_out,
+    ángulos antihorarios) con líneas radiales cada pitch sobre el radio medio."""
+    return parking_mod.ramp_arc((center[0], center[1]), r_in, r_out, start_deg,
+                                end_deg, pitch)
+
+
+@mcp.tool()
+def create_crenellation(x0: float, x1: float, y: float, merlon_width: float,
+                        gap_width: float, height: float) -> dict[str, Any]:
+    """Remate de almenas en una fachada: merlones y huecos sobre la línea de
+    base y entre x0 y x1; empieza y termina en merlón y reparte el hueco
+    parejo (devuelve el ancho real en gapWidth)."""
+    return facade_mod.crenellation(x0, x1, y, merlon_width, gap_width, height)
+
+
+@mcp.tool()
+def create_arched_opening(x: float, y: float, width: float, height: float,
+                          rise: float, cols: int = 2, rows: int = 2,
+                          frame: float = 0.0) -> dict[str, Any]:
+    """Vano de fachada (ventana o puerta) con arco: altura TOTAL height con el
+    arco de flecha rise incluido (rise = width/2 es medio punto; 0 = vano
+    recto), marco exterior e interior, divisiones cols x rows en el tramo recto
+    y radiales en el arco."""
+    return facade_mod.arched_opening(x, y, width, height, rise, cols, rows, frame)
+
+
+@mcp.tool()
+def create_lattice_panel(x0: float, y0: float, x1: float, y1: float,
+                         pitch: float, angle_deg: float = 45.0,
+                         border: float = 0.0) -> dict[str, Any]:
+    """Celosía de rombos en un panel rectangular: diagonales a +-angle_deg con
+    paso pitch (horizontal), recortadas al rectángulo y dentro de un marco
+    doble."""
+    return facade_mod.lattice_panel(x0, y0, x1, y1, pitch, angle_deg, border)
+
+
+@mcp.tool()
+def create_facade_column(x: float, y0: float, y1: float, width: float,
+                         twisted: bool = True) -> dict[str, Any]:
+    """Columna de fachada con base y capitel; twisted dibuja el fuste torneado."""
+    return facade_mod.column(x, y0, y1, width, twisted)
+
+
+@mcp.tool()
+def create_balustrade(x0: float, x1: float, y: float, height: float,
+                      balusters: int = 0, pitch: float = 0.0) -> dict[str, Any]:
+    """Barandal en alzado: pasamanos, base y balaustres con remate circular.
+    Da balusters (cantidad) o pitch (separación)."""
+    return facade_mod.balustrade(x0, x1, y, height, balusters, pitch)
+
+
+@mcp.tool()
+def create_steps(x0: float, x1: float, y: float, count: int, rise: float,
+                 run: float) -> dict[str, Any]:
+    """Escalones en alzado, centrados: el de abajo ocupa [x0, x1] y cada uno
+    de arriba se retrae run por lado; rise = alzada de cada escalón."""
+    return facade_mod.steps(x0, x1, y, count, rise, run)
 
 
 @mcp.tool()

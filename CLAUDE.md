@@ -864,6 +864,26 @@ Estos comandos viven en el plugin (`SolidCommands.cs`): recompilar y reiniciar
 AutoCAD, y guardar el DWG con nombre ANTES de reiniciar
 (`tools/install_bundle.ps1 -CloseAutoCad -Reopen`).
 
+## 6.septies Estacionamientos y fachadas con ornamento
+
+Dos familias de primitivas paramétricas, para láminas que se repiten con otras
+medidas (nada de un edificio concreto vive en el código):
+
+- **Estacionamientos** (`parking.py`): `create_parking_stalls` (una fila de
+  cajones con número en círculo y coche en planta, cada línea UNA vez, numeración
+  con `start_number`/`number_step`), `create_car_symbol`, `create_ramp_track`
+  (rampa en anillo entre dos contornos redondeados, con líneas radiales) y
+  `create_ramp_arc` (tramo curvo). `create_axis_grid(y_top_down=True)` pone la A
+  ARRIBA, como en muchos planos.
+- **Fachadas** (`facade.py`): `create_crenellation`, `create_arched_opening`
+  (vano con arco, marcos y divisiones), `create_lattice_panel` (celosía de
+  rombos recortada al panel), `create_facade_column`, `create_balustrade`,
+  `create_steps`. Una fachada se compone llamándolas con sus medidas.
+
+Lo que NO hacen: leer medidas de una captura. Las dimensiones salen del proyecto
+o de cotas que alguien lea; una réplica de un plano ajeno es una aproximación
+de su estructura, no una copia.
+
 ## 7. Capas
 
 Una capa por tipo de elemento, creada con `set_layer` antes de dibujar (color y
