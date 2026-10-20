@@ -204,11 +204,18 @@ def design_beam(b: float, h: float, m_pos_tm: float, m_neg_tm: float, v_tm: floa
         s_v = s_max
     av_min_s = max(0.062 * math.sqrt(fc_mpa) * b * 1000 / fy_mpa, 0.35 * b * 1000 / fy_mpa)
     s_avmin = av / av_min_s / 1000
-    s = math.floor(min(s_v, s_max, s_avmin) / 0.05 + 1e-9) * 0.05
+    # ACI 318-19 9.6.3.1: con Vu <= phi·Vc/2 no hace falta Av,min; queda el
+    # estribo constructivo a s_max (d/2, <= 60 cm). Paso de armado: 2.5 cm.
+    exento = vu <= 0.5 * phi * vc
+    s_obj = s_max if exento else min(s_v, s_max, s_avmin)
+    s = math.floor(s_obj / 0.025 + 1e-9) * 0.025
     ok_v = vs_req <= 0.66 * math.sqrt(fc_mpa) * b * 1000 * d * 1000 / 1000   # 22.5.1.2
     out = {"b": b, "h": h, "d": _r(d, 3), "bottom": inf, "top": sup,
            "stirrups": {"bar": stirrup, "spacing": _r(s, 3), "text": f"E{stirrup} @ {s * 100:.0f}",
-                        "phiVc_t": _r(phi * vc / 9.80665), "Vu_t": _r(v_tm)},
+                        "phiVc_t": _r(phi * vc / 9.80665), "Vu_t": _r(v_tm),
+                        "required": not exento,
+                        "note": ("Vu <= phi·Vc/2: estribos constructivos (ACI 9.6.3.1)" if exento
+                                 else "Av >= Av,min (ACI 9.6.3.3)")},
            "ok": ok_v and s >= 0.05,
            "refs": "ACI 318-19 22.2, 9.6.1.2, 22.5.5.1(a), 9.7.6.2.2"}
     if span and condition:
@@ -264,3 +271,60 @@ def design_two_way_slab(lx: float, ly: float, w_dead: float, w_live: float, fc: 
                               "ref": "ACI 318-19 8.3.1.2 (alfa_fm > 2)"},
             "method": "Franjas con reparto de Rankine-Grashof; As mín. 0.0018Ag, s <= 2h",
             "ok": h >= hmin - 1e-9 and res["corto"] is not None and res["largo"] is not None}
+
+
+# ------------------------------------------------------------ dintel
+
+def design_lintel(clear_span: float, bearing: float, wall_thickness: float,
+                  wall_height_above: float, fc: float, h: float,
+                  masonry_unit_weight: float = 1500.0, extra_load_kg_m: float = 0.0,
+                  fy: float = 4200.0, code: str = "NTC", stirrup: str = "#2.5",
+                  bars: tuple[str, ...] = ("#3", "#4", "#5")) -> dict[str, Any]:
+    """Dintel (cerramiento) de concreto sobre un vano de `clear_span` m con
+    apoyo `bearing` a cada lado; sección b = wall_thickness x h (m).
+
+    Carga de muro: si el muro sobre el vano es más alto que el triángulo
+    equilátero de descarga (h_t = L·raíz(3)/2, con L = claro de cálculo entre
+    centros de apoyo), solo pesa ese TRIÁNGULO (efecto arco de la mampostería:
+    práctica clásica de muros, 60 grados); si no, pesa todo el muro como carga
+    uniforme. extra_load_kg_m: lo que además llega al dintel (losa, trabe)
+    SIN efecto arco. Se factoriza con `code` y se diseña con design_beam
+    (ACI 318-19) como viga simplemente apoyada.
+    El efecto arco solo vale con mampostería trabada y apoyos capaces de
+    tomar el empuje: está marcado como práctica, no como norma."""
+    if min(clear_span, bearing, wall_thickness, h, fc) <= 0 or wall_height_above < 0:
+        raise ValueError("clear_span, bearing, wall_thickness, h y fc > 0; wall_height_above >= 0.")
+    L = clear_span + bearing                       # claro de cálculo (centros de apoyo)
+    fd, fl, combo = zap.COMBOS[code]
+    h_t = L * math.sqrt(3) / 2
+    gamma_t = masonry_unit_weight * wall_thickness   # kg/m de muro por metro de altura
+    if wall_height_above >= h_t:
+        w_peak = gamma_t * h_t                       # kg/m en el centro del triángulo
+        m_muro = w_peak * L * L / 12.0               # momento de carga triangular (pico al centro)
+        v_muro = w_peak * L / 4.0
+        modelo = f"Triángulo de descarga a 60 grados, h_t = {h_t:.2f} m (práctica de mampostería)"
+    else:
+        w_u = gamma_t * wall_height_above
+        m_muro = w_u * L * L / 8.0
+        v_muro = w_u * L / 2.0
+        modelo = f"Muro completo como carga uniforme ({wall_height_above:.2f} m < h_t = {h_t:.2f} m)"
+    peso_propio = 2400.0 * wall_thickness * h
+    m_pp = peso_propio * L * L / 8.0
+    v_pp = peso_propio * L / 2.0
+    m_extra = extra_load_kg_m * L * L / 8.0
+    v_extra = extra_load_kg_m * L / 2.0
+    # el extra se trata como carga muerta (losa); si es viva, factorizarla aparte
+    mu = (fd * (m_muro + m_pp + m_extra)) / 1000.0          # t·m
+    vu = (fd * (v_muro + v_pp + v_extra)) / 1000.0           # t
+    d = design_beam(wall_thickness, h, mu, 0.0, vu, fc, fy, cover=0.025, stirrup=stirrup,
+                    span=L, condition="simple", bars=bars)
+    return {"clear_span": clear_span, "bearing": bearing, "design_span": _r(L),
+            "section": {"b": wall_thickness, "h": h},
+            "load_model": modelo, "combo": combo,
+            "Mu_tm": _r(mu, 3), "Vu_t": _r(vu, 3),
+            "bottom": d["bottom"], "top": d["top"], "stirrups": d["stirrups"],
+            "min_depth": d.get("min_depth"), "ok": d["ok"],
+            "notes": ["El apoyo mínimo del dintel lo fija la norma local de mampostería: "
+                      f"se usó bearing = {bearing:.2f} m como dato del proyecto.",
+                      "El acero superior sale del mínimo (viga simplemente apoyada)."],
+            "refs": d["refs"] + "; triángulo de descarga: práctica"}

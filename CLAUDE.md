@@ -637,6 +637,47 @@ de planta alta se pega al final del pasamanos y cada quiebre lleva su codo.
 **Mirarlo de cerca** (cámara a 1 m de la unión): de lejos todo se ve unido.
 Los árboles achican la copa para no atravesar la fachada.
 
+## 4.decies Estructura de la casa: bajada de cargas → trabe → losa → plantas; dinteles y arcos
+
+La cadena de cálculo de una estructura de marcos de concreto vive en
+`estructura.py` y SE USA EN ESTE ORDEN, cada paso con la salida del anterior:
+
+1. **`design_two_way_slab`** — espesor y armado de cada tablero (Rankine-
+   Grashof por franjas, ACI 318-19 8.3.1.2 / 8.6.1.1 / 8.7.2.2). Si `h` no
+   cumple el mínimo lo dice: subir `h`, no apretar el acero.
+2. **`panel_edge_loads`** — reparte el tablero (kg/m²) a sus cuatro trabes
+   por líneas a 45° (triángulo al corto, trapecio al largo): kg/m por trabe.
+3. **`continuous_beam`** — la trabe continua sobre columnas por rigideces:
+   momentos en apoyos y claros, cortantes, reacciones (que bajan a
+   `design_footing`).
+4. **`design_beam`** — la sección b×h por ACI 318-19 (flexión, mínimos,
+   estribos con la exención de 9.6.3.1 cuando Vu ≤ φVc/2, peralte mínimo
+   9.3.1.1). Con `ValueError` si la sección no da: se crece, no se fuerza.
+5. **`draw_foundation_plan`** / **`draw_framing_plan`** — las plantas de
+   cimentación y de trabes/losas desde esos diseños, sin escribir una medida
+   a mano. Detalles: `create_column_section` (misma sección rectangular),
+   `create_rebar_elevation`.
+
+**Dinteles (`design_lintel`)**: el cerramiento sobre puertas y ventanas toma
+el triángulo de descarga a 60° del muro si hay altura para él (efecto arco de
+la mampostería, marcado como PRÁCTICA) o el muro completo si no, más losa o
+trabe que llegue (`extra_load_kg_m`), y se diseña con `design_beam`. El
+apoyo (`bearing`) es dato del proyecto: la norma local fija el mínimo.
+
+**Arcos (`arcos.py`)**: `arch_geometry` traza medio punto, rebajado
+(escarzano), apuntado (ojival) y carpanel (tres centros) por luz y flecha
+—centros, radios, intradós/extradós con bulges, dovelas con clave centrada—
+y `create_arch` lo dibuja. `check_masonry_arch` revisa el arco de
+mampostería bajo carga uniforme: empuje H = w·L²/(8f) (lo que hay que darle
+a los apoyos), línea de presiones parabólica contra el eje del arco, regla
+del tercio central (Heyman) con el espesor mínimo requerido, y esfuerzo
+contra f'm/3 solo si se da f'm. Es PRELIMINAR y lo dice; un medio punto bajo
+carga uniforme NO sigue la parábola, y la revisión lo muestra.
+
+**`design_pool`** (`alberca.py`): volumen, recirculación, succión, drenes y
+muro contra suelo y agua. Sin f'c (y sin peso del suelo si está enterrada)
+rechaza.
+
 ## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta

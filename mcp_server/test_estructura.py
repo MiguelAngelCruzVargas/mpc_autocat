@@ -57,6 +57,23 @@ def test_trabe() -> None:
         check("sección que no da avisa", True)
 
 
+def test_dintel() -> None:
+    d = es.design_lintel(1.20, 0.20, 0.15, 2.0, fc=250, h=0.20)
+    check("muro alto: triángulo de descarga", d["load_model"].startswith("Triángulo"), d["load_model"])
+    check("dintel chico: estribos constructivos (Vu <= phiVc/2)", d["stirrups"]["required"] is False
+          and d["stirrups"]["spacing"] >= 0.075, d["stirrups"])
+    check("acero inferior mínimo 2 varillas", d["bottom"]["count"] >= 2 and d["ok"], d["bottom"])
+    d2 = es.design_lintel(1.20, 0.20, 0.15, 0.60, fc=250, h=0.20)
+    check("muro bajo: todo el muro como carga", d2["load_model"].startswith("Muro completo"))
+    d3 = es.design_lintel(3.00, 0.25, 0.15, 2.4, fc=250, h=0.30, extra_load_kg_m=1200)
+    check("con losa encima sube el momento", d3["Mu_tm"] > d["Mu_tm"] * 3)
+    try:
+        es.design_lintel(1.20, 0.0, 0.15, 2.0, fc=250, h=0.20)
+        check("sin apoyo rechaza", False)
+    except ValueError:
+        check("sin apoyo rechaza", True)
+
+
 def test_losa_espesor_minimo() -> None:
     d12 = es.design_two_way_slab(4.6, 6.5, 670, 190, fc=250, h=0.12, continuous_edges=1)
     d15 = es.design_two_way_slab(4.6, 6.5, 670, 190, fc=250, h=0.15, continuous_edges=1)

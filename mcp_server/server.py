@@ -24,6 +24,10 @@ import normativa as normativa_mod
 import parking as parking_mod
 import facade as facade_mod
 import vectorize as vec_mod
+import estructura as est_mod
+import planta_estructural as pe_mod
+import arcos as arc_mod
+import alberca as alb_mod
 import phone3d as phone3d_mod
 import profile as profile_mod
 import isometric as iso_mod
@@ -5008,6 +5012,164 @@ def vectorize_image(path: str, scale: float, origin_x: float = 0.0,
     return vec_mod.vectorizar(path, scale, (origin_x, origin_y),
                               tuple(crop) if crop else None, colors, epsilon,
                               min_length_px, 20000, dry_run)  # type: ignore[arg-type]
+
+
+@mcp.tool()
+def panel_edge_loads(lx: float, ly: float, w: float) -> dict[str, Any]:
+    """BAJADA DE CARGAS de un tablero de losa a sus trabes: reparte w (kg/m²,
+    servicio o ya factorizada) a los cuatro bordes por líneas a 45°:
+    triángulo al lado corto (equivalente w·a/3) y trapecio al largo
+    (w·a/6·(3−(a/b)²)). Lo que devuelve es la carga por metro que entra a
+    continuous_beam para cada trabe."""
+    return est_mod.panel_edge_loads(lx, ly, w)
+
+
+@mcp.tool()
+def continuous_beam(spans: list[float], loads: list[float],
+                    point_loads: Optional[list[list[list[float]]]] = None) -> dict[str, Any]:
+    """TRABE CONTINUA sobre columnas (apoyos articulados) por rigideces:
+    momentos en apoyos (negativos) y máximos en claros, cortantes en paños y
+    reacciones, en t y t·m. spans en m, loads en kg/m por claro (de
+    panel_edge_loads + peso propio + muros), point_loads opcional por claro
+    [[distancia, P_kg], ...]. Sus momentos van directo a design_beam."""
+    pl = [[(float(a), float(p)) for a, p in claro] for claro in point_loads] if point_loads else None
+    return est_mod.continuous_beam(spans, loads, pl)
+
+
+@mcp.tool()
+def design_beam(b: float, h: float, m_pos_tm: float, m_neg_tm: float, v_t: float,
+                fc: float, fy: float = 4200.0, cover: float = 0.04,
+                stirrup: str = "#3", span: Optional[float] = None,
+                condition: Optional[str] = None) -> dict[str, Any]:
+    """DISEÑA una trabe rectangular b x h (m) por ACI 318-19 con momentos y
+    cortante YA factorizados (t·m, t): acero inferior y superior (con el
+    mínimo 9.6.1.2), estribos (Vc 22.5.5.1, s <= d/2, 9.7.6.2.2) y peralte
+    mínimo (tabla 9.3.1.1) si se da span y condition ('simple', 'one_end',
+    'both', 'cantilever'). fc en kg/cm². Si la sección no da, lo dice con
+    ValueError en vez de forzar acero: hay que crecerla. El resultado se
+    dibuja con create_column_section (misma geometría de sección) y
+    create_rebar_elevation."""
+    return est_mod.design_beam(b, h, m_pos_tm, m_neg_tm, v_t, fc, fy, cover, stirrup,
+                               span, condition)
+
+
+@mcp.tool()
+def design_two_way_slab(lx: float, ly: float, w_dead: float, w_live: float, fc: float,
+                        h: float, fy: float = 4200.0, cover: float = 0.02,
+                        continuous_edges: int = 0, code: str = "NTC") -> dict[str, Any]:
+    """LOSA MACIZA perimetralmente apoyada: reparto Rankine-Grashof por
+    franjas, acero por sentido (varilla @ separación), mínimo 0.0018·Ag y
+    s <= min(2h, 45 cm) (ACI 318-19 8.6.1.1 / 8.7.2.2), espesor mínimo
+    8.3.1.2. w en kg/m² de SERVICIO (se factoriza con code 'NTC' o 'ACI').
+    Si h no cumple el mínimo lo dice: subir h, no apretar el acero. El
+    resultado alimenta panel_edge_loads (bajada) y draw_framing_plan."""
+    return est_mod.design_two_way_slab(lx, ly, w_dead, w_live, fc, h, fy, cover,
+                                       continuous_edges, code)
+
+
+@mcp.tool()
+def design_lintel(clear_span: float, bearing: float, wall_thickness: float,
+                  wall_height_above: float, fc: float, h: float,
+                  masonry_unit_weight: float = 1500.0, extra_load_kg_m: float = 0.0,
+                  fy: float = 4200.0, code: str = "NTC") -> dict[str, Any]:
+    """DINTEL (cerramiento) de concreto sobre puerta o ventana: toma el
+    triángulo de descarga a 60° del muro si hay altura para él (efecto arco
+    de la mampostería; práctica clásica) o todo el muro si no, más su peso y
+    extra_load_kg_m (losa/trabe que llegue), lo factoriza y lo diseña con
+    design_beam como viga simplemente apoyada. bearing (apoyo a cada lado)
+    es dato del proyecto: la norma local fija el mínimo. Devuelve el
+    armado listo para rotular ("2 #3", "E#2.5 @ 15")."""
+    return est_mod.design_lintel(clear_span, bearing, wall_thickness, wall_height_above,
+                                 fc, h, masonry_unit_weight, extra_load_kg_m, fy, code)
+
+
+@mcp.tool()
+def arch_geometry(span: float, rise: Optional[float] = None, kind: str = "medio_punto",
+                  thickness: float = 0.0, voussoirs: int = 0) -> dict[str, Any]:
+    """TRAZO de un arco por su luz y su flecha: 'medio_punto' (rise = span/2),
+    'rebajado' (escarzano, un centro bajo los arranques), 'apuntado' (ojival,
+    dos centros) o 'carpanel' (tres centros). Devuelve centros, radios,
+    intradós y extradós como puntos + bulges (listos para create_polyline),
+    la clave y, con voussoirs (impar), las juntas de las dovelas. No dibuja:
+    para eso create_arch."""
+    return arc_mod.arch_geometry(span, rise, kind, thickness, voussoirs)
+
+
+@mcp.tool()
+def create_arch(x: float, y: float, span: float, rise: Optional[float] = None,
+                kind: str = "medio_punto", thickness: float = 0.0, voussoirs: int = 0,
+                closed: bool = True, layer: str = "ARCOS",
+                lineweight: int = 35) -> dict[str, Any]:
+    """DIBUJA un arco (alzado o corte) con el arranque izquierdo en (x, y):
+    intradós, extradós si hay thickness, cierres de arranque y juntas de
+    dovelas si voussoirs (impar, con clave centrada). kind y rise como en
+    arch_geometry. Capas ARCOS y ARCOS-DOVELAS."""
+    return arc_mod.create_arch(x, y, span, rise, kind, thickness, voussoirs, closed,
+                               layer, lineweight)
+
+
+@mcp.tool()
+def check_masonry_arch(span: float, rise: float, thickness: float, width: float,
+                       load_kg_m: float, fm_kgcm2: Optional[float] = None,
+                       self_weight: bool = True, unit_weight: float = 1800.0,
+                       kind: str = "medio_punto") -> dict[str, Any]:
+    """REVISA un arco de mampostería (ladrillo/piedra) bajo carga uniforme:
+    empuje horizontal H = w·L²/(8f) y reacciones, línea de presiones
+    (funicular parabólica) contra el eje del arco, excentricidad máxima y
+    regla del tercio central (e <= t/6, Heyman), espesor mínimo requerido,
+    y esfuerzo de compresión contra f'm/3 si se da fm_kgcm2 (sin él no se
+    revisa el esfuerzo: es dato del proyecto). PRELIMINAR, para arcos de
+    vivienda; el empuje H es lo que hay que darle a los apoyos."""
+    return arc_mod.check_masonry_arch(span, rise, thickness, width, load_kg_m, fm_kgcm2,
+                                      self_weight, unit_weight, kind)
+
+
+@mcp.tool()
+def draw_foundation_plan(columns: list[dict[str, Any]], footing_types: dict[str, Any],
+                         tie_beams: list[dict[str, Any]], lot: list[float], upm: float,
+                         column_size: float = 0.30, title: str = "PLANTA DE CIMENTACIÓN",
+                         text_mm: float = 2.0, origin: Optional[list[float]] = None) -> dict[str, Any]:
+    """PLANTA DE CIMENTACIÓN desde los datos de diseño: columns [{x, y, type}]
+    (type = marca en footing_types, cada una el dict de design_footing),
+    tie_beams [{x0, y0, x1, y1, b, mark}] (contratrabes por su eje), lot
+    [ancho, fondo], upm = unidades del modelo por mm de papel (la escala de
+    la lámina). Dibuja zapatas con contorno grueso, columnas macizas,
+    contratrabes, marcas Z-1/CT-1/C-1, ejes y cotas. Ninguna medida se
+    escribe a mano."""
+    return pe_mod.draw_foundation_plan(columns, footing_types, tie_beams, (lot[0], lot[1]),
+                                       upm, column_size, title, text_mm,
+                                       tuple(origin) if origin else (0.0, 0.0))
+
+
+@mcp.tool()
+def draw_framing_plan(columns: list[dict[str, Any]], beams: list[dict[str, Any]],
+                      panels: list[dict[str, Any]], upm: float,
+                      openings: Optional[list[list[float]]] = None,
+                      column_size: float = 0.30, title: str = "PLANTA ESTRUCTURAL",
+                      text_mm: float = 2.0) -> dict[str, Any]:
+    """PLANTA ESTRUCTURAL de entrepiso/azotea: trabes [{x0, y0, x1, y1, b,
+    mark}] por su eje (trazo oculto bajo la losa), columnas macizas, tableros
+    [{x0, y0, x1, y1, mark, short: {text}, long: {text}}] con su número en
+    círculo y sus dos bastones de armado (los 'text' salen de
+    design_two_way_slab), huecos de losa con cruz. upm = unidades del modelo
+    por mm de papel."""
+    return pe_mod.draw_framing_plan(columns, beams, panels, upm, openings, column_size,
+                                    title, text_mm)
+
+
+@mcp.tool()
+def design_pool(length: float, width: float, shallow: float, deep: float, fc: float,
+                soil_unit_weight: Optional[float] = None, turnover_hours: float = 6.0,
+                freeboard: float = 0.15, k0: float = 0.5, fy: float = 4200.0,
+                cover: float = 0.05, wall_thickness: float = 0.20,
+                slab_thickness: float = 0.20) -> dict[str, Any]:
+    """ALBERCA de concreto: volumen, recirculación (m³/h por turnover),
+    diámetro de succión por velocidad, drenes de fondo y revisión del muro
+    contra el empuje del suelo (vacía) y del agua (llena). fc y, si está
+    enterrada, soil_unit_weight son datos del proyecto: sin ellos rechaza."""
+    return alb_mod.design_pool(length, width, shallow, deep, fc, soil_unit_weight,
+                               turnover_hours, freeboard, k0, fy, cover,
+                               wall_thickness, slab_thickness)
 
 
 @mcp.tool()
