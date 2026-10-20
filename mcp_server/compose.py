@@ -628,6 +628,13 @@ def compose_layout(name: str,
         plan["sheet"] = _lamina_en_papel(name, ancho_hoja, alto_hoja, sheet,
                                          [v["_denom"] for v in en_papel],
                                          {v["handle"] for v in viewports if v.get("handle")})
+    # La lamina vigente pasa a ser este layout: check_sheet deja de comparar
+    # contra el drawArea de un create_sheet anterior (o persistido de otro
+    # dibujo), que daba "fuera del cajon" con las vistas perfectamente dentro.
+    # Va DESPUES del rotulo en papel, que registra su propia area util (en mm
+    # de papel) y pisaba esta marca.
+    import space as _space
+    _space.set_sheet({"layout": name})
     return plan
 
 

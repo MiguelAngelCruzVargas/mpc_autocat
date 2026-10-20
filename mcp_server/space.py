@@ -142,6 +142,12 @@ def set_sheet(area: Optional[dict[str, Any]]) -> None:
     """Guarda el area util (drawArea) de la lamina recien creada."""
     if not area:
         _SHEET[0] = None
+    elif "layout" in area and "x1" not in area:
+        # La lamina es un LAYOUT (compose_layout): el cajon vive en papel y
+        # no hay area util en el modelo contra la que comparar. Se guarda el
+        # nombre para que check_sheet lo diga en vez de fallar contra la
+        # lamina de otro dibujo que quedo persistida.
+        _SHEET[0] = {"layout": str(area["layout"])}
     else:
         _SHEET[0] = {k: float(area[k]) for k in ("x1", "y1", "x2", "y2")}
     try:

@@ -667,12 +667,31 @@ apoyo (`bearing`) es dato del proyecto: la norma local fija el mínimo.
 **Arcos (`arcos.py`)**: `arch_geometry` traza medio punto, rebajado
 (escarzano), apuntado (ojival) y carpanel (tres centros) por luz y flecha
 —centros, radios, intradós/extradós con bulges, dovelas con clave centrada—
-y `create_arch` lo dibuja. `check_masonry_arch` revisa el arco de
-mampostería bajo carga uniforme: empuje H = w·L²/(8f) (lo que hay que darle
-a los apoyos), línea de presiones parabólica contra el eje del arco, regla
-del tercio central (Heyman) con el espesor mínimo requerido, y esfuerzo
-contra f'm/3 solo si se da f'm. Es PRELIMINAR y lo dice; un medio punto bajo
-carga uniforme NO sigue la parábola, y la revisión lo muestra.
+y `create_arch` lo dibuja Y LO ANOTA solo (cotas de luz y flecha, tipo, L/f/e
+y, con `load_kg_m`, el empuje H y el veredicto): el detalle sale de la tool,
+no de quien la llama. `check_masonry_arch` es análisis límite (Heyman): peso
+propio que SIGUE el arco + sobrecarga, línea de presiones M(x)/H con las
+rótulas libres dentro de la junta de arranque, y se busca el empuje que la
+deja lo más cerca del eje; la excentricidad se mide SOBRE LA JUNTA (radial),
+no en vertical. Tercio central (e ≤ t/6, junta toda comprimida), estabilidad
+(e ≤ t/2) y esfuerzo contra f'm/3 solo si se da f'm. Reproduce el límite de
+Heyman para el medio punto (t/R ≈ 0.11-0.13; es algo conservador) y es
+PRELIMINAR: no es el análisis de una bóveda. Dos errores que ya pasaron:
+comparar con la parábola de carga uniforme condenaba cualquier medio punto, y
+tomar "el arco más alto" en la clave de un apuntado daba e = 141 cm.
+
+**Dintel dibujado (`draw_lintel_detail`)**: desde el dict de `design_lintel`
+arma elevación con estribos, apoyos achurados, cotas, corte armado y rótulos,
+y devuelve su caja para ir a 1:10 en su propio viewport de `compose_layout`.
+
+**El juego completo en dos llamadas (`conjunto_estructural.py`)**:
+`design_frame_structure` (ejes, cargas, f'c, suelo → losa iterada, bajada,
+trabes continuas, UNA sección de trabe, zapata, contratrabes, con `decisions`
+que dicen qué eligió y por qué) y `draw_structural_set` (las dos plantas sin
+pisarse + `compose_layout` de la lámina con rótulo). Existe para que un
+modelo chico produzca la misma lámina que uno grande encadenando tools.
+`compose_layout` registra la lámina como layout, así `check_sheet` no la
+compara contra el cajón de un `create_sheet` viejo o persistido.
 
 **`design_pool`** (`alberca.py`): volumen, recirculación, succión, drenes y
 muro contra suelo y agua. Sin f'c (y sin peso del suelo si está enterrada)

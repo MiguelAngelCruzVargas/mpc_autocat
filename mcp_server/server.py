@@ -28,6 +28,8 @@ import estructura as est_mod
 import planta_estructural as pe_mod
 import arcos as arc_mod
 import alberca as alb_mod
+import conjunto_estructural as conj_mod
+import detalles_estructura as dest_mod
 import phone3d as phone3d_mod
 import profile as profile_mod
 import isometric as iso_mod
@@ -508,6 +510,12 @@ def check_sheet() -> dict[str, Any]:
         return {"ok": True,
                 "skipped": "no se creó ninguna lámina en esta sesión: no hay "
                            "contra qué comparar. Llamá create_sheet primero."}
+    if "layout" in area:
+        return {"ok": True,
+                "skipped": f"la lámina vigente es el layout '{area['layout']}' "
+                           "(compose_layout): el cajón vive en espacio papel y cada "
+                           "viewport recorta su vista, así que no hay área útil en el "
+                           "modelo que verificar. Revisá 'fits' de compose_layout y el PDF."}
     extents = acad.call("get_extents",
                         {"layers": None,
                          "excludeLayers": [sheet_mod.LAYER_FRAME,
@@ -5098,14 +5106,21 @@ def arch_geometry(span: float, rise: Optional[float] = None, kind: str = "medio_
 @mcp.tool()
 def create_arch(x: float, y: float, span: float, rise: Optional[float] = None,
                 kind: str = "medio_punto", thickness: float = 0.0, voussoirs: int = 0,
-                closed: bool = True, layer: str = "ARCOS",
-                lineweight: int = 35) -> dict[str, Any]:
+                closed: bool = True, layer: str = "ARCOS", lineweight: int = 35,
+                annotate: bool = True, label: Optional[str] = None,
+                load_kg_m: Optional[float] = None, width: float = 0.15,
+                fm_kgcm2: Optional[float] = None, upm: float = 0.0) -> dict[str, Any]:
     """DIBUJA un arco (alzado o corte) con el arranque izquierdo en (x, y):
     intradós, extradós si hay thickness, cierres de arranque y juntas de
     dovelas si voussoirs (impar, con clave centrada). kind y rise como en
-    arch_geometry. Capas ARCOS y ARCOS-DOVELAS."""
+    arch_geometry. annotate (default) acota luz y flecha y rotula tipo, L, f
+    y e; con load_kg_m (sobrecarga, kg/m) además corre check_masonry_arch y
+    escribe el empuje H y el veredicto (OK / junta abierta / no estable):
+    el plano queda con su dato, sin que nadie lo copie a mano. width =
+    ancho del arco para la revisión. Devuelve 'box' para compose_layout."""
     return arc_mod.create_arch(x, y, span, rise, kind, thickness, voussoirs, closed,
-                               layer, lineweight)
+                               layer, lineweight, annotate, label, load_kg_m, width,
+                               fm_kgcm2, upm)
 
 
 @mcp.tool()
@@ -5113,13 +5128,15 @@ def check_masonry_arch(span: float, rise: float, thickness: float, width: float,
                        load_kg_m: float, fm_kgcm2: Optional[float] = None,
                        self_weight: bool = True, unit_weight: float = 1800.0,
                        kind: str = "medio_punto") -> dict[str, Any]:
-    """REVISA un arco de mampostería (ladrillo/piedra) bajo carga uniforme:
-    empuje horizontal H = w·L²/(8f) y reacciones, línea de presiones
-    (funicular parabólica) contra el eje del arco, excentricidad máxima y
-    regla del tercio central (e <= t/6, Heyman), espesor mínimo requerido,
-    y esfuerzo de compresión contra f'm/3 si se da fm_kgcm2 (sin él no se
-    revisa el esfuerzo: es dato del proyecto). PRELIMINAR, para arcos de
-    vivienda; el empuje H es lo que hay que darle a los apoyos."""
+    """REVISA un arco de mampostería (ladrillo/piedra): peso propio que SIGUE
+    el arco + sobrecarga uniforme load_kg_m; línea de presiones numérica
+    (M(x)/H) buscando el empuje H que la deja lo más cerca del eje del arco
+    (análisis límite de Heyman). Devuelve H y las reacciones (lo que hay que
+    darle a los apoyos), la excentricidad máxima, la regla del tercio central
+    (e <= t/6: toda la junta a compresión), la estabilidad (e <= t/2), el
+    espesor mínimo requerido y el esfuerzo contra f'm/3 si se da fm_kgcm2
+    (sin él no se revisa: es dato del proyecto). PRELIMINAR, para arcos de
+    vivienda; no reemplaza el análisis de una bóveda."""
     return arc_mod.check_masonry_arch(span, rise, thickness, width, load_kg_m, fm_kgcm2,
                                       self_weight, unit_weight, kind)
 
@@ -5128,17 +5145,21 @@ def check_masonry_arch(span: float, rise: float, thickness: float, width: float,
 def draw_foundation_plan(columns: list[dict[str, Any]], footing_types: dict[str, Any],
                          tie_beams: list[dict[str, Any]], lot: list[float], upm: float,
                          column_size: float = 0.30, title: str = "PLANTA DE CIMENTACIÓN",
-                         text_mm: float = 2.0, origin: Optional[list[float]] = None) -> dict[str, Any]:
+                         text_mm: float = 2.0, origin: Optional[list[float]] = None,
+                         column_mark: str = "C-1", notes: Optional[list[str]] = None,
+                         table: bool = True) -> dict[str, Any]:
     """PLANTA DE CIMENTACIÓN desde los datos de diseño: columns [{x, y, type}]
     (type = marca en footing_types, cada una el dict de design_footing),
     tie_beams [{x0, y0, x1, y1, b, mark}] (contratrabes por su eje), lot
     [ancho, fondo], upm = unidades del modelo por mm de papel (la escala de
     la lámina). Dibuja zapatas con contorno grueso, columnas macizas,
-    contratrabes, marcas Z-1/CT-1/C-1, ejes y cotas. Ninguna medida se
-    escribe a mano."""
+    contratrabes, marcas Z-1/CT-1/C-1, ejes y cotas, el CUADRO DE ZAPATAS
+    (table) y las NOTAS del proyecto (notes: f'c, capacidad del suelo,
+    plantilla...). Ninguna medida se escribe a mano."""
     return pe_mod.draw_foundation_plan(columns, footing_types, tie_beams, (lot[0], lot[1]),
                                        upm, column_size, title, text_mm,
-                                       tuple(origin) if origin else (0.0, 0.0))
+                                       tuple(origin) if origin else (0.0, 0.0),
+                                       column_mark, notes, table)
 
 
 @mcp.tool()
@@ -5146,15 +5167,21 @@ def draw_framing_plan(columns: list[dict[str, Any]], beams: list[dict[str, Any]]
                       panels: list[dict[str, Any]], upm: float,
                       openings: Optional[list[list[float]]] = None,
                       column_size: float = 0.30, title: str = "PLANTA ESTRUCTURAL",
-                      text_mm: float = 2.0) -> dict[str, Any]:
+                      text_mm: float = 2.0, column_mark: str = "C-1",
+                      beam_designs: Optional[dict[str, dict[str, Any]]] = None,
+                      slab_thickness: float = 0.0,
+                      notes: Optional[list[str]] = None) -> dict[str, Any]:
     """PLANTA ESTRUCTURAL de entrepiso/azotea: trabes [{x0, y0, x1, y1, b,
     mark}] por su eje (trazo oculto bajo la losa), columnas macizas, tableros
     [{x0, y0, x1, y1, mark, short: {text}, long: {text}}] con su número en
     círculo y sus dos bastones de armado (los 'text' salen de
-    design_two_way_slab), huecos de losa con cruz. upm = unidades del modelo
-    por mm de papel."""
+    design_two_way_slab), huecos de losa con cruz (el tablero anota en la
+    parte libre). beam_designs {marca: dict de design_beam} -> CUADRO DE
+    TRABES; slab_thickness y notes -> NOTAS; column_mark en cada columna.
+    upm = unidades del modelo por mm de papel."""
     return pe_mod.draw_framing_plan(columns, beams, panels, upm, openings, column_size,
-                                    title, text_mm)
+                                    title, text_mm, column_mark, beam_designs,
+                                    slab_thickness, notes)
 
 
 @mcp.tool()
@@ -5170,6 +5197,54 @@ def design_pool(length: float, width: float, shallow: float, deep: float, fc: fl
     return alb_mod.design_pool(length, width, shallow, deep, fc, soil_unit_weight,
                                turnover_hours, freeboard, k0, fy, cover,
                                wall_thickness, slab_thickness)
+
+
+@mcp.tool()
+def draw_lintel_detail(design: dict[str, Any], x: float, y: float, upm: float,
+                       mark: str = "D-1", title: bool = True) -> dict[str, Any]:
+    """DETALLE DE DINTEL desde el resultado de design_lintel: elevación con
+    estribos y varillas, los dos apoyos de muro achurados, cotas de claro y
+    apoyos, el corte con su armado, rótulos ("2 #3 INF. + 2 #3 SUP.",
+    "E#2.5 @ 8 cm", "APOYO 20 cm") y título con escala. upm = unidades del
+    modelo por mm de papel de la VISTA (0.01 para 1:10). Devuelve 'box' para
+    compose_layout: el detalle va a 1:10 o 1:20 en su propio viewport."""
+    return dest_mod.draw_lintel_detail(design, x, y, upm, mark, title)
+
+
+@mcp.tool()
+def design_frame_structure(x_axes: list[float], y_axes: list[float], w_dead: float, w_live: float,
+                           fc: float, allowable_bearing: float, depth: float,
+                           soil_unit_weight: Optional[float] = None, slab_h: float = 0.0,
+                           beam_b: float = 0.25, beam_h: float = 0.0, column_size: float = 0.30,
+                           fy: float = 4200.0, code: str = "NTC",
+                           openings: Optional[list[list[float]]] = None) -> dict[str, Any]:
+    """TODA LA ESTRUCTURA de una planta de marcos de concreto, sin dibujar:
+    losa (espesor iterado hasta cumplir), bajada de cargas a cada trabe,
+    trabes continuas por rigideces, UNA sección de trabe para la planta (la
+    peor manda, crece de 5 en 5 cm hasta cumplir), zapata aislada para la
+    reacción máxima, contratrabes. x_axes/y_axes en m; cargas de servicio
+    en kg/m² (w_dead SIN peso propio de losa); allowable_bearing (t/m²) y
+    depth (m) del E.M.S. — sin ellos rechaza. Devuelve todo listo para
+    draw_structural_set, con 'decisions' (lo que la tool decidió y por qué)
+    para decírselo al usuario."""
+    return conj_mod.design_frame_structure(x_axes, y_axes, w_dead, w_live, fc, allowable_bearing,
+                                           depth, soil_unit_weight, slab_h, beam_b, beam_h,
+                                           column_size, fy, code, openings)
+
+
+@mcp.tool()
+def draw_structural_set(design: dict[str, Any], upm: float, origin: Optional[list[float]] = None,
+                        notes: Optional[list[str]] = None, layout: Optional[str] = "E-01",
+                        paper_size: str = "A1", sheet: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """DIBUJA el juego estructural desde design_frame_structure: planta
+    estructural (trabes, tableros con bastones, hueco, marcas, cuadro de
+    trabes, notas) y planta de cimentación (zapatas, contratrabes, cuadro de
+    zapatas, notas), una al lado de la otra sin pisarse, y compone la LÁMINA
+    `layout` con compose_layout (cajón, rótulo y títulos en el papel; sheet =
+    datos del rótulo). upm = unidades del modelo por mm de papel (0.075 para
+    1:75). Después: check_all y export_pdf(layout)."""
+    return conj_mod.draw_structural_set(design, upm, tuple(origin) if origin else (0.0, 0.0),
+                                        2.0, notes, layout, paper_size, sheet)
 
 
 @mcp.tool()

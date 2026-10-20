@@ -93,18 +93,26 @@ def test_dibujo() -> None:
 
 
 def test_revision() -> None:
-    c = arcos.check_masonry_arch(2.4, 0.6, 0.14, 0.15, 800, fm_kgcm2=40, kind="rebajado")
-    w = 800 + 1800 * 0.14 * 0.15
-    check("empuje H = wL²/8f", abs(c["thrust_H_kg"] - w * 2.4 ** 2 / (8 * 0.6)) < 0.5, c["thrust_H_kg"])
-    check("reacción V = wL/2", abs(c["reaction_V_kg"] - w * 1.2) < 0.5)
+    c = arcos.check_masonry_arch(2.4, 0.6, 0.28, 0.15, 800, fm_kgcm2=40, kind="rebajado")
+    w = 800 + 1800 * 0.28 * 0.15
+    H0 = w * 2.4 ** 2 / (8 * 0.6)
+    check("empuje H del orden de wL²/8f (rebajado, casi parabólico)",
+          0.6 * H0 < c["thrust_H_kg"] < 1.6 * H0, (c["thrust_H_kg"], H0))
+    check("reacciones suman el peso total",
+          abs(sum(c["reactions_V_kg"]) - c["W_total_kg"]) < 1.0, (c["reactions_V_kg"], c["W_total_kg"]))
     check("t requerido = 6·e_max", abs(c["t_required_m"] - 6 * c["e_max_m"]) < 1e-3)
-    check("tercio central falla con t=14 y lo dice", not c["middle_third"]["ok"] and not c["ok"])
-    c2 = arcos.check_masonry_arch(2.4, 0.6, 0.30, 0.15, 800, fm_kgcm2=40, kind="rebajado")
-    check("con t=30 la línea entra en el tercio central", c2["middle_third"]["ok"], c2["e_max_m"])
+    check("rebajado de 28 cm: la línea entra en el tercio central", c["middle_third"]["ok"] and c["ok"], c)
+    # Heyman (1969): un medio punto de peso propio es estable si t/R >= 0.1075.
+    mp_ok = arcos.check_masonry_arch(2.4, 1.2, 0.20, 0.15, 0, kind="medio_punto")   # t/R = 0.167
+    mp_no = arcos.check_masonry_arch(2.4, 1.2, 0.08, 0.15, 0, kind="medio_punto")   # t/R = 0.067
+    check("medio punto t/R=0.17 es estable (Heyman)", mp_ok["stability"]["ok"], mp_ok["e_max_m"])
+    check("medio punto t/R=0.07 NO es estable (Heyman)", not mp_no["stability"]["ok"], mp_no["e_max_m"])
+    check("medio punto: fuera del tercio central aunque estable (junta abierta)",
+          not mp_ok["middle_third"]["ok"])
     c3 = arcos.check_masonry_arch(2.4, 1.2, 0.14, 0.15, 800)
     check("sin f'm no revisa esfuerzo y lo dice", c3["stress"]["ok"] is None)
-    # un arco parabólico perfecto tendría e = 0: el medio punto bajo carga uniforme no
-    check("medio punto: la parábola se separa del semicírculo", c3["e_max_m"] > 0.01)
+    ap = arcos.check_masonry_arch(2.4, 1.6, 0.28, 0.15, 900, kind="apuntado")
+    check("apuntado: la excentricidad es menor que la flecha (antes daba 141 cm)", ap["e_max_m"] < 0.5, ap["e_max_m"])
     try:
         arcos.check_masonry_arch(2.4, 0.6, 0.14, 0.15, -5)
         check("carga negativa se rechaza", False)

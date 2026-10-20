@@ -67,6 +67,16 @@ def _caja(handle: str,
     return caja
 
 
+def _anterior(handle_a: str, handle_b: str) -> bool:
+    """¿La entidad a se creó antes que b? Los handles de AutoCAD son
+    hexadecimales crecientes en orden de creación; lo dibujado antes queda
+    DEBAJO de lo dibujado después."""
+    try:
+        return int(str(handle_a), 16) < int(str(handle_b), 16)
+    except ValueError:
+        return False
+
+
 def _contiene(afuera: Optional[list[float]],
               adentro: list[float]) -> bool:
     """El primer rectangulo contiene ENTERO al segundo."""
@@ -141,9 +151,13 @@ def check_text_placement(margin: float = 0.0,
             # sola lamina, medidos.
             #
             # Un Hatch es la excepcion: si el texto cae adentro de un achurado,
-            # el achurado le pasa POR ENCIMA aunque lo contenga.
-            if (o["type"] != "Hatch"
-                    and _contiene(_caja(o["handle"], cajas), caja)):
+            # el achurado le pasa POR ENCIMA aunque lo contenga... salvo que
+            # el achurado se haya dibujado ANTES que el texto (handle menor):
+            # entonces es su fondo -- el sombreado del encabezado de una
+            # tabla, la banda de una partida -- y el texto queda encima. Sin
+            # esto cada celda de encabezado salia como "tapada".
+            contiene = _contiene(_caja(o["handle"], cajas), caja)
+            if contiene and (o["type"] != "Hatch" or _anterior(o["handle"], t["handle"])):
                 recuadros.append({"handle": o["handle"], "type": o["type"],
                                   "layer": o.get("layer")})
                 continue
