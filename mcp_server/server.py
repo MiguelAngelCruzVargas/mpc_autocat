@@ -4820,17 +4820,21 @@ def fillet_solid_edges(handle: str, radius: float,
 def extrude_profile(points: list[list[float]], height: float,
                     bulges: Optional[list[float]] = None, z0: float = 0.0,
                     taper: float = 0.0, layer: Optional[str] = None,
-                    color_index: Optional[int] = None) -> dict[str, Any]:
+                    color_index: Optional[int] = None, plane: str = "xy",
+                    y0: float = 0.0) -> dict[str, Any]:
     """Extruye un contorno CERRADO de líneas y arcos a un sólido 3D, sin
     run_code. points: vértices [[x, y], ...]; bulges: uno por vértice (0 =
     tramo recto, tan(ángulo/4) = arco hasta el vértice siguiente; 1 = semi-
     círculo) — lo mismo que líneas y arcos unidos con JOIN. z0 es la cota
     de la base; height > 0 sube, < 0 baja. taper en grados. Devuelve handle,
     volume y z0/z1. Con solid_boolean y fillet_solid_edges alcanza para
-    modelar una pieza."""
+    modelar una pieza. plane='xz' toma el contorno como un ALZADO (x, z) y lo extruye a lo
+    largo de Y, de y0 a y0+|height| (z0 debe ser 0): así se levanta un arco, un frontón o un
+    perfil de cornisa sin rotar nada después."""
     return acad.call("extrude_profile", {
         "points": points, "bulges": bulges, "z0": z0, "height": height,
         "taper": taper, "layer": layer, "colorIndex": color_index,
+        "plane": plane, "y0": y0,
     })
 
 

@@ -20,7 +20,9 @@ namespace AutoCadMcpPlugin.Commands
         /// el equivalente directo de líneas+arcos unidos con JOIN).
         /// params: points ([[x,y],...]), [bulges] (uno por vértice, 0 = recto),
         /// z0 (cota de la base), height (> 0 hacia +Z, &lt; 0 hacia -Z),
-        /// [taper=0] (grados), [layer], [colorIndex], [lineweight].
+        /// [taper=0] (grados), [layer], [colorIndex], [lineweight],
+        /// [plane="xy"|"xz"]: con "xz" el contorno se interpreta como (x, z) —un alzado— y se
+        /// extruye a lo largo de Y, ocupando de y0 a y0+|height| ([y0=0]); z0 debe ser 0.
         /// Devuelve handle, volume y los extents.
         /// </summary>
         public static JsonObject Extrude(Document doc, JsonObject pars)
@@ -78,6 +80,21 @@ namespace AutoCadMcpPlugin.Commands
                 {
                     region.Dispose();
                     pl.Dispose();
+                }
+
+                string plano = (pars["plane"]?.GetValue<string>() ?? "xy").ToLowerInvariant();
+                if (plano == "xz")
+                {
+                    // (x, y, z) -> (x, -z, y): el contorno queda en el plano XZ y la extrusión corre
+                    // a lo largo de -Y; luego se desplaza para que ocupe de y0 hacia +Y.
+                    double y0 = pars["y0"]?.GetValue<double>() ?? 0.0;
+                    solido.TransformBy(Matrix3d.Rotation(Math.PI / 2.0, Vector3d.XAxis, Point3d.Origin));
+                    var e0 = solido.GeometricExtents;
+                    solido.TransformBy(Matrix3d.Displacement(new Vector3d(0, y0 - e0.MinPoint.Y, 0)));
+                }
+                else if (plano != "xy")
+                {
+                    throw new ArgumentException($"plane '{plano}' no existe: xy o xz.");
                 }
 
                 EntityHelper.ApplyCommon(db, tr, solido, pars);

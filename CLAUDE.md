@@ -697,6 +697,32 @@ compara contra el cajón de un `create_sheet` viejo o persistido.
 muro contra suelo y agua. Sin f'c (y sin peso del suelo si está enterrada)
 rechaza.
 
+## 4.undecies Pórtico de acceso con arco y barda: `portico_arco` → `portico_dibujo` → `portico_cuadros`
+
+Un pórtico con arco (pilastras con frontón, cornisa de teja, portón de herrería) y su barda se
+calcula y se dibuja en módulos propios, sin escribir un script por plano:
+
+- **`portico_arco.py`** — `design_gate_portal` (marco plano por rigideces con base empotrada y
+  articulada, frontón como carga, hoja del portón como par de fuerzas en las bisagras, viento y
+  sismo fuera del plano, pilastra por interacción P-M, zapata RECTANGULAR de menor volumen con
+  contacto real sin tensión; prueba con y sin trabe de liga y elige la que ahorra más de 5 %) y
+  `design_fence` (pilastra de barda y cimiento corrido con momento). Rechaza sin capacidad del
+  suelo, f'c, desplante o peso del relleno. Lo que no es dato del proyecto (viento, sismo, peso
+  de la hoja, peso del frontón) va en `supuestos` y en el plano.
+- **La forma sale de la FOTO del cliente**, no de la imaginación: `PERFIL_FOTO` y `FOTO`
+  (`portico_dibujo.py`) guardan las medidas calcadas de la referencia con el claro de 5.00 m como
+  escala. Cambiar el diseño estructural no toca esa forma. Para verificar, superponer el dibujo
+  (capturado con `capture_viewport` a la misma ventana) sobre la foto.
+- **`portico_dibujo.py` / `portico_detalles*.py`** — alzado, planta, estructura, armado de la
+  trabe curva desarrollada, pilastras, cimentación. **`portico_3d.py`** — el modelo con
+  `extrude_profile(plane="xz")` (alzado extruido a lo largo de Y; requiere plugin recompilado).
+- **`portico_cuadros.py`** — cantidades NETAS (sin merma) y materiales: cemento, arena, grava y
+  agua por mezcla. Dosificación de referencia por ACI 211.1 con f'cr de ACI 318-19 (f'c 250 →
+  410 kg de cemento por m³) y mortero 1:4 por volumen absoluto; el diseño de mezcla del
+  proveedor manda. Arena y grava en volumen suelto.
+- La captura 3D (`capture_viewport` no sirve para perspectiva): traer AutoCAD al frente y tomar la
+  pantalla; `set_3d_view(isolate_3d=False)` antes de guardar.
+
 ## 5. Jerarquía de grosores
 
 Un plano se lee por el contraste de trazos. Toda tool de creación acepta
