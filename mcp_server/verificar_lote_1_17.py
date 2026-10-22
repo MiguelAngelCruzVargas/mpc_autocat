@@ -1,5 +1,5 @@
-"""Verificación EN VIVO del lote 1.17.0 (purga, actual, grupos, XData, datos propios, atributos,
-escalas de anotación, impresión de layouts, bloques dinámicos, estilos de tabla/directriz).
+"""Verificación EN VIVO de los lotes 1.17.0 y 1.18.0 (purga, actual, grupos, XData, datos propios, atributos,
+escalas de anotación, impresión de layouts, bloques dinámicos, estilos de tabla/directriz; y de la 1.18.0: fusionar/borrar/aislar capas, estados de capa, capas por viewport, copiar/renombrar layouts y exportar copias DWG/DXF).
 
 Estas tools se escribieron sin AutoCAD a mano: compilan en 2019-2027 pero NO se habían probado.
 Trabaja en un dibujo NUEVO descartable y lo cierra. NO usarlo con un plano en curso.
@@ -190,6 +190,110 @@ def main() -> int:
     chk("create mleaderstyle", bueno(r), r)
     r = intento("delete mleaderstyle", lambda: s.delete_database_object("mleaderstyle", "ML17"))
     chk("delete mleaderstyle", bueno(r), r)
+
+    # ---------------------------------------------------------------- 1.18.0: herramientas de capas
+    def capa(nombre):
+        for c in s.list_layers().get("layers", []):
+            if c.get("name", "").lower() == nombre.lower():
+                return c
+        return None
+
+    for n in ("LA17", "LB17", "LD17", "LX17"):
+        s.create_database_object("layer", n, {})
+    s.create_line(0, 200, 5, 200, layer="LA17")
+    s.create_line(0, 201, 5, 201, layer="LB17")
+    s.create_line(0, 202, 5, 202, layer="LB17")
+    m = intento("merge_layers", lambda: s.merge_layers(["LA17", "LB17"], "LD17"))
+    chk("merge_layers mueve 3 objetos", m and bueno(m) and m.get("objectsMoved") == 3, m)
+    chk("las capas de origen ya no existen", capa("LA17") is None and capa("LB17") is None)
+    rechaza("merge_layers a una capa inexistente se rechaza", lambda: s.merge_layers(["LD17"], "NO_EXISTE_17"), "")
+    rechaza("merge_layers capa 0 se rechaza", lambda: s.merge_layers(["0"], "LD17"), "")
+    d = intento("delete_layer_with_objects sin confirmar", lambda: s.delete_layer_with_objects("LD17"))
+    chk("sin confirmar cuenta 3 y no borra", d and d.get("objects") == 3 and d.get("deleted") is False and capa("LD17") is not None, d)
+    s.set_current("layer", "LD17")
+    rechaza("no se borra la capa actual", lambda: s.delete_layer_with_objects("LD17", True), "")
+    s.set_current("layer", "0")
+    d = intento("delete_layer_with_objects confirmado", lambda: s.delete_layer_with_objects("LD17", True))
+    chk("confirmado borra la capa y sus 3 objetos", d and d.get("deleted") is True and capa("LD17") is None, d)
+
+    # estados de capa (administrador nativo)
+    s.create_database_object("layer", "LS17", {})
+    r = intento("save_layer_state", lambda: s.save_layer_state("E17", "prueba", ["on", "frozen"]))
+    chk("save_layer_state", bueno(r), r)
+    l = intento("list_layer_states", lambda: s.list_layer_states())
+    chk("E17 aparece en la lista", l and "E17" in txt(l), l)
+    r = intento("restore_layer_state", lambda: s.restore_layer_state("E17"))
+    chk("restore_layer_state", bueno(r), r)
+    rechaza("save_layer_state repetido sin replace se rechaza", lambda: s.save_layer_state("E17"), "")
+    r = intento("replace", lambda: s.save_layer_state("E17", replace=True))
+    chk("replace=True reemplaza", bueno(r), r)
+    r = intento("delete_layer_state", lambda: s.delete_layer_state("E17"))
+    chk("delete_layer_state", bueno(r), r)
+    rechaza("restore de un estado inexistente se rechaza", lambda: s.restore_layer_state("NO_EXISTE_17"), "")
+
+    # aislar / desaislar con comprobación del encendido real
+    s.create_database_object("layer", "LY17", {})
+    iso = intento("isolate_layers", lambda: s.isolate_layers(["LS17"], "off"))
+    chk("isolate_layers", iso and bueno(iso), iso)
+    ly = capa("LY17")
+    chk("LY17 quedó apagada", ly and ly.get("off") is True, ly)
+    rechaza("no se anida el aislamiento", lambda: s.isolate_layers(["LY17"]), "")
+    un = intento("unisolate_layers", lambda: s.unisolate_layers())
+    chk("unisolate_layers", un and bueno(un), un)
+    ly = capa("LY17")
+    chk("LY17 volvió a encenderse", ly and ly.get("off") is False, ly)
+    rechaza("unisolate sin aislamiento se rechaza", lambda: s.unisolate_layers(), "")
+    iso = intento("isolate lock", lambda: s.isolate_layers(["LS17"], "lock"))
+    ly = capa("LY17")
+    chk("modo lock bloquea (no apaga)", ly and ly.get("locked") is True and ly.get("off") is False, ly)
+    s.unisolate_layers()
+    chk("tras unisolate vuelve a desbloquearse", (capa("LY17") or {}).get("locked") is False)
+
+    # capas por viewport
+    s.create_layout("VP17")
+    vpr = intento("create_viewport", lambda: s.create_viewport("VP17", 150, 100, 100, 80, 0, 0, 100, 1000))
+    hv = (vpr or {}).get("handle")
+    if hv:
+        r = intento("set_viewport_layers congela", lambda: s.set_viewport_layers(hv, freeze=["LS17"]))
+        chk("LS17 congelada en el viewport", r and bueno(r) and "LS17" in txt(r), r)
+        r = intento("solo informa", lambda: s.set_viewport_layers(hv))
+        chk("sin acción informa lo congelado", r and "LS17" in txt(r) and r.get("changed") is False, r)
+        chk("la capa NO se congeló en el modelo", (capa("LS17") or {}).get("frozen") is False, capa("LS17"))
+        r = intento("set_viewport_layers descongela", lambda: s.set_viewport_layers(hv, thaw_all=True))
+        chk("thaw_all la descongela", r and "LS17" not in txt(r.get("frozen", [])), r)
+        r = intento("freeze_all_except", lambda: s.set_viewport_layers(hv, freeze_all_except=["LY17"]))
+        chk("freeze_all_except congela las otras", r and bueno(r) and r.get("frozenCount", 0) >= 2, r)
+        rechaza("capa inexistente en el viewport se rechaza", lambda: s.set_viewport_layers(hv, freeze=["NO_EXISTE_17"]), "")
+    else:
+        chk("viewport de prueba creado", False, vpr)
+
+    # layouts: copiar y renombrar
+    r = intento("copy_layout", lambda: s.copy_layout("VP17", "VP17-COPIA"))
+    chk("copy_layout", bueno(r), r)
+    lay = s.list_layouts()
+    chk("la copia aparece", "VP17-COPIA" in txt(lay), lay)
+    r = intento("rename_layout", lambda: s.rename_layout("VP17-COPIA", "VP17-B"))
+    chk("rename_layout", bueno(r), r)
+    rechaza("rename a un nombre que existe se rechaza", lambda: s.rename_layout("VP17-B", "VP17"), "")
+    rechaza("copy_layout de uno inexistente se rechaza", lambda: s.copy_layout("NO_EXISTE_17", "X17"), "")
+    s.delete_layout("VP17-B")
+    s.delete_layout("VP17")
+
+    # copias en otra versión y en DXF (el dibujo de prueba se guarda primero)
+    import os, tempfile
+    carpeta = tempfile.mkdtemp(prefix="mcp17_")
+    base = os.path.join(carpeta, "base17.dwg")
+    s.save_drawing(path=base, overwrite=True)
+    for ver in ("2018", "2013"):
+        ruta = os.path.join(carpeta, f"copia{ver}.dwg")
+        r = intento(f"export_copy {ver}", lambda ruta=ruta, ver=ver: s.export_copy(ruta, ver))
+        chk(f"export_copy DWG {ver} escribe y coincide", r and bueno(r) and os.path.exists(ruta) and (r.get("verify") or {}).get("match") is True, r)
+    r = intento("export_copy dxf", lambda: s.export_copy(os.path.join(carpeta, "copia.dxf")))
+    chk("export_copy DXF escribe", r and bueno(r) and os.path.exists(os.path.join(carpeta, "copia.dxf")), r)
+    rechaza("export_copy no pisa sin overwrite", lambda: s.export_copy(os.path.join(carpeta, "copia.dxf")), "")
+    rechaza("export_copy sobre el propio dibujo se rechaza", lambda: s.export_copy(base, overwrite=True), "")
+    nombre_ok = s.get_drawing_info()
+    chk("el dibujo abierto sigue siendo base17.dwg", "base17" in txt(nombre_ok).lower(), nombre_ok)
 
     # ---------------------------------------------------------------- purga (al final: borra cosas)
     s.create_database_object("layer", "SOBRA17", {})

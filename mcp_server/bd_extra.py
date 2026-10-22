@@ -323,3 +323,155 @@ def set_dynamic_block_properties(handle: str, values: dict[str, Any]) -> dict[st
             raise BdError(f"'{k}': número inválido (NaN o infinito).")
         limpio[k.strip()] = v
     return acad.call("set_dynamic_block_properties", {"handle": _handle(handle), "values": limpio})
+
+
+# ------------------------------------------------------------------ herramientas de capas (plugin 1.18.0)
+
+PROPS_ESTADO = ("on", "frozen", "locked", "plot", "color", "linetype", "lineweight", "plotstyle", "transparency")
+
+
+def _capas(capas: Any, cual: str, minimo: int = 1, maximo: int = 200) -> list[str]:
+    if not isinstance(capas, (list, tuple)) or len(capas) < minimo:
+        raise BdError(f"'{cual}' necesita una lista de al menos {minimo} nombre(s) de capa.")
+    if len(capas) > maximo:
+        raise BdError(f"'{cual}': máximo {maximo} capas.")
+    vistos: list[str] = []
+    for c in capas:
+        c = _nombre(c, cual)
+        if c.lower() not in [v.lower() for v in vistos]:
+            vistos.append(c)
+    return vistos
+
+
+def merge_layers(sources: list[str], target: str) -> dict[str, Any]:
+    fuentes = _capas(sources, "sources")
+    destino = _nombre(target, "target")
+    if destino.lower() in [f.lower() for f in fuentes]:
+        raise BdError("'target' no puede estar también en 'sources'.")
+    if any(f.lower() in ("0", "defpoints") for f in fuentes):
+        raise BdError("Las capas 0 y Defpoints son del sistema: no se fusionan.")
+    return acad.call("merge_layers", {"sources": fuentes, "target": destino})
+
+
+def delete_layer_with_objects(name: str, confirm: bool = False) -> dict[str, Any]:
+    n = _nombre(name)
+    if n.lower() in ("0", "defpoints"):
+        raise BdError("Las capas 0 y Defpoints son del sistema: no se borran.")
+    return acad.call("delete_layer_with_objects", {"name": n, "confirm": confirm is True})
+
+
+def _props_estado(properties: Optional[list[str]]) -> Optional[list[str]]:
+    if properties is None:
+        return None
+    if not isinstance(properties, (list, tuple)) or not properties:
+        raise BdError("'properties' es una lista o se omite (todas).")
+    malas = [p for p in properties if not isinstance(p, str) or p.lower() not in PROPS_ESTADO]
+    if malas:
+        raise BdError(f"Propiedad(es) {malas!r} desconocida(s). Válidas: {', '.join(PROPS_ESTADO)}.")
+    return [p.lower() for p in properties]
+
+
+def save_layer_state(name: str, description: str = "", properties: Optional[list[str]] = None,
+                     replace: bool = False) -> dict[str, Any]:
+    n = _nombre(name, maximo=100)
+    if n.upper().startswith("_MCP_"):
+        raise BdError("Los nombres que empiezan con _MCP_ son internos.")
+    if not isinstance(description, str) or len(description) > 255:
+        raise BdError("'description' es un texto de hasta 255 caracteres.")
+    pars: dict[str, Any] = {"name": n, "description": description, "replace": replace is True}
+    p = _props_estado(properties)
+    if p is not None:
+        pars["properties"] = p
+    return acad.call("save_layer_state", pars)
+
+
+def restore_layer_state(name: str, properties: Optional[list[str]] = None,
+                        turn_off_others: bool = False) -> dict[str, Any]:
+    pars: dict[str, Any] = {"name": _nombre(name, maximo=100), "turn_off_others": turn_off_others is True}
+    p = _props_estado(properties)
+    if p is not None:
+        pars["properties"] = p
+    return acad.call("restore_layer_state", pars)
+
+
+def list_layer_states() -> dict[str, Any]:
+    return acad.call("list_layer_states", {})
+
+
+def delete_layer_state(name: str) -> dict[str, Any]:
+    n = _nombre(name, maximo=100)
+    if n.upper().startswith("_MCP_"):
+        raise BdError("Ese estado es interno (aislar capas): usá unisolate_layers.")
+    return acad.call("delete_layer_state", {"name": n})
+
+
+def isolate_layers(layers: list[str], mode: str = "off") -> dict[str, Any]:
+    if mode not in ("off", "lock"):
+        raise BdError("'mode' es 'off' (apagar las demás) o 'lock' (bloquearlas).")
+    return acad.call("isolate_layers", {"layers": _capas(layers, "layers"), "mode": mode})
+
+
+def unisolate_layers() -> dict[str, Any]:
+    return acad.call("unisolate_layers", {})
+
+
+def set_viewport_layers(handle: str, freeze: Optional[list[str]] = None, thaw: Optional[list[str]] = None,
+                        thaw_all: bool = False, freeze_all_except: Optional[list[str]] = None) -> dict[str, Any]:
+    pars: dict[str, Any] = {"handle": _handle(handle)}
+    if freeze is not None and freeze_all_except is not None:
+        raise BdError("Usá 'freeze' o 'freeze_all_except', no los dos.")
+    if freeze is not None:
+        pars["freeze"] = _capas(freeze, "freeze")
+    if thaw is not None:
+        pars["thaw"] = _capas(thaw, "thaw")
+    if freeze_all_except is not None:
+        pars["freeze_all_except"] = _capas(freeze_all_except, "freeze_all_except")
+    if thaw_all:
+        pars["thaw_all"] = True
+    return acad.call("set_viewport_layers", pars)
+
+
+# ------------------------------------------------------------------ copias y layouts (plugin 1.18.0)
+
+VERSIONES_COPIA = ("2018", "2013", "2010", "2007", "2004", "2000")
+
+
+def export_copy(path: str, version: str = "2018", precision: int = 16, overwrite: bool = False) -> dict[str, Any]:
+    if not isinstance(path, str) or not path.strip():
+        raise BdError("'path' es la ruta del archivo .dwg o .dxf a escribir.")
+    if not path.lower().endswith((".dwg", ".dxf")):
+        raise BdError("La extensión del archivo tiene que ser .dwg o .dxf.")
+    version = str(version)
+    if version not in VERSIONES_COPIA:
+        raise BdError(f"'version' es una de: {', '.join(VERSIONES_COPIA)}.")
+    if isinstance(precision, bool) or not isinstance(precision, int) or not 0 <= precision <= 16:
+        raise BdError("'precision' son los decimales del DXF: un entero de 0 a 16.")
+    return acad.call("export_copy", {"path": path.strip(), "version": version, "precision": precision,
+                                     "overwrite": overwrite is True})
+
+
+def _layout(n: Any, cual: str) -> str:
+    if not isinstance(n, str) or not n or n != n.strip():
+        raise BdError(f"'{cual}' no puede estar vacío ni empezar o terminar con espacios.")
+    if len(n) > 255:
+        raise BdError(f"'{cual}' no puede pasar de 255 caracteres.")
+    mal = next((c for c in n if c in _PROHIBIDOS), None)
+    if mal:
+        raise BdError(f"'{cual}' no puede llevar el carácter {mal!r}.")
+    return n
+
+
+def rename_layout(name: str, new_name: str) -> dict[str, Any]:
+    a, b = _layout(name, "name"), _layout(new_name, "new_name")
+    if a.lower() == "model" or b.lower() == "model":
+        raise BdError("«Model» es el espacio modelo: ni se renombra ni se usa como nombre de lámina.")
+    return acad.call("rename_layout", {"name": a, "new_name": b})
+
+
+def copy_layout(name: str, new_name: str) -> dict[str, Any]:
+    a, b = _layout(name, "name"), _layout(new_name, "new_name")
+    if a.lower() == "model":
+        raise BdError("«Model» no es una lámina: no se copia.")
+    if b.lower() == "model":
+        raise BdError("«Model» está reservado para el espacio modelo.")
+    return acad.call("copy_layout", {"name": a, "new_name": b})

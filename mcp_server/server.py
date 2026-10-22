@@ -5647,7 +5647,7 @@ def delete_database_object(kind: str, name: Optional[str] = None,
     return _prop(prop_mod.delete_database_object, kind, name, handle)
 
 
-_PEND = " (plugin 1.17.0: verificado que compila en 2019-2027; PENDIENTE de prueba en vivo)"
+_PEND = " (plugin 1.17.0/1.18.0: compila en 2019-2027; PENDIENTE de prueba en vivo)"
 
 
 def _con_pend(fn):
@@ -5876,6 +5876,123 @@ def set_dynamic_block_properties(handle: str, values: dict[str, Any]) -> dict[st
     Se validan TODAS antes de escribir (existe, no es de solo lectura, el valor está entre
     los permitidos y es del tipo que esa propiedad guarda). Devuelve antes y después."""
     return _bd(bd_mod.set_dynamic_block_properties, handle, values)
+
+
+@mcp.tool()
+@_con_pend
+def merge_layers(sources: list[str], target: str) -> dict[str, Any]:
+    """Fusiona capas (LAYMRG): todo lo que está en las capas de `sources` —en el modelo, en
+    las láminas y dentro de las definiciones de bloque— pasa a `target`, y las de origen se
+    borran. Si la capa actual es una de origen, la actual pasa a ser `target`. No fusiona 0,
+    Defpoints ni capas de xref. Todo o nada: si una capa queda en uso, no se cambia nada.
+    Devuelve cuántos objetos se movieron y de qué capa."""
+    return _bd(bd_mod.merge_layers, sources, target)
+
+
+@mcp.tool()
+@_con_pend
+def delete_layer_with_objects(name: str, confirm: bool = False) -> dict[str, Any]:
+    """Borra una capa Y TODO LO QUE TIENE (LAYDEL): modelo, láminas y definiciones de
+    bloque. Es destructivo: sin confirm=true solo cuenta lo que borraría (por tipo de
+    objeto) y no toca nada; mostralo antes de confirmar. No borra 0, Defpoints, la capa
+    actual ni capas de xref. Para una capa vacía o sin uso alcanza delete_database_object."""
+    return _bd(bd_mod.delete_layer_with_objects, name, confirm)
+
+
+@mcp.tool()
+@_con_pend
+def save_layer_state(name: str, description: str = "", properties: Optional[list[str]] = None,
+                     replace: bool = False) -> dict[str, Any]:
+    """Guarda el estado de las capas en el ADMINISTRADOR DE ESTADOS DE CAPA de AutoCAD (queda
+    en el dibujo y se ve en su cuadro): encendido, congelado, bloqueo, impresión, color, tipo
+    de línea, grosor, estilo de trazado y transparencia de cada capa.
+    properties: subconjunto de on | frozen | locked | plot | color | linetype | lineweight |
+    plotstyle | transparency; sin lista, todas. replace=True reemplaza uno existente."""
+    return _bd(bd_mod.save_layer_state, name, description, properties, replace)
+
+
+@mcp.tool()
+@_con_pend
+def restore_layer_state(name: str, properties: Optional[list[str]] = None,
+                        turn_off_others: bool = False) -> dict[str, Any]:
+    """Restaura un estado de capas guardado (con save_layer_state o desde el cuadro de
+    AutoCAD). properties: solo esas; sin lista, las que el estado guardó. turn_off_others
+    apaga las capas que el estado no menciona (capas creadas después)."""
+    return _bd(bd_mod.restore_layer_state, name, properties, turn_off_others)
+
+
+@mcp.tool()
+@_con_pend
+def list_layer_states() -> dict[str, Any]:
+    """Estados de capa del dibujo: nombre, descripción, propiedades que guardan, cantidad de
+    capas y si traen datos de viewport; y si hay capas aisladas (isolate_layers)."""
+    return _bd(bd_mod.list_layer_states)
+
+
+@mcp.tool()
+@_con_pend
+def delete_layer_state(name: str) -> dict[str, Any]:
+    """Borra un estado de capas guardado."""
+    return _bd(bd_mod.delete_layer_state, name)
+
+
+@mcp.tool()
+@_con_pend
+def isolate_layers(layers: list[str], mode: str = "off") -> dict[str, Any]:
+    """Aísla capas (LAYISO): deja visibles `layers` y apaga —o bloquea con mode='lock'— todas
+    las demás, menos 0, Defpoints y la actual. Guarda cómo estaban para deshacerlo con
+    unisolate_layers. No se anidan: si ya hay capas aisladas se rechaza."""
+    return _bd(bd_mod.isolate_layers, layers, mode)
+
+
+@mcp.tool()
+@_con_pend
+def unisolate_layers() -> dict[str, Any]:
+    """Deshace isolate_layers (LAYUNISO): vuelve el encendido y el bloqueo de las capas a
+    como estaban."""
+    return _bd(bd_mod.unisolate_layers)
+
+
+@mcp.tool()
+@_con_pend
+def set_viewport_layers(handle: str, freeze: Optional[list[str]] = None, thaw: Optional[list[str]] = None,
+                        thaw_all: bool = False, freeze_all_except: Optional[list[str]] = None) -> dict[str, Any]:
+    """Congela o descongela capas SOLO en un viewport de lámina (VPLAYER): el modelo se dibuja
+    una vez y cada lámina muestra su disciplina (arquitectura, estructura, instalaciones)
+    sin tocar nada del modelo. handle: el del viewport (create_viewport / compose_layout lo
+    devuelven; no el viewport global de la lámina). freeze_all_except congela todo menos esas
+    capas y la actual. Sin ninguna acción solo informa las capas congeladas en ese viewport."""
+    return _bd(bd_mod.set_viewport_layers, handle, freeze, thaw, thaw_all, freeze_all_except)
+
+
+@mcp.tool()
+@_con_pend
+def export_copy(path: str, version: str = "2018", precision: int = 16, overwrite: bool = False) -> dict[str, Any]:
+    """Guarda una COPIA del dibujo abierto en otro formato o versión, sin tocar el dibujo
+    abierto (su nombre y su estado de guardado siguen igual).
+    path: .dwg o .dxf. version: 2018 (default; es el MISMO formato de AutoCAD 2018 a 2027) |
+    2013 | 2010 | 2007 | 2004 | 2000, para entregar a quien tiene un AutoCAD viejo: lo que esa
+    versión no conoce se convierte o se pierde, y el resultado lo avisa. precision: decimales
+    del DXF (0-16). En DWG se vuelve a leer la copia y se comparan entidades del modelo y
+    láminas con el original (campo verify). overwrite=True para pisar un archivo existente.
+    Para guardar el plano de trabajo es save_drawing."""
+    return _bd(bd_mod.export_copy, path, version, precision, overwrite)
+
+
+@mcp.tool()
+@_con_pend
+def rename_layout(name: str, new_name: str) -> dict[str, Any]:
+    """Renombra una lámina (layout). No toca «Model». El nombre nuevo no puede existir."""
+    return _bd(bd_mod.rename_layout, name, new_name)
+
+
+@mcp.tool()
+@_con_pend
+def copy_layout(name: str, new_name: str) -> dict[str, Any]:
+    """Copia una lámina completa —viewports, configuración de impresión y lo dibujado en el
+    papel— con otro nombre: la forma de armar una serie (A-01, A-02...) desde una lámina ya
+    resuelta. Después se ajustan los viewports con set_viewport_layers o compose_layout."""
+    return _bd(bd_mod.copy_layout, name, new_name)
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:

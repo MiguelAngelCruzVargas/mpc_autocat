@@ -462,7 +462,17 @@ Verificado en vivo con `mcp_server/prueba_crear_objetos.py`: **38/38 en AutoCAD 
 - **`get_dynamic_block_properties` / `set_dynamic_block_properties`** — bloques dinámicos: estados de visibilidad, medidas de lista, etc., con los valores permitidos que informa AutoCAD.
 - **`create_database_object` / `delete_database_object`** ahora aceptan `kind` = `tablestyle` | `mleaderstyle` (se crean con `PostTableStyleToDatabase` / `PostMLeaderStyleToDb`).
 
-Para correr todo esto la primera vez que se pueda: `python mcp_server/verificar_lote_1_17.py` (dibujo nuevo descartable, imprime una línea por comprobación, sale con 1 si algo falla).
+**Plugin 1.18.0 (mismo estado: compila 2019-2027, sin prueba en vivo)** — capas, láminas y copias. Salió de leer `AcLayerTools`, `AcExportLayoutEx` y `acdbmgd` descompilados (ahí aparecieron `LayerStateManager`, `Viewport.FreezeLayersInViewport` y `Database.DxfOut`, que no se conocían):
+
+- **`merge_layers(sources, target)`** (LAYMRG) — pasa TODO lo de las capas de origen —modelo, láminas y definiciones de bloque— a la de destino y borra las de origen; la prueba de «en uso» es `Database.Purge`. **`delete_layer_with_objects(name, confirm)`** (LAYDEL) — destructivo: sin `confirm=true` solo cuenta lo que borraría, por tipo.
+- **`save_layer_state` / `restore_layer_state` / `list_layer_states` / `delete_layer_state`** — el administrador NATIVO de estados de capa (`Database.LayerStateManager`): quedan en el dibujo y se ven en el cuadro de AutoCAD. **`isolate_layers` / `unisolate_layers`** (LAYISO/LAYUNISO) guardan el estado previo en `_MCP_ISOLATE`; no se anidan. Sin probar: la política `turn_off_others` (1 = apagar las no mencionadas) sale de leer la firma, no de documentación.
+- **`set_viewport_layers(handle, freeze, thaw, thaw_all, freeze_all_except)`** (VPLAYER) — congelar capas SOLO en un viewport: es lo que permite una lámina por disciplina desde un único modelo.
+- **`copy_layout` / `rename_layout`** — `LayoutManager.CopyLayout/RenameLayout`; copiar conserva viewports e impresión.
+- **`export_copy(path, version, precision, overwrite)`** — copia en DWG de una versión anterior (2013, 2010, 2007, 2004, 2000) o DXF, sin tocar el dibujo abierto; en DWG relee la copia y compara entidades y láminas (`verify.match`). Dato que salió de comparar `DwgVersion` en las nueve versiones: **de AutoCAD 2018 a 2027 el formato de archivo es el mismo (AC1032)**; bajar la versión solo hace falta para quien tenga una 2017 o anterior.
+
+`python mcp_server/verificar_lote_1_17.py` (cubre 1.17.0 y 1.18.0) es la comprobación en vivo: dibujo nuevo descartable, una línea por verificación, sale con 1 si algo falla.
+
+**La API que usa este proyecto es estable de 2019 a 2027.** `tools/api_diff.py` compara miembro por miembro los ensamblados de referencia de las nueve versiones (informe en `Desktop\Autodesk_descompilado\notas\J_api_por_version.md`): los 66 miembros que el plugin llama por nombre existen en todas; lo que cambia entre versiones son clases de interfaz (bloques, paletas, nube) y, en `Application`, la desaparición de `IsSteelInstalled` en 2021. Los saltos grandes de métodos 2024→2025 y 2026→2027 son un efecto del descompilado de los paquetes ModPlus (net8), no cambios reales.
 
 ## 3.septies Verificar una versión de AutoCAD en vivo: `mcp_server/verificar_version.py`
 

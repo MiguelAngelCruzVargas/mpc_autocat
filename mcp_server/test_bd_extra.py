@@ -167,6 +167,65 @@ def main() -> int:
     manda("delete tablestyle", lambda: server.delete_database_object("tablestyle", "TABLA-CUADROS"),
           "delete_database_object", {"kind": "tablestyle", "name": "TABLA-CUADROS"})
 
+    # ---- herramientas de capas (1.18.0)
+    manda("merge_layers", lambda: server.merge_layers(["MUROS-VIEJOS", "muros-viejos", "TEMP"], "MUROS"),
+          "merge_layers", {"sources": ["MUROS-VIEJOS", "TEMP"], "target": "MUROS"})
+    rechazada("merge_layers destino entre los origenes", lambda: server.merge_layers(["A", "B"], "a"))
+    rechazada("merge_layers capa 0", lambda: server.merge_layers(["0"], "MUROS"))
+    rechazada("merge_layers sin origenes", lambda: server.merge_layers([], "MUROS"))
+    manda("delete_layer_with_objects sin confirmar cuenta", lambda: server.delete_layer_with_objects("TEMP"),
+          "delete_layer_with_objects", {"name": "TEMP", "confirm": False})
+    manda("delete_layer_with_objects confirmado", lambda: server.delete_layer_with_objects("TEMP", True),
+          "delete_layer_with_objects", {"name": "TEMP", "confirm": True})
+    manda("delete_layer_with_objects: 'si' no es confirmar", lambda: server.delete_layer_with_objects("TEMP", "si"),
+          "delete_layer_with_objects", {"name": "TEMP", "confirm": False})
+    rechazada("delete_layer_with_objects Defpoints", lambda: server.delete_layer_with_objects("Defpoints", True))
+    manda("save_layer_state", lambda: server.save_layer_state("ESTADO-A", "base", ["On", "FROZEN"], True),
+          "save_layer_state", {"name": "ESTADO-A", "description": "base", "replace": True, "properties": ["on", "frozen"]})
+    rechazada("save_layer_state interno", lambda: server.save_layer_state("_MCP_X"))
+    rechazada("save_layer_state propiedad desconocida", lambda: server.save_layer_state("A", properties=["magia"]))
+    rechazada("save_layer_state lista vacia", lambda: server.save_layer_state("A", properties=[]))
+    manda("restore_layer_state", lambda: server.restore_layer_state("ESTADO-A", turn_off_others=True),
+          "restore_layer_state", {"name": "ESTADO-A", "turn_off_others": True})
+    manda("list_layer_states", lambda: server.list_layer_states(), "list_layer_states", {})
+    manda("delete_layer_state", lambda: server.delete_layer_state("ESTADO-A"), "delete_layer_state", {"name": "ESTADO-A"})
+    rechazada("delete_layer_state interno", lambda: server.delete_layer_state("_MCP_ISOLATE"))
+    manda("isolate_layers", lambda: server.isolate_layers(["MUROS", "EJES"], "lock"),
+          "isolate_layers", {"layers": ["MUROS", "EJES"], "mode": "lock"})
+    rechazada("isolate_layers modo invalido", lambda: server.isolate_layers(["MUROS"], "borrar"))
+    manda("unisolate_layers", lambda: server.unisolate_layers(), "unisolate_layers", {})
+    manda("set_viewport_layers congela", lambda: server.set_viewport_layers("5a", freeze=["COTAS"], thaw=["MUROS"], thaw_all=True),
+          "set_viewport_layers", {"handle": "5A", "freeze": ["COTAS"], "thaw": ["MUROS"], "thaw_all": True})
+    manda("set_viewport_layers solo informa", lambda: server.set_viewport_layers("5A"),
+          "set_viewport_layers", {"handle": "5A"})
+    rechazada("set_viewport_layers freeze y freeze_all_except", lambda: server.set_viewport_layers("5A", freeze=["A"], freeze_all_except=["B"]))
+    rechazada("set_viewport_layers handle invalido", lambda: server.set_viewport_layers("zz", freeze=["A"]))
+    for lectura in ("list_layer_states",):
+        check(f"{lectura} es de lectura", session.retry_safe(lectura), True)
+    for cambio in ("merge_layers", "delete_layer_with_objects", "save_layer_state", "restore_layer_state",
+                   "isolate_layers", "unisolate_layers", "set_viewport_layers"):
+        check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
+        check(f"{cambio}: el docstring avisa PENDIENTE", "PENDIENTE" in (getattr(server, cambio).__doc__ or ""), True)
+
+    # ---- copias y layouts (1.18.0)
+    manda("export_copy dwg 2013", lambda: server.export_copy("C:/tmp/plano.dwg", "2013"),
+          "export_copy", {"path": "C:/tmp/plano.dwg", "version": "2013", "precision": 16, "overwrite": False})
+    manda("export_copy dxf", lambda: server.export_copy("C:/tmp/plano.DXF", "2018", 8, True),
+          "export_copy", {"path": "C:/tmp/plano.DXF", "version": "2018", "precision": 8, "overwrite": True})
+    rechazada("export_copy extension rara", lambda: server.export_copy("C:/tmp/plano.pdf"))
+    rechazada("export_copy version inexistente", lambda: server.export_copy("C:/tmp/p.dwg", "1999"))
+    rechazada("export_copy precision fuera de rango", lambda: server.export_copy("C:/tmp/p.dxf", precision=17))
+    rechazada("export_copy sin path", lambda: server.export_copy(""))
+    check("export_copy no cuenta como dibujo sin guardar", session.retry_safe("export_copy"), True)
+    manda("rename_layout", lambda: server.rename_layout("A-01", "A-02"), "rename_layout", {"name": "A-01", "new_name": "A-02"})
+    rechazada("rename_layout Model", lambda: server.rename_layout("Model", "X"))
+    rechazada("rename_layout a Model", lambda: server.rename_layout("A-01", "model"))
+    rechazada("rename_layout nombre con caracter reservado", lambda: server.rename_layout("A-01", "A/02"))
+    manda("copy_layout", lambda: server.copy_layout("A-01", "A-03"), "copy_layout", {"name": "A-01", "new_name": "A-03"})
+    rechazada("copy_layout de Model", lambda: server.copy_layout("Model", "X"))
+    for cambio in ("rename_layout", "copy_layout"):
+        check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
+
     # ---- sesión
     for lectura in ("get_xdata", "get_custom_data", "get_block_attributes", "list_annotation_scales",
                     "list_plot_options", "get_dynamic_block_properties"):

@@ -96,6 +96,98 @@ namespace AutoCadMcpPlugin.Commands
             };
         }
 
+        /// <summary>
+        /// Guarda una COPIA del dibujo activo en otro formato o versión, sin cambiar el nombre ni el estado del
+        /// dibujo abierto: DWG de una versión anterior (para pasárselo a quien trabaja en un AutoCAD viejo) o DXF.
+        /// params: path (.dwg o .dxf), [version] 2018 | 2013 | 2010 | 2007 | 2004 | 2000 (default 2018),
+        /// [precision] decimales del DXF (0-16, default 16), [overwrite=false].
+        ///
+        /// DWG: se arma una base de datos con TODO el dibujo (Database.Wblock() sin argumentos) y se guarda ESA,
+        /// de modo que el original no se toca; después se relee la copia y se comparan entidades y láminas. DXF:
+        /// Database.DxfOut. Desde AutoCAD 2018 hasta la 2027 el formato de archivo es el mismo (AC1032): solo
+        /// hace falta bajar la versión para entregar a una 2017 o anterior.
+        /// </summary>
+        public static JsonObject ExportCopy(Document doc, JsonObject pars)
+        {
+            string path = pars["path"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Falta 'path' (.dwg o .dxf).");
+            path = Path.GetFullPath(path);
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ext != ".dwg" && ext != ".dxf")
+                throw new ArgumentException("La extensión del archivo tiene que ser .dwg o .dxf.");
+            string dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                throw new DirectoryNotFoundException("No existe la carpeta: " + dir);
+            bool overwrite = pars["overwrite"]?.GetValue<bool>() ?? false;
+            if (File.Exists(path) && !overwrite)
+                throw new InvalidOperationException("Ya existe '" + path + "'. Pasá overwrite=true si querés reemplazarlo.");
+            var db = doc.Database;
+            if (!string.IsNullOrEmpty(db.Filename) && string.Equals(SafeFullPath(db.Filename), path, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Esa es la ruta del propio dibujo abierto: para eso está save_drawing.");
+
+            string v = pars["version"]?.GetValue<string>() ?? "2018";
+            DwgVersion version;
+            switch (v)
+            {
+                case "2018": version = DwgVersion.AC1032; break;
+                case "2013": version = DwgVersion.AC1027; break;
+                case "2010": version = DwgVersion.AC1024; break;
+                case "2007": version = DwgVersion.AC1021; break;
+                case "2004": version = DwgVersion.AC1800; break;
+                case "2000": version = DwgVersion.AC1015; break;
+                default: throw new ArgumentException("'version' es 2018, 2013, 2010, 2007, 2004 o 2000.");
+            }
+            int precision = pars["precision"]?.GetValue<int>() ?? 16;
+            if (precision < 0 || precision > 16) throw new ArgumentException("'precision' va de 0 a 16.");
+
+            var salida = new JsonObject { ["path"] = path, ["format"] = ext.Substring(1), ["version"] = v };
+            if (ext == ".dxf")
+            {
+                db.DxfOut(path, precision, version);
+            }
+            else
+            {
+                using (Database copia = db.Wblock())
+                    copia.SaveAs(path, version);
+                // Se vuelve a leer lo escrito: una copia que no abre, o a la que le faltan cosas, no es un entregable.
+                using (var leida = new Database(false, true))
+                {
+                    leida.ReadDwgFile(path, FileOpenMode.OpenForReadAndAllShare, true, "");
+                    leida.CloseInput(true);
+                    int ents = 0, lays = 0;
+                    using (var tr = leida.TransactionManager.StartTransaction())
+                    {
+                        var bt = (BlockTable)tr.GetObject(leida.BlockTableId, OpenMode.ForRead);
+                        var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                        foreach (ObjectId _ in ms) ents++;
+                        var ld = (DBDictionary)tr.GetObject(leida.LayoutDictionaryId, OpenMode.ForRead);
+                        foreach (DBDictionaryEntry _ in ld) lays++;
+                        tr.Commit();
+                    }
+                    int entsOriginal = 0, laysOriginal = 0;
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                        var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                        foreach (ObjectId _ in ms) entsOriginal++;
+                        var ld = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
+                        foreach (DBDictionaryEntry _ in ld) laysOriginal++;
+                        tr.Commit();
+                    }
+                    salida["verify"] = new JsonObject
+                    {
+                        ["modelEntities"] = ents, ["modelEntitiesOriginal"] = entsOriginal,
+                        ["layouts"] = lays, ["layoutsOriginal"] = laysOriginal,
+                        ["match"] = ents == entsOriginal && lays == laysOriginal
+                    };
+                }
+            }
+            salida["sizeBytes"] = new FileInfo(path).Length;
+            if (v != "2018")
+                salida["warning"] = "Guardado como AutoCAD " + v + ": lo que esa versión no conoce se convierte o se pierde (objetos de versiones nuevas pasan a proxy).";
+            return salida;
+        }
+
         private static string SafeFullPath(string p)
         {
             try { return string.IsNullOrEmpty(p) ? "" : Path.GetFullPath(p); }

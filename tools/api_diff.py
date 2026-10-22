@@ -27,9 +27,9 @@ from typing import Iterable
 DLLS = ("acdbmgd", "accoremgd", "acmgd")
 RE_CLASE = re.compile(r"^public (?:(?:sealed|abstract|static|unsafe|partial) )*(class|struct|interface|enum)\s+(\w+)", re.M)
 RE_NS = re.compile(r"^namespace ([\w.]+)", re.M)
-RE_PROP = re.compile(r"^\tpublic (?:(?:static|virtual|override|unsafe|abstract|new|sealed) )*([\w.<>\[\],? ]+?) (\w+)\s*\n\t\{(.*?)\n\t\}", re.M | re.S)
-RE_PROP_FLECHA = re.compile(r"^\tpublic (?:(?:static|virtual|override|unsafe|abstract|new|sealed) )*([\w.<>\[\],? ]+?) (\w+) =>", re.M)
-RE_METODO = re.compile(r"^\tpublic (?:(?:static|virtual|override|unsafe|abstract|new|sealed) )*([\w.<>\[\],? ]+?) (\w+)\(([^)]*)\)", re.M)
+RE_LINEA = re.compile(r"^\tpublic(?:(?:static|virtual|override|unsafe|abstract|new|sealed|readonly) )*(.+)$")
+RE_METODO = re.compile(r"^(.+?) (\w+)(?:<[^>]*>)?\((.*)\)\s*(?:where .*)?$")
+RE_PROP = re.compile(r"^(.+?) (\w+)\s*(?:=>.*|\{.*)?$")
 RESERVADAS = ("class", "struct", "enum", "interface", "delegate", "event", "new", "const")
 
 # Lo que el plugin y las tools llaman por nombre (clase, miembro). Si falta en una versión, esa
@@ -41,7 +41,7 @@ USADOS = [
     ("Database", "UpdateExt"), ("Database", "Clayer"), ("Database", "Textstyle"), ("Database", "Dimstyle"),
     ("DBObject", "XData"), ("DBObject", "GetXDataForApplication"), ("DBObject", "ExtensionDictionary"),
     ("DBObject", "CreateExtensionDictionary"), ("DBObject", "UpgradeOpen"), ("DBObject", "Erase"),
-    ("Entity", "GetOffsetCurves"), ("Curve", "GetOffsetCurves"), ("Curve", "GetSplitCurves"), ("Curve", "IntersectWith"),
+    ("Curve", "GetOffsetCurves"), ("Curve", "GetSplitCurves"),
     ("Curve", "GetClosestPointTo"), ("Entity", "IntersectWith"), ("Entity", "TransformBy"),
     ("Solid3d", "MassProperties"), ("Solid3d", "CreateBox"), ("Solid3d", "BooleanOperation"), ("Solid3d", "Slice"),
     ("Solid3d", "Extrude"), ("Solid3d", "OffsetBody"), ("Solid3d", "CheckInterference"),
@@ -60,6 +60,9 @@ USADOS = [
     ("Document", "SendStringToExecute"), ("Document", "LockDocument"), ("Application", "GetSystemVariable"),
     ("Application", "SetSystemVariable"), ("DocumentCollection", "ExecuteInCommandContextAsync"),
 ]
+
+
+CLAVE = ["Database", "DBObject", "Entity", "Curve", "BlockReference", "Solid3d", "Document", "DocumentCollection", "Editor", "Application", "Layout", "PlotSettingsValidator", "Autodesk"]
 
 
 def archivos_cs(base: str) -> Iterable[str]:
@@ -87,15 +90,24 @@ def catalogo(carpeta_version: str) -> dict[str, dict[str, set[str]]]:
             ns = RE_NS.search(t)
             clave = f"{ns.group(1) if ns else ''}.{m.group(2)}"
             e = cat.setdefault(clave, {"props": set(), "methods": set()})
-            for pm in RE_PROP.finditer(t):
-                if pm.group(1).split()[-1] not in RESERVADAS:
-                    e["props"].add(pm.group(2))
-            for pm in RE_PROP_FLECHA.finditer(t):
-                if pm.group(1).split()[-1] not in RESERVADAS:
-                    e["props"].add(pm.group(2))
-            for mm in RE_METODO.finditer(t):
-                if mm.group(1).split()[-1] not in RESERVADAS:
-                    e["methods"].add(mm.group(2) + "(" + re.sub(r"\[[^\]]*\]\s*", "", mm.group(3)).strip() + ")")
+            lineas = t.split("\n")
+            for i, ln in enumerate(lineas):
+                lm = RE_LINEA.match(ln.rstrip("\r"))
+                if not lm:
+                    continue
+                resto = lm.group(1).strip()
+                if resto.split(" ")[0] in RESERVADAS or resto.startswith(("class ", "struct ", "enum ", "interface ")):
+                    continue
+                if "(" in resto and not resto.split("(")[0].endswith("=>"):
+                    mm = RE_METODO.match(resto)
+                    if mm:
+                        e["methods"].add(mm.group(2) + "(" + re.sub(r"\[[^\]]*\]\s*", "", mm.group(3)).strip() + ")")
+                else:
+                    sig = lineas[i + 1].strip() if i + 1 < len(lineas) else ""
+                    if "=>" in resto or sig == "{" or resto.endswith("{ get; }") or "{" in resto:
+                        pm = RE_PROP.match(resto)
+                        if pm:
+                            e["props"].add(pm.group(2))
     return cat
 
 
@@ -156,6 +168,27 @@ def main() -> int:
             if not ok:
                 faltantes += 1
         md.append(f"| {clase}.{miembro} | " + " | ".join(fila) + " |")
+    md += ["", "## Miembros que cambian en las clases clave (solo nombres)", "",
+           "Un miembro se compara por nombre (sin firma). Desde 2025 los ensamblados de referencia vienen de ModPlus (net8) y el descompilado trae mas miembros que los de AutoCAD.NET: un salto grande 2024 a 2025 o 2026 a 2027 en metodos es en buena parte ESE efecto, no cambios reales.", ""]
+    for clase in CLAVE:
+        ult = None
+        filas = []
+        for a, b in zip(versiones, versiones[1:]):
+            def nombres(cat):
+                r = set()
+                for k, v in cat.items():
+                    if corto(k) == clase:
+                        r |= v["props"] | {x.split("(")[0] for x in v["methods"]}
+                return r
+            na, nb = nombres(cats[a]), nombres(cats[b])
+            if not na and not nb:
+                continue
+            ag, qu = sorted(nb - na), sorted(na - nb)
+            if ag or qu:
+                filas.append(f"  - {a} a {b}: " + (f"+{len(ag)} " + ", ".join(ag[:12]) + (" ..." if len(ag) > 12 else "") if ag else "") + ("; " if ag and qu else "") + (f"-{len(qu)} " + ", ".join(qu[:12]) + (" ..." if len(qu) > 12 else "") if qu else ""))
+        if filas:
+            md += [f"- **{clase}**"] + filas
+    md += [""]
     md += ["", f"Faltantes en total: **{faltantes}** de {len(USADOS) * len(versiones)} comprobaciones."]
     open(salida, "w", encoding="utf-8").write("\n".join(md) + "\n")
     print("informe:", salida, "| versiones:", versiones, "| faltantes:", faltantes)

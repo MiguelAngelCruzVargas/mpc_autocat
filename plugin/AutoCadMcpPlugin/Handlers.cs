@@ -239,6 +239,30 @@ namespace AutoCadMcpPlugin
                     return DatabaseExtraCommands.ScaleSetCurrent(doc, pars);
                 case "remove_annotation_scale":
                     return DatabaseExtraCommands.ScaleRemove(doc, pars);
+                case "merge_layers":
+                    return LayerOpsCommands.Merge(doc, pars);
+                case "delete_layer_with_objects":
+                    return LayerOpsCommands.DeleteWithObjects(doc, pars);
+                case "save_layer_state":
+                    return LayerOpsCommands.StateSave(doc, pars);
+                case "restore_layer_state":
+                    return LayerOpsCommands.StateRestore(doc, pars);
+                case "list_layer_states":
+                    return LayerOpsCommands.StateList(doc, pars);
+                case "delete_layer_state":
+                    return LayerOpsCommands.StateDelete(doc, pars);
+                case "isolate_layers":
+                    return LayerOpsCommands.Isolate(doc, pars);
+                case "unisolate_layers":
+                    return LayerOpsCommands.Unisolate(doc, pars);
+                case "set_viewport_layers":
+                    return LayerOpsCommands.ViewportLayers(doc, pars);
+                case "export_copy":
+                    return SaveCommands.ExportCopy(doc, pars);
+                case "rename_layout":
+                    return LayoutManageCommands.Rename(doc, pars);
+                case "copy_layout":
+                    return LayoutManageCommands.Copy(doc, pars);
 
                 case "create_database_object":
                     return DatabaseObjectsCommands.Create(doc, pars);
