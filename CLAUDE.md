@@ -1365,6 +1365,13 @@ castellano usa CENTRO2/OCULTA2: cualquier tool que pida un tipo de línea tiene 
 `layers.ensure`, nunca llamar `set_layer` con el nombre en inglés. La primera vez, AutoCAD 2027 pide iniciar
 sesión con el ID de Autodesk: esa ventana bloquea el socket hasta que la persona entre ella misma.
 
+**Servidor MCP nativo de AutoCAD 2027 (sin lograr usarlo):** la 2027 instala `AutoCAD-MCP-Server-2027.bundle`
+(`acmcp.dll`, carga bajo demanda, sin comandos registrados en su manifiesto). Dentro del DLL hay comandos
+`MCPHTTPSTART`, `MCPHTTPSTOP` y `MCPCONFIG` y un servidor HTTP en `http://localhost:<puerto>/mcp` (apagado por
+omisión, `EnableHttpServer`), pero en una prueba real los tres salieron "desconocido" aun después de
+`NETLOAD`, y ningún puerto nuevo se abrió. Autodesk lo da como vista previa técnica; no hay documentación
+pública de cómo habilitar el HTTP. No insistir sin documentación oficial: no es parte de lo que este repo necesita.
+
 
 `python mcp_server/test_contract.py` chequea que cada tool tenga su `case` en
 `Handlers.cs`.
