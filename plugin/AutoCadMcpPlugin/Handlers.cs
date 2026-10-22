@@ -196,6 +196,50 @@ namespace AutoCadMcpPlugin
                     return PropertiesCommands.Set(doc, pars);
                 case "list_children":
                     return PropertiesCommands.Children(doc, pars);
+                // Operaciones nativas de la base de datos (DatabaseExtraCommands)
+                case "list_plot_options":
+                    return LayoutPlotCommands.Options(doc, pars);
+                case "configure_layout":
+                    return LayoutPlotCommands.Configure(doc, pars);
+                case "get_dynamic_block_properties":
+                    return LayoutPlotCommands.DynamicGet(doc, pars);
+                case "set_dynamic_block_properties":
+                    return LayoutPlotCommands.DynamicSet(doc, pars);
+                case "purge_database_objects":
+                    return DatabaseExtraCommands.Purge(doc, pars);
+                case "set_current":
+                    return DatabaseExtraCommands.SetCurrent(doc, pars);
+                case "create_group":
+                    return DatabaseExtraCommands.GroupCreate(doc, pars);
+                case "delete_group":
+                    return DatabaseExtraCommands.GroupDelete(doc, pars);
+                case "modify_group":
+                    return DatabaseExtraCommands.GroupModify(doc, pars);
+                case "get_xdata":
+                    return DatabaseExtraCommands.XDataGet(doc, pars);
+                case "set_xdata":
+                    return DatabaseExtraCommands.XDataSet(doc, pars);
+                case "clear_xdata":
+                    return DatabaseExtraCommands.XDataClear(doc, pars);
+                case "get_custom_data":
+                    return DatabaseExtraCommands.CustomGet(doc, pars);
+                case "set_custom_data":
+                    return DatabaseExtraCommands.CustomSet(doc, pars);
+                case "delete_custom_data":
+                    return DatabaseExtraCommands.CustomDelete(doc, pars);
+                case "get_block_attributes":
+                    return DatabaseExtraCommands.AttributesGet(doc, pars);
+                case "set_block_attributes":
+                    return DatabaseExtraCommands.AttributesSet(doc, pars);
+                case "list_annotation_scales":
+                    return DatabaseExtraCommands.ScalesList(doc, pars);
+                case "add_annotation_scale":
+                    return DatabaseExtraCommands.ScaleAdd(doc, pars);
+                case "set_current_annotation_scale":
+                    return DatabaseExtraCommands.ScaleSetCurrent(doc, pars);
+                case "remove_annotation_scale":
+                    return DatabaseExtraCommands.ScaleRemove(doc, pars);
+
                 case "create_database_object":
                     return DatabaseObjectsCommands.Create(doc, pars);
                 case "delete_database_object":

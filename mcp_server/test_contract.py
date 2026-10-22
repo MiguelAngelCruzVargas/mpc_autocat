@@ -24,14 +24,15 @@ def main() -> int:
     # sheet.py compone tools basicas, asi que tambien invoca comandos.
     composed = "".join(
         io.open(os.path.join(HERE, name), encoding="utf-8").read()
-        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py", "engine.py", "instalaciones.py", "examen_edificio.py", "autocad_client.py", "phone3d.py", "prim.py", "parking.py", "facade.py", "vectorize.py", "estructura.py", "planta_estructural.py", "arcos.py", "alberca.py", "conjunto_estructural.py", "detalles_estructura.py", "detalle.py", "zapatas_dibujo.py", "zapatas_combinada.py", "zapatas_cuadros.py", "edicion.py", "propiedades.py", "metodos.py")
+        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py", "engine.py", "instalaciones.py", "examen_edificio.py", "autocad_client.py", "phone3d.py", "prim.py", "parking.py", "facade.py", "vectorize.py", "estructura.py", "planta_estructural.py", "arcos.py", "alberca.py", "conjunto_estructural.py", "detalles_estructura.py", "detalle.py", "zapatas_dibujo.py", "zapatas_combinada.py", "zapatas_cuadros.py", "edicion.py", "propiedades.py", "metodos.py", "bd_extra.py")
     )
 
     # _do_call: el lote ('batch') lo manda el cliente mismo, no una tool.
     called = set(re.findall(r'(?:acad\.call|_do_call)\(\s*"([a-z_]+)"', server_src + composed))
     handled = set(re.findall(r'case\s+"([a-z_]+)"\s*:', handlers_src))
     # Con dígitos: create_3d_model se leía como "create_" y fallaba sin motivo.
-    exposed = set(re.findall(r"@mcp\.tool\(\)\s*\ndef\s+([a-z_0-9]+)", server_src))
+    # Con decoradores intermedios (@_con_nota, @_con_pend) que agregan avisos al docstring.
+    exposed = set(re.findall(r"@mcp\.tool\(\)\s*\n(?:@\w+\s*\n)*def\s+([a-z_0-9]+)", server_src))
 
     problems = []
 
@@ -83,7 +84,7 @@ def main() -> int:
                  "acab_mod.",
                  # consulta, edición nativa y propiedades por reflexión: pasan por
                  # su módulo, que es quien llama al plugin.
-                 "consulta_mod.", "edicion_mod.", "prop_mod.", "met_mod.", "_prop(", "_met(", "_edicion(")
+                 "consulta_mod.", "edicion_mod.", "prop_mod.", "met_mod.", "bd_mod.", "_prop(", "_met(", "_bd(", "_edicion(")
     patron = "|".join(re.escape(d) for d in delegados)
     silent = sorted(t for t in exposed if not re.search(
         r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|" + patron + ")",

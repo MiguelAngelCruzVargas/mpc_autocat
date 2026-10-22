@@ -21,6 +21,7 @@ import consulta as consulta_mod
 import edicion as edicion_mod
 import propiedades as prop_mod
 import metodos as met_mod
+import bd_extra as bd_mod
 import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
@@ -5619,7 +5620,7 @@ def create_database_object(kind: str, name: str,
     sistema de coordenadas. Completa a list_children (que los recorre) y a
     get/set_object_properties (que los configuran).
 
-    kind: layer | textstyle | dimstyle | block | regapp | ucs.
+    kind: layer | textstyle | dimstyle | block | regapp | ucs | tablestyle | mleaderstyle.
     name: el nombre (no vacío, sin < > / \\ " : ; ? * | , = ` ni empezar con *).
     properties: {propiedad: valor} que se fijan al crear —una capa: Color,
         LineWeight, IsLocked, Description...; un estilo de texto: FileName ('arial.ttf'),
@@ -5644,6 +5645,237 @@ def delete_database_object(kind: str, name: Optional[str] = None,
     porque el dibujo lo usa (una capa con objetos). Un estilo o bloque sin uso se puede
     limpiar en lote con las tools de purga."""
     return _prop(prop_mod.delete_database_object, kind, name, handle)
+
+
+_PEND = " (plugin 1.17.0: verificado que compila en 2019-2027; PENDIENTE de prueba en vivo)"
+
+
+def _con_pend(fn):
+    """Agrega el aviso de «pendiente de prueba en vivo» al docstring ANTES de que FastMCP lo lea."""
+    fn.__doc__ = (fn.__doc__ or "").rstrip() + _PEND
+    return fn
+
+
+def _bd(fn, *args, **kw) -> dict[str, Any]:
+    try:
+        return fn(*args, **kw)
+    except bd_mod.BdError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+@_con_pend
+def purge_database_objects(kinds: Optional[list[str]] = None, dry_run: bool = False) -> dict[str, Any]:
+    """PURGE nativo de AutoCAD: borra lo que el dibujo ya no usa —capas, estilos de
+    texto y de cota, tipos de línea, bloques, aplicaciones registradas, UCS y vistas—
+    y repite hasta que no quede nada purgable (borrar un bloque libera sus capas).
+
+    kinds: lista de layer | textstyle | dimstyle | linetype | block | regapp | ucs | view;
+        sin lista, todos. Nunca toca la capa 0, Defpoints, Standard, ByBlock/ByLayer/
+        Continuous, los bloques que empiezan con * ni el actual de cada tipo.
+    dry_run: solo informa lo purgable en la primera pasada (la cascada no se puede
+        simular). Devuelve 'byKind' con los nombres, 'total' y 'passes'.
+    «En uso» lo decide AutoCAD con su propia prueba de PURGE: no se esquiva."""
+    return _bd(bd_mod.purge_database_objects, kinds, dry_run)
+
+
+@mcp.tool()
+@_con_pend
+def set_current(kind: str, name: str) -> dict[str, Any]:
+    """Pone como ACTUAL una capa, un estilo de texto, un estilo de cota o un tipo de
+    línea (lo que lo nuevo que se dibuje toma por defecto). kind: layer | textstyle |
+    dimstyle | linetype. Devuelve el actual anterior. Una capa congelada no puede ser
+    la actual."""
+    return _bd(bd_mod.set_current, kind, name)
+
+
+@mcp.tool()
+@_con_pend
+def create_group(name: str, handles: list[str], description: str = "",
+                 selectable: bool = True) -> dict[str, Any]:
+    """Crea un GRUPO de AutoCAD con esas entidades: se seleccionan, mueven y copian
+    juntas sin tocar sus capas. name: sin caracteres reservados. selectable=False deja
+    el grupo para organizar sin que un clic lo seleccione entero. list_children('groups')
+    los recorre."""
+    return _bd(bd_mod.create_group, name, handles, description, selectable)
+
+
+@mcp.tool()
+@_con_pend
+def delete_group(name: str) -> dict[str, Any]:
+    """Borra un grupo; las entidades que contenía quedan en el dibujo."""
+    return _bd(bd_mod.delete_group, name)
+
+
+@mcp.tool()
+@_con_pend
+def modify_group(name: str, add: Optional[list[str]] = None, remove: Optional[list[str]] = None,
+                 description: Optional[str] = None,
+                 selectable: Optional[bool] = None) -> dict[str, Any]:
+    """Agrega o saca entidades de un grupo y cambia su descripción o si es seleccionable.
+    Atómico: si algo falla no queda nada a medias."""
+    return _bd(bd_mod.modify_group, name, add, remove, description, selectable)
+
+
+@mcp.tool()
+@_con_pend
+def get_xdata(handle: str, app: Optional[str] = None) -> dict[str, Any]:
+    """Lee el XData (datos extendidos) de un objeto: lo que otra aplicación —o este MCP—
+    le guardó. Sin app, todas las aplicaciones. Cada valor trae su código DXF (1000
+    texto, 1010 punto, 1040 real, 1070 int16, 1071 int...) y su tipo."""
+    return _bd(bd_mod.get_xdata, handle, app)
+
+
+@mcp.tool()
+@_con_pend
+def set_xdata(handle: str, app: str, values: list[Any]) -> dict[str, Any]:
+    """Guarda XData en un objeto, bajo el nombre de una aplicación (se registra sola):
+    la forma de pegarle a una entidad un identificador, una partida o cualquier dato
+    que viaje con ella dentro del DWG.
+
+    values: lista de valores en orden. Sin tipo: texto, entero, decimal, true/false o
+    [x,y,z] (punto). Con tipo: {"layer": "MUROS"}, {"handle": "A1"}, {"distance": 2.5},
+    {"scale": 0.02}, {"int16": 3}... Reemplaza todo lo que esa aplicación tenía.
+    Límites de AutoCAD: 16 KB por objeto, 255 caracteres por texto. app: hasta 31
+    caracteres, nunca ACAD."""
+    return _bd(bd_mod.set_xdata, handle, app, values)
+
+
+@mcp.tool()
+@_con_pend
+def clear_xdata(handle: str, app: str) -> dict[str, Any]:
+    """Borra el XData de una aplicación en un objeto."""
+    return _bd(bd_mod.clear_xdata, handle, app)
+
+
+@mcp.tool()
+@_con_pend
+def get_custom_data(handle: str, key: Optional[str] = None) -> dict[str, Any]:
+    """Lee los datos propios de un objeto (su diccionario de extensión): pares
+    clave -> lista de valores. Sin key, todos."""
+    return _bd(bd_mod.get_custom_data, handle, key)
+
+
+@mcp.tool()
+@_con_pend
+def set_custom_data(handle: str, key: str, values: list[Any]) -> dict[str, Any]:
+    """Guarda datos propios en un objeto: a diferencia del XData no tiene el tope de
+    16 KB ni de 255 caracteres por texto (hasta 4000), y no necesita aplicación.
+    values: texto, entero, decimal, true/false, [x,y,z] o {"int16"|"real"|"int"|"bool"|
+    "text"|"point": v}. Reemplaza la clave si existía. Sirve para guardar cantidades,
+    identificadores de partida o el origen de una entidad."""
+    return _bd(bd_mod.set_custom_data, handle, key, values)
+
+
+@mcp.tool()
+@_con_pend
+def delete_custom_data(handle: str, key: str) -> dict[str, Any]:
+    """Borra una clave de datos propios de un objeto."""
+    return _bd(bd_mod.delete_custom_data, handle, key)
+
+
+@mcp.tool()
+@_con_pend
+def get_block_attributes(handle: str) -> dict[str, Any]:
+    """Lee los atributos de una REFERENCIA de bloque: etiqueta, texto, posición y si
+    es invisible. handle: el de la referencia (lo que devuelve insert_block)."""
+    return _bd(bd_mod.get_block_attributes, handle)
+
+
+@mcp.tool()
+@_con_pend
+def set_block_attributes(handle: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Cambia el texto de atributos de una referencia de bloque por etiqueta:
+    {"NUMERO": "A-12", "AREA": "45.2"}. Se validan TODAS las etiquetas antes de
+    escribir (si falta una, el error lista las que tiene el bloque) y devuelve el antes
+    y el después."""
+    return _bd(bd_mod.set_block_attributes, handle, values)
+
+
+@mcp.tool()
+@_con_pend
+def list_annotation_scales() -> dict[str, Any]:
+    """Escalas de anotación del dibujo (las que usan textos, cotas y bloques
+    anotativos): nombre, unidades de papel y de dibujo y cuál es la actual."""
+    return _bd(bd_mod.list_annotation_scales)
+
+
+@mcp.tool()
+@_con_pend
+def add_annotation_scale(name: str, paper_units: float, drawing_units: float) -> dict[str, Any]:
+    """Agrega una escala de anotación. Para 1:50: name='1:50', paper_units=1,
+    drawing_units=50."""
+    return _bd(bd_mod.add_annotation_scale, name, paper_units, drawing_units)
+
+
+@mcp.tool()
+@_con_pend
+def set_current_annotation_scale(name: str) -> dict[str, Any]:
+    """Pone una escala de anotación como actual (la que toman los objetos anotativos
+    nuevos)."""
+    return _bd(bd_mod.set_current_annotation_scale, name)
+
+
+@mcp.tool()
+@_con_pend
+def remove_annotation_scale(name: str) -> dict[str, Any]:
+    """Borra una escala de anotación. No la actual ni una que usen objetos: AutoCAD se
+    niega y se informa."""
+    return _bd(bd_mod.remove_annotation_scale, name)
+
+
+@mcp.tool()
+@_con_pend
+def list_plot_options(layout: Optional[str] = None) -> dict[str, Any]:
+    """Qué ofrece AutoCAD para imprimir un layout: dispositivos, papeles de ESE
+    dispositivo, tablas de estilos de trazado (.ctb/.stb), tipos de área, rotaciones,
+    unidades y escalas estándar; y la configuración actual del layout. Mirala antes de
+    configure_layout: los papeles dependen del dispositivo elegido."""
+    return _bd(bd_mod.list_plot_options, layout)
+
+
+@mcp.tool()
+@_con_pend
+def configure_layout(layout: str, device: Optional[str] = None, media: Optional[str] = None,
+                     style_sheet: Optional[str] = None, plot_type: Optional[str] = None,
+                     rotation: Optional[str] = None, centered: Optional[bool] = None,
+                     paper_units: Optional[str] = None, scale: Any = None,
+                     window: Optional[list[list[float]]] = None) -> dict[str, Any]:
+    """Configura la impresión de un layout con el VALIDADOR nativo de AutoCAD (no
+    imprime ni escribe archivos).
+
+    device / media / style_sheet: nombres EXACTOS de list_plot_options (se validan; si no
+        están, el error muestra algunos de los disponibles). Cambiar el dispositivo reinicia
+        el papel al que ese dispositivo ofrece.
+    plot_type: Display | Extents | Limits | View | Window | Layout.
+    rotation: Degrees000 | Degrees090 | Degrees180 | Degrees270.
+    paper_units: Inches | Millimeters | Pixels.
+    scale: "fit" (ajustar al papel), el nombre de una escala estándar (StdScaleType) o
+        {"paper": 1, "drawing": 100} para 1:100.
+    window: [[x1,y1],[x2,y2]]: imprime esa ventana (fija plot_type=Window).
+    Todo o nada: si algo falla, el layout queda como estaba. Devuelve before y after.
+    Otras propiedades del layout (PlotPlotStyles...) van con set_object_properties sobre
+    su handle (list_children('layouts'))."""
+    return _bd(bd_mod.configure_layout, layout, device, media, style_sheet, plot_type, rotation,
+               centered, paper_units, scale, window)
+
+
+@mcp.tool()
+@_con_pend
+def get_dynamic_block_properties(handle: str) -> dict[str, Any]:
+    """Propiedades de una referencia de BLOQUE DINÁMICO: nombre, valor actual, tipo,
+    si es de solo lectura y los valores permitidos (estados de visibilidad, medidas de
+    la lista, etc.). handle: el de la referencia (insert_block lo devuelve)."""
+    return _bd(bd_mod.get_dynamic_block_properties, handle)
+
+
+@mcp.tool()
+@_con_pend
+def set_dynamic_block_properties(handle: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Cambia propiedades de un bloque dinámico: {"Visibilidad": "Abierta", "Ancho": 0.9}.
+    Se validan TODAS antes de escribir (existe, no es de solo lectura, el valor está entre
+    los permitidos y es del tipo que esa propiedad guarda). Devuelve antes y después."""
+    return _bd(bd_mod.set_dynamic_block_properties, handle, values)
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:

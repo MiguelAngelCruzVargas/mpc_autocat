@@ -53,7 +53,7 @@ namespace AutoCadMcpPlugin.Commands
 
         private static readonly char[] Prohibidos = { '<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`' };
 
-        private static void ValidarNombre(string nombre)
+        internal static void ValidarNombre(string nombre)
         {
             if (string.IsNullOrWhiteSpace(nombre) || nombre != nombre.Trim())
                 throw new ArgumentException("'name' no puede estar vacío ni empezar o terminar con espacios.");
@@ -66,6 +66,15 @@ namespace AutoCadMcpPlugin.Commands
                 throw new ArgumentException("Los nombres que empiezan con * son de AutoCAD (bloques anónimos y espacios).");
         }
 
+        /// <summary>El id de una tabla por el nombre de la propiedad de Database que lo guarda.</summary>
+        internal static ObjectId TablaPublica(Database db, string propiedad)
+        {
+            var p = typeof(Database).GetProperty(propiedad, BindingFlags.Public | BindingFlags.Instance);
+            if (p == null || p.PropertyType != typeof(ObjectId))
+                throw new InvalidOperationException("Esta versión de AutoCAD no tiene " + propiedad + ".");
+            return (ObjectId)p.GetValue(db);
+        }
+
         private static ObjectId Tabla(Database db, Tipo t)
         {
             var p = typeof(Database).GetProperty(t.TablaId, BindingFlags.Public | BindingFlags.Instance);
@@ -76,6 +85,8 @@ namespace AutoCadMcpPlugin.Commands
         /// <summary>params: kind (layer|textstyle|dimstyle|block|regapp|ucs), name, [properties].</summary>
         public static JsonObject Create(Document doc, JsonObject pars)
         {
+            string kind0 = pars["kind"]?.GetValue<string>();
+            if (kind0 != null && EstilosDic.ContainsKey(kind0)) return CrearEstiloDic(doc, pars, kind0);
             var tipo = Resolver(pars["kind"]?.GetValue<string>());
             string nombre = pars["name"]?.GetValue<string>();
             ValidarNombre(nombre);
@@ -153,9 +164,141 @@ namespace AutoCadMcpPlugin.Commands
 
         private static string kind(Tipo t) { return t.Clase.Replace("TableRecord", ""); }
 
+        // ------------------------------------------------------------ estilos de diccionario
+
+        /// <summary>Estilos que no viven en una tabla de símbolos sino en un diccionario, y que
+        /// se crean con el método Post... de su clase (que los agrega al dibujo).</summary>
+        private static readonly Dictionary<string, string[]> EstilosDic = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "tablestyle",   new[] { "TableStyle",   "TableStyleDictionaryId" } },
+            { "mleaderstyle", new[] { "MLeaderStyle", "MLeaderStyleDictionaryId" } },
+        };
+
+        private static JsonObject CrearEstiloDic(Document doc, JsonObject pars, string kind)
+        {
+            string nombre = pars["name"]?.GetValue<string>();
+            ValidarNombre(nombre);
+            var pedidas = pars["properties"] as JsonObject ?? new JsonObject();
+            if (pedidas.Count > 60) throw new ArgumentException("Máximo 60 propiedades por llamada.");
+            if (pedidas.Any(kv => kv.Key.Equals("Name", StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException("El nombre va en 'name', no en 'properties'.");
+            var info = EstilosDic[kind];
+            var t = typeof(Entity).Assembly.GetType("Autodesk.AutoCAD.DatabaseServices." + info[0], true);
+            var plan = new List<Tuple<PropertyInfo, object>>();
+            foreach (var kv in pedidas)
+            {
+                var p = PropertiesCommands.BuscarPublico(t, kv.Key);
+                if (!PropertiesCommands.EscribiblePublico(p))
+                    throw new ArgumentException("La propiedad '" + p.Name + "' de " + t.Name + " es de solo lectura.");
+                plan.Add(Tuple.Create(p, PropertiesCommands.DeJson(p.PropertyType, kv.Value, p.Name)));
+            }
+            var db = doc.Database;
+            var obj = (DBObject)Activator.CreateInstance(t);
+            ObjectId id = ObjectId.Null;
+            try
+            {
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    try
+                    {
+                        var dic = (DBDictionary)tr.GetObject(TablaPublica(db, info[1]), OpenMode.ForRead);
+                        if (dic.Contains(nombre))
+                            throw new ArgumentException("Ya existe un " + kind + " llamado '" + nombre + "'.");
+                        if (kind.Equals("tablestyle", StringComparison.OrdinalIgnoreCase))
+                            id = ((TableStyle)obj).PostTableStyleToDatabase(db, nombre);
+                        else
+                            id = ((MLeaderStyle)obj).PostMLeaderStyleToDb(db, nombre);
+                        tr.AddNewlyCreatedDBObject(obj, true);
+                        foreach (var item in plan)
+                            item.Item1.SetValue(obj, item.Item2);
+                        tr.Commit();
+                    }
+                    catch (TargetInvocationException ex)
+                    {
+                        tr.Abort();
+                        var real = ex.InnerException ?? ex;
+                        throw new InvalidOperationException("AutoCAD rechazó la creación" + (real is AcException ae ? " (" + ae.ErrorStatus + ")" : "") +
+                                                            ": " + real.Message + ". No se creó nada.");
+                    }
+                    catch (AcException ex)
+                    {
+                        tr.Abort();
+                        throw new InvalidOperationException("AutoCAD rechazó la creación (" + ex.ErrorStatus + "): " + ex.Message + ". No se creó nada.");
+                    }
+                    catch (SysException)
+                    {
+                        tr.Abort();
+                        throw;
+                    }
+                }
+            }
+            catch (SysException)
+            {
+                if (!obj.ObjectId.IsValid) { try { obj.Dispose(); } catch (SysException) { } }
+                throw;
+            }
+            return new JsonObject { ["kind"] = kind.ToLowerInvariant(), ["name"] = nombre, ["handle"] = id.Handle.ToString(), ["type"] = t.Name };
+        }
+
+        private static JsonObject BorrarEstiloDic(Document doc, JsonObject pars, string kind)
+        {
+            string nombre = pars["name"]?.GetValue<string>();
+            string handle = pars["handle"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(nombre) == string.IsNullOrWhiteSpace(handle))
+                throw new ArgumentException("Pasá 'name' o 'handle', uno de los dos.");
+            var info = EstilosDic[kind];
+            var db = doc.Database;
+            string borrado, handleBorrado;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    var dic = (DBDictionary)tr.GetObject(TablaPublica(db, info[1]), OpenMode.ForRead);
+                    ObjectId id = ObjectId.Null; borrado = nombre;
+                    if (!string.IsNullOrWhiteSpace(nombre))
+                    {
+                        if (!dic.Contains(nombre)) throw new ArgumentException("No hay un " + kind + " llamado '" + nombre + "'.");
+                        id = dic.GetAt(nombre);
+                    }
+                    else
+                    {
+                        id = HandleHelper.GetObjectId(db, handle);
+                        foreach (DBDictionaryEntry e in dic) if (e.Value == id) borrado = e.Key;
+                        if (borrado == null) throw new ArgumentException("Ese handle no es un " + kind + ".");
+                    }
+                    var obj = tr.GetObject(id, OpenMode.ForRead);
+                    if (obj.GetType().Name != info[0]) throw new ArgumentException("Ese handle no es un " + info[0] + ".");
+                    handleBorrado = id.Handle.ToString();
+                    if (borrado.Equals("Standard", StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("'Standard' es un objeto del sistema: no se borra.");
+                    var candidatos = new ObjectIdCollection();
+                    candidatos.Add(id);
+                    db.Purge(candidatos);
+                    if (!candidatos.Contains(id))
+                        throw new InvalidOperationException("'" + borrado + "' está en uso (el dibujo todavía lo referencia). No se borró nada.");
+                    obj.UpgradeOpen();
+                    obj.Erase(true);
+                    tr.Commit();
+                }
+                catch (AcException ex)
+                {
+                    tr.Abort();
+                    throw new InvalidOperationException("AutoCAD se negó a borrarlo (" + ex.ErrorStatus + "): " + ex.Message + ". No se borró nada.");
+                }
+                catch (SysException)
+                {
+                    tr.Abort();
+                    throw;
+                }
+            }
+            return new JsonObject { ["deleted"] = true, ["kind"] = kind.ToLowerInvariant(), ["name"] = borrado, ["handle"] = handleBorrado };
+        }
+
         /// <summary>params: kind, name | handle.</summary>
         public static JsonObject Delete(Document doc, JsonObject pars)
         {
+            string kind0 = pars["kind"]?.GetValue<string>();
+            if (kind0 != null && EstilosDic.ContainsKey(kind0)) return BorrarEstiloDic(doc, pars, kind0);
             var tipo = Resolver(pars["kind"]?.GetValue<string>());
             string nombre = pars["name"]?.GetValue<string>();
             string handle = pars["handle"]?.GetValue<string>();

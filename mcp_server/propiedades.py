@@ -133,7 +133,7 @@ def list_children(target: str = SEUDO_DB, skip: int = 0, take: int = 500) -> dic
                                        "skip": skip, "take": take})
 
 
-KINDS = ("layer", "textstyle", "dimstyle", "block", "regapp", "ucs")
+KINDS = ("layer", "textstyle", "dimstyle", "block", "regapp", "ucs", "tablestyle", "mleaderstyle")
 _PROHIBIDOS = '<>/\\":;?*|,=`'
 
 

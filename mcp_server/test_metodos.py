@@ -74,6 +74,14 @@ def main() -> int:
     rechazada("call con demasiados args", lambda: server.call_object_method("A1", "M", list(range(13))))
     rechazada("call con mode inválido", lambda: server.call_object_method("A1", "Reverse", [], mode="admin"))
 
+    # una llamada de LECTURA no cuenta como operación de dibujo; una de escritura sí
+    session.reset()
+    antes = session.ops_since_save()
+    session.after_call("call_method", {}, {"written": False, "result": [3, 0, 0]})
+    check("call_method de lectura no cuenta", session.ops_since_save(), antes)
+    session.after_call("call_method", {}, {"written": True, "result": None})
+    check("call_method de escritura cuenta", session.ops_since_save(), antes + 1)
+    session.reset()
     check("list_methods es de lectura", session.retry_safe("list_methods"), True)
     check("call_method NO se reintenta", session.retry_safe("call_method"), False)
 

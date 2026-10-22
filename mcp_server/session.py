@@ -106,6 +106,10 @@ def after_call(cmd: str, params: dict[str, Any],
         return result
     if cmd in _COUNTED_BY_CALLER or not _is_mutation(cmd):
         return result
+    # call_method es genérico: lo que se abrió en LECTURA ('written': false) no ensució el dibujo ni
+    # deja un paso de UNDO, así que no cuenta como operación de dibujo.
+    if cmd == "call_method" and isinstance(result, dict) and result.get("written") is False:
+        return result
     if cmd not in _SIN_PESO_AL_CONTAR:
         note_undo_weight(1, _creados(cmd, result))
     return note_mutation(result)
