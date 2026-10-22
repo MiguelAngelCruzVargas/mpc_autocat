@@ -358,15 +358,14 @@ achurar o medir, líneas duplicadas que duplican el largo cuantificado (`overkil
 No son un ejecutor de comandos: cada operación tiene su comando FIJO en el plugin (`NativeOpsCommand.cs`) y solo
 recibe handles de entidades que existen y números; nadie elige qué comando corre. Devuelven `created`, `deleted`
 y `modified` (la caja antes/después) para verificar, y si no cambió nada lo dicen en `warning` (punto que no cae
-sobre el tramo, bordes que no cortan —`extend_edges=True`—, capa bloqueada). Un UNDO deshace toda la operación.
+sobre el tramo, bordes que no cortan —`extend_edges=True`—, capa bloqueada). Van agrupadas en un UNDO, pero **no está verificado que la tool `undo` las revierta**: en la prueba en vivo `undo` no revirtió nada, ni siquiera una línea creada por API (comportamiento de `undo`, anterior a esto, sin investigar).
 Rechazan con motivo si hay un comando en curso, el editor de bloques abierto o la vista no está en planta
 (`zoom_extents` la devuelve a planta). Los puntos (`point`, `point1`...) se llevan solos a la curva y la vista se
 encuadra un instante alrededor porque el cursor de selección mide en píxeles; se restaura al terminar.
 Corren en un comando registrado (`MCPNATIVEOP`) porque `Editor.Command` no anda desde el evento Idle: la tool
 espera el resultado (`wait_s`, 30 s) y, si tarda más, queda en curso: `native_status`, **no repetir**.
 
-Plugin nuevo (1.10.0): hay que reinstalar el bundle. **Falta probarlas en vivo** (2022 y 2027): los tests offline
-(`test_edicion.py`) solo cubren las validaciones y el puente, no la geometría.
+Plugin nuevo (1.10.0): hay que reinstalar el bundle. **Probadas en vivo en la 2027** sobre líneas de prueba en un dibujo nuevo: TRIM recortó una línea de 10 a 5 contra un borde, EXTEND alargó de 3 a 6, FILLET radio 0 cerró la esquina y radio 2 creó el arco de centro (68,42), JOIN unió dos líneas en una (la otra se borró) y OVERKILL borró la línea duplicada y dejó las otras; FILLETRAD se restauró. Falta la 2022; los tests offline (`test_edicion.py`) cubren solo las validaciones y el puente.
 
 ## 4. Muros: una planta entera es `create_wall_network`
 

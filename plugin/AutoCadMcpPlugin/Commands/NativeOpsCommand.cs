@@ -418,7 +418,8 @@ namespace AutoCadMcpPlugin.Commands
                 var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
                 foreach (ObjectId id in btr)
                 {
-                    if (id.Handle.Value <= job.SeedBefore || id.IsErased) continue;
+                    // Handseed es el PRÓXIMO handle a asignar: lo primero que se crea lo iguala.
+                    if (id.Handle.Value < job.SeedBefore || id.IsErased) continue;
                     if (job.Created.Count >= MaxLista) break;
                     var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
                     if (ent == null) continue;
@@ -508,7 +509,13 @@ namespace AutoCadMcpPlugin.Commands
             job.Error = error;
             if (doc != null)
             {
-                string pendiente = SysVar("CMDNAMES");
+                // CMDNAMES lista la pila de comandos activos e incluye a MCPNATIVEOP
+                // (este mismo): solo cuenta como pendiente lo que sea OTRA cosa.
+                string pendiente = "";
+                foreach (var nombre in SysVar("CMDNAMES").Split(','))
+                    if (!string.IsNullOrWhiteSpace(nombre)
+                        && !nombre.Trim().Equals("MCPNATIVEOP", StringComparison.OrdinalIgnoreCase))
+                        pendiente += (pendiente.Length > 0 ? "," : "") + nombre.Trim();
                 if (!string.IsNullOrEmpty(pendiente))
                 {
                     job.Warning = "El comando quedó sin terminar (" + pendiente + "): se canceló con ESC.";

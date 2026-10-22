@@ -5502,7 +5502,7 @@ _NOTA_EDICION = (
     "Usa el motor NATIVO de AutoCAD (resuelve las intersecciones, arcos y bulges "
     "mejor que reescribirlas). Devuelve 'created', 'deleted' y 'modified' (la caja "
     "antes y después de cada entidad tocada) para verificar; si no cambió nada lo "
-    "dice en 'warning'. Se deshace con UN undo. Solo en el espacio activo y con la "
+    "dice en 'warning'. Va en un solo grupo de UNDO (sin verificar que la tool undo lo revierta). Solo en el espacio activo y con la "
     "vista en planta (zoom_extents la devuelve a planta); rechaza si hay un comando "
     "en curso. Si pasa de wait_s sigue corriendo: pedí native_status, no repitas.")
 
