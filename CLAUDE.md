@@ -326,6 +326,27 @@ comando `batch` con `get_entity`). Diseño tomado del servidor MCP nativo de la 
 filtro con agregaciones), escrito desde cero. `mcp_server/test_consulta.py` lo prueba sin AutoCAD; **falta
 probarlo en vivo** en un dibujo grande (tiempo del lote de detalle).
 
+## 3.ter Variables de sistema y estado del editor (plugin 1.10.0)
+
+AutoCAD tiene cientos de variables de sistema (LTSCALE, OSMODE, DIMSCALE, LUNITS, INSUNITS, PICKFIRST...) y el
+plugin solo tocaba unas pocas, escondidas dentro de otras tools. `get_system_variables(names)` lee hasta 100 en
+una llamada (las que no existen salen en `errors`); `set_system_variable(name, value)` cambia UNA y devuelve el
+valor anterior para restaurarla (varias se guardan EN el dibujo, así que modifican el DWG). Las que gobiernan
+seguridad o qué se carga solo (SECURELOAD, TRUSTEDPATHS, TRUSTEDDOMAINS, LEGACYCODESEARCH, DEMANDLOAD, STARTUP,
+FILEDIA...) no se pueden cambiar desde una tool: las cambia una persona. `get_editor_state` dice en qué está
+AutoCAD (comando en curso, editor de bloques, REFEDIT, layout, cambios sin guardar) y `busy`: mirarlo primero
+cuando un comando se cuelga o falla sin motivo, casi siempre es un comando a medias de la persona.
+
+Esto sale de leer el servidor MCP nativo de la 2027 (ver `Desktop\Autodesk_descompilado`), que antes de ejecutar
+rechaza en milisegundos si hay un comando en curso, el editor de bloques o una edición en sitio abierta. Las
+guardas de ESTADO todavía no se aplican a las demás tools del plugin: están como lectura (`get_editor_state`),
+no como rechazo automático. **Falta probarlas en vivo** (2022 y 2027) y reinstalar el bundle: es plugin nuevo.
+
+**Ejecutar cualquier comando nativo de AutoCAD (`run_command`) NO está conectado.** Hay un diseño escrito (un
+comando registrado `MCPRUNJOB` que corre `Editor.Command` con los tokens, tras la contraseña de run_code y una
+lista de comandos prohibidos) pero se dejó fuera del repo a propósito: es una puerta de ejecución y hay que
+decidirla con el usuario. Es lo que hace Autodesk con su módulo nativo `AcMCPCore.crx`.
+
 ## 4. Muros: una planta entera es `create_wall_network`
 
 Un muro NO es una línea. Los muros de una planta van en **UNA** llamada a

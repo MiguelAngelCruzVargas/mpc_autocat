@@ -189,6 +189,14 @@ namespace AutoCadMcpPlugin
                 case "undo":
                     return UndoCommand.Run(doc, pars);
 
+                // Variables de sistema y estado del editor (SystemVariableCommands)
+                case "get_system_variables":
+                    return SystemVariableCommands.Get(doc, pars);
+                case "set_system_variable":
+                    return SystemVariableCommands.Set(doc, pars);
+                case "get_editor_state":
+                    return SystemVariableCommands.EditorState(doc, pars);
+
                 // Varios comandos en un solo viaje
                 case "batch":
                     return BatchCommand.Run(doc, pars);

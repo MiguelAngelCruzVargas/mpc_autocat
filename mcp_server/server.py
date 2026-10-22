@@ -5491,6 +5491,48 @@ def zoom_extents() -> dict[str, Any]:
 
 
 @mcp.tool()
+def get_system_variables(names: list[str]) -> dict[str, Any]:
+    """Lee VARIAS variables de sistema de AutoCAD en una sola llamada
+    (LTSCALE, OSMODE, DIMSCALE, LUNITS, INSUNITS, CTAB, CMDECHO, PICKFIRST...).
+
+    Hay cientos; las tools de dibujo solo tocan unas pocas. Esta es la forma de
+    saber CÓMO está configurado el AutoCAD antes de dibujar (unidades, escala
+    de tipos de línea, grosores) sin adivinar. Devuelve 'values' (nombre ->
+    valor: número, texto o punto [x,y,z]) y 'errors' (las que no existen).
+    Hasta 100 por llamada. Una variable que no se llama así en esta versión de
+    AutoCAD sale en 'errors', no rompe el resto."""
+    return acad.call("get_system_variables", {"names": list(names)})
+
+
+@mcp.tool()
+def set_system_variable(name: str, value: Any) -> dict[str, Any]:
+    """Cambia UNA variable de sistema y devuelve 'previous' y 'value' (el que
+    quedó), para poder restaurarla.
+
+    value: número, texto, booleano o [x,y(,z)] según el tipo que ya tiene la
+    variable (se convierte solo). Las de solo lectura las rechaza AutoCAD, y
+    las que gobiernan seguridad o qué se carga solo (SECURELOAD, TRUSTEDPATHS,
+    TRUSTEDDOMAINS, LEGACYCODESEARCH, DEMANDLOAD, STARTUP, FILEDIA...) no se
+    pueden cambiar desde una tool: las cambia una persona.
+
+    Ojo: varias variables (DIMSCALE, LTSCALE, LUNITS...) se guardan EN el
+    dibujo, así que esto lo modifica. Para lo de uso común hay set_display_options."""
+    return acad.call("set_system_variable", {"name": name, "value": value})
+
+
+@mcp.tool()
+def get_editor_state() -> dict[str, Any]:
+    """En qué está AutoCAD AHORA: documento activo, si hay un comando en curso
+    (CMDNAMES), si el editor de bloques o una edición en sitio (REFEDIT) están
+    abiertos, la pestaña de layout activa y si hay cambios sin guardar.
+
+    'busy' es True cuando conviene esperar antes de mandarle trabajo. Es lo
+    primero que hay que mirar cuando un comando se cuelga o falla sin motivo
+    aparente: casi siempre es que la persona tiene un comando a medias."""
+    return acad.call("get_editor_state", {})
+
+
+@mcp.tool()
 def zoom_window(min_x: float, min_y: float, max_x: float,
                 max_y: float) -> dict[str, Any]:
     """Encuadra una ZONA del dibujo, no la extensión completa.
