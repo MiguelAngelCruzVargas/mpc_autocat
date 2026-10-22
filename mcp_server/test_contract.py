@@ -24,7 +24,7 @@ def main() -> int:
     # sheet.py compone tools basicas, asi que tambien invoca comandos.
     composed = "".join(
         io.open(os.path.join(HERE, name), encoding="utf-8").read()
-        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py", "engine.py", "instalaciones.py", "examen_edificio.py", "autocad_client.py", "phone3d.py", "prim.py", "parking.py", "facade.py", "vectorize.py", "estructura.py", "planta_estructural.py", "arcos.py", "alberca.py", "conjunto_estructural.py", "detalles_estructura.py", "detalle.py", "zapatas_dibujo.py", "zapatas_combinada.py", "zapatas_cuadros.py")
+        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py", "engine.py", "instalaciones.py", "examen_edificio.py", "autocad_client.py", "phone3d.py", "prim.py", "parking.py", "facade.py", "vectorize.py", "estructura.py", "planta_estructural.py", "arcos.py", "alberca.py", "conjunto_estructural.py", "detalles_estructura.py", "detalle.py", "zapatas_dibujo.py", "zapatas_combinada.py", "zapatas_cuadros.py", "edicion.py")
     )
 
     # _do_call: el lote ('batch') lo manda el cliente mismo, no una tool.

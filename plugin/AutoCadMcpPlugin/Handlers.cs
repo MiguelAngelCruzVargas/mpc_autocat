@@ -189,6 +189,13 @@ namespace AutoCadMcpPlugin
                 case "undo":
                     return UndoCommand.Run(doc, pars);
 
+                // Edición con el motor nativo de AutoCAD: TRIM, EXTEND, FILLET, JOIN,
+                // OVERKILL (comando fijo por operación; ver NativeOpsCommand)
+                case "native_op":
+                    return NativeOpsCommand.Run(doc, pars);
+                case "native_status":
+                    return NativeOpsCommand.Status(doc, pars);
+
                 // Variables de sistema y estado del editor (SystemVariableCommands)
                 case "get_system_variables":
                     return SystemVariableCommands.Get(doc, pars);

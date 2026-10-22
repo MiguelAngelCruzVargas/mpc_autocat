@@ -18,6 +18,7 @@ import autocad_client as acad
 import civil as civil_mod
 import compose as compose_mod
 import consulta as consulta_mod
+import edicion as edicion_mod
 import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
@@ -5488,6 +5489,108 @@ def zoom_extents() -> dict[str, Any]:
     capture_viewport pedido inmediatamente después no choca con un comando
     en curso."""
     return acad.call("zoom_extents", {})
+
+
+def _edicion(fn, *args, **kw) -> dict[str, Any]:
+    try:
+        return fn(*args, **kw)
+    except edicion_mod.EdicionError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+_NOTA_EDICION = (
+    "Usa el motor NATIVO de AutoCAD (resuelve las intersecciones, arcos y bulges "
+    "mejor que reescribirlas). Devuelve 'created', 'deleted' y 'modified' (la caja "
+    "antes y después de cada entidad tocada) para verificar; si no cambió nada lo "
+    "dice en 'warning'. Se deshace con UN undo. Solo en el espacio activo y con la "
+    "vista en planta (zoom_extents la devuelve a planta); rechaza si hay un comando "
+    "en curso. Si pasa de wait_s sigue corriendo: pedí native_status, no repitas.")
+
+
+def _con_nota(fn):
+    fn.__doc__ = (fn.__doc__ or "").rstrip() + "\n\n" + _NOTA_EDICION
+    return fn
+
+
+@mcp.tool()
+@_con_nota
+def trim_entity(edges: list[str], target: str, point: list[float],
+                extend_edges: bool = False, wait_s: float = 30.0) -> dict[str, Any]:
+    """TRIM de AutoCAD: recorta `target` contra los bordes `edges`.
+
+    edges: handles de las entidades que hacen de borde de corte.
+    target: handle de la línea, arco, círculo o polilínea a recortar.
+    point: [x, y] de un punto del TRAMO QUE SE QUITA (se lleva solo a la
+        curva; no hace falta que sea exacto).
+    extend_edges: True si los bordes no cortan realmente al objetivo y hay
+        que prolongarlos (la opción Edge > Extend de TRIM).
+    """
+    return _edicion(edicion_mod.trim, edges, target, point, extend_edges, wait_s)
+
+
+@mcp.tool()
+@_con_nota
+def extend_entity(boundaries: list[str], target: str, point: list[float],
+                  extend_edges: bool = False, wait_s: float = 30.0) -> dict[str, Any]:
+    """EXTEND de AutoCAD: alarga `target` hasta los límites `boundaries`.
+
+    boundaries: handles de las entidades contra las que se extiende.
+    target: línea, arco o polilínea abierta a alargar.
+    point: [x, y] de un punto del extremo a alargar, cerca de ese extremo.
+    extend_edges: True si el límite no toca al objetivo prolongado y hay que
+        extenderlo también (Edge > Extend).
+    """
+    return _edicion(edicion_mod.extend, boundaries, target, point, extend_edges, wait_s)
+
+
+@mcp.tool()
+@_con_nota
+def fillet_entities(first: str, second: str, radius: float, point1: list[float],
+                    point2: list[float], wait_s: float = 30.0) -> dict[str, Any]:
+    """FILLET de AutoCAD: empalma dos entidades con un arco de `radius`
+    (radius=0 deja la esquina viva).
+
+    first / second: handles de las dos entidades (línea, arco, polilínea).
+    point1 / point2: [x, y] de un punto de CADA una, del lado que se CONSERVA
+        (cerca de la esquina). Eligen qué tramos quedan, como los clics.
+    FILLETRAD se restaura al terminar.
+    """
+    return _edicion(edicion_mod.fillet, first, second, radius, point1, point2, wait_s)
+
+
+@mcp.tool()
+@_con_nota
+def join_entities(handles: list[str], wait_s: float = 30.0) -> dict[str, Any]:
+    """JOIN de AutoCAD: une líneas colineales, arcos del mismo círculo y
+    polilíneas que se tocan en una sola entidad.
+
+    handles: al menos 2. Si no se pueden unir, no cambia nada y lo avisa.
+    Es lo que convierte tramos sueltos en un contorno cerrado para achurar o
+    medir.
+    """
+    return _edicion(edicion_mod.join, handles, wait_s)
+
+
+@mcp.tool()
+@_con_nota
+def overkill_entities(handles: Optional[list[str]] = None, all: bool = False,
+                      wait_s: float = 30.0) -> dict[str, Any]:
+    """OVERKILL de AutoCAD: borra duplicados y une lo superpuesto.
+
+    handles: lista de al menos 2, o all=True para todo el espacio activo.
+    Con all=True el resultado lista hasta 500 handles borrados y 'deletedCount'
+    trae el total. Úsalo antes de cuantificar o de achurar: dos líneas iguales
+    una encima de la otra duplican el largo de muro que se mide.
+    """
+    return _edicion(edicion_mod.overkill, handles, all, wait_s)
+
+
+@mcp.tool()
+def native_status(job_id: Optional[str] = None) -> dict[str, Any]:
+    """Resultado de la última operación nativa (trim, extend, fillet, join,
+    overkill) si todavía estaba en curso cuando respondió la tool: state
+    'queued' | 'running' | 'done' | 'error'."""
+    return acad.call("native_status", {"jobId": job_id} if job_id else {})
 
 
 @mcp.tool()

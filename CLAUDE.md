@@ -346,6 +346,28 @@ comando registrado `MCPRUNJOB` que corre `Editor.Command` con los tokens, tras l
 lista de comandos prohibidos) pero se dejó fuera del repo a propósito: es una puerta de ejecución y hay que
 decidirla con el usuario. Es lo que hace Autodesk con su módulo nativo `AcMCPCore.crx`.
 
+## 3.quater Edición con el motor nativo: `trim_entity`, `extend_entity`, `fillet_entities`, `join_entities`, `overkill_entities`
+
+Recortar contra bordes, extender, empalmar con radio, unir tramos y borrar superpuestos son problemas de
+intersección con muchos casos (arcos, bulges, bordes implícitos). AutoCAD ya los resuelve: estas tools le
+mandan la operación a SU comando (`TRIM`, `EXTEND`, `FILLET`, `JOIN`, `-OVERKILL`) en vez de reescribirla. Se usan
+para CORREGIR sin rehacer: un muro que sobra, una esquina que no cierra, tramos sueltos que hay que unir para
+achurar o medir, líneas duplicadas que duplican el largo cuantificado (`overkill_entities(all=True)` antes de
+`calculate_quantities`).
+
+No son un ejecutor de comandos: cada operación tiene su comando FIJO en el plugin (`NativeOpsCommand.cs`) y solo
+recibe handles de entidades que existen y números; nadie elige qué comando corre. Devuelven `created`, `deleted`
+y `modified` (la caja antes/después) para verificar, y si no cambió nada lo dicen en `warning` (punto que no cae
+sobre el tramo, bordes que no cortan —`extend_edges=True`—, capa bloqueada). Un UNDO deshace toda la operación.
+Rechazan con motivo si hay un comando en curso, el editor de bloques abierto o la vista no está en planta
+(`zoom_extents` la devuelve a planta). Los puntos (`point`, `point1`...) se llevan solos a la curva y la vista se
+encuadra un instante alrededor porque el cursor de selección mide en píxeles; se restaura al terminar.
+Corren en un comando registrado (`MCPNATIVEOP`) porque `Editor.Command` no anda desde el evento Idle: la tool
+espera el resultado (`wait_s`, 30 s) y, si tarda más, queda en curso: `native_status`, **no repetir**.
+
+Plugin nuevo (1.10.0): hay que reinstalar el bundle. **Falta probarlas en vivo** (2022 y 2027): los tests offline
+(`test_edicion.py`) solo cubren las validaciones y el puente, no la geometría.
+
 ## 4. Muros: una planta entera es `create_wall_network`
 
 Un muro NO es una línea. Los muros de una planta van en **UNA** llamada a

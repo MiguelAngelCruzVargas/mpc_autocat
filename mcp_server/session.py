@@ -38,7 +38,7 @@ _READ_ONLY_PREFIXES = ("list_", "get_")
 _READ_ONLY = frozenset({
     "ping", "select_entities", "measure_text", "calculate_area",
     "calculate_properties", "capture_viewport", "zoom_extents",
-    "export_pdf", "export_block", "export_quantities_csv",
+    "export_pdf", "export_block", "export_quantities_csv", "native_status",
 })
 
 # Comandos de ciclo de vida: no son "dibujo sin guardar" (save_drawing lo
