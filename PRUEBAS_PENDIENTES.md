@@ -3,7 +3,7 @@
 ## Hecho (22/10/2026)
 Plugin 1.18.0 (incluye lo de 1.17.0) verificado en vivo en **AutoCAD 2022 y 2027**: `verificar_lote_1_17.py` 134/134, y las baterías de
 siempre (`verificar_version` 31, `prueba_crear_objetos` 38, `prueba_navegacion` 26, `prueba_primitivas_3d` 16) en las dos.
-Las pruebas encontraron tres cierres de AutoCAD (RefreshLists en lectura, Ellipse nula, y `configure_layout` con orden inválido) ya corregidos.
+Las pruebas encontraron dos CIERRES de AutoCAD (`RefreshLists` sobre un layout en lectura, y una `Ellipse` nula) y un orden inválido en `configure_layout` (centrado antes del tipo de área, ventana sin área), todo corregido.
 
 ## Falta
 - Probar en vivo 2019-2021 y 2023-2026 (hoy solo compilan: `python tools/matriz_api.py`).
