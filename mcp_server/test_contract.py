@@ -24,7 +24,7 @@ def main() -> int:
     # sheet.py compone tools basicas, asi que tambien invoca comandos.
     composed = "".join(
         io.open(os.path.join(HERE, name), encoding="utf-8").read()
-        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py", "engine.py", "instalaciones.py", "examen_edificio.py", "autocad_client.py", "phone3d.py", "prim.py", "parking.py", "facade.py", "vectorize.py", "estructura.py", "planta_estructural.py", "arcos.py", "alberca.py", "conjunto_estructural.py", "detalles_estructura.py", "detalle.py", "zapatas_dibujo.py", "zapatas_combinada.py", "zapatas_cuadros.py", "edicion.py")
+        for name in ("sheet.py", "arch.py", "furniture.py", "annotation.py", "civil.py", "profile.py", "rules.py", "electrical.py", "sections.py", "quantities.py", "roof.py", "rebar.py", "isometric.py", "materials.py", "symbols.py", "engine.py", "instalaciones.py", "examen_edificio.py", "autocad_client.py", "phone3d.py", "prim.py", "parking.py", "facade.py", "vectorize.py", "estructura.py", "planta_estructural.py", "arcos.py", "alberca.py", "conjunto_estructural.py", "detalles_estructura.py", "detalle.py", "zapatas_dibujo.py", "zapatas_combinada.py", "zapatas_cuadros.py", "edicion.py", "propiedades.py")
     )
 
     # _do_call: el lote ('batch') lo manda el cliente mismo, no una tool.
@@ -80,7 +80,10 @@ def main() -> int:
                  # vistas: check_view_titles (list_entities con cajas).
                  "vistas_mod.",
                  # acabados del 3D (run_code): dress_3d_model y set_3d_view.
-                 "acab_mod.")
+                 "acab_mod.",
+                 # consulta, edición nativa y propiedades por reflexión: pasan por
+                 # su módulo, que es quien llama al plugin.
+                 "consulta_mod.", "edicion_mod.", "prop_mod.", "_prop(", "_edicion(")
     patron = "|".join(re.escape(d) for d in delegados)
     silent = sorted(t for t in exposed if not re.search(
         r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|" + patron + ")",

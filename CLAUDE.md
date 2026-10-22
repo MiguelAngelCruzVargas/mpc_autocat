@@ -367,6 +367,32 @@ espera el resultado (`wait_s`, 30 s) y, si tarda más, queda en curso: `native_s
 
 Plugin nuevo (1.10.0): hay que reinstalar el bundle. **Probadas en vivo en la 2027** sobre líneas de prueba en un dibujo nuevo: TRIM recortó una línea de 10 a 5 contra un borde, EXTEND alargó de 3 a 6, FILLET radio 0 cerró la esquina y radio 2 creó el arco de centro (68,42), JOIN unió dos líneas en una (la otra se borró) y OVERKILL borró la línea duplicada y dejó las otras; FILLETRAD se restauró. Falta la 2022; los tests offline (`test_edicion.py`) cubren solo las validaciones y el puente.
 
+## 3.quinquies Propiedades de CUALQUIER objeto: `get_object_properties`, `set_object_properties`, `list_object_properties` (plugin 1.11.0)
+
+La API de objetos de AutoCAD tiene miles de propiedades (código descompilado, ver `Desktop\Autodesk_descompilado\notas\G_catalogo_api.md`:
+73 clases de entidad, ~3.700 propiedades escribibles contando lo heredado por cada una). Escribir una tool por propiedad no escala y un
+comando C# por propiedad obligaba a recompilar y reiniciar. Estas tres tools las descubren por REFLEXIÓN sobre la clase real del objeto en la
+versión instalada (lo que no existe en una versión no aparece: 2022 y 2027 no tienen que coincidir):
+
+- `list_object_properties(entity_type | handle)`: qué propiedades tiene (nombre, tipo, si se escribe, de qué clase viene; las enumeraciones
+  traen sus valores). Línea 41/17 escribibles, círculo 42/21, texto 46/27, MText 61/38, achurado 55/28, polilínea 46/21, cota rotada 152/122,
+  Viewport 90/62, Solid3d 35/15, Light 56/38, capa (`LayerTableRecord`) 26/14.
+- `get_object_properties(handles, names?)`: lee hasta 500 objetos; sin `names`, todas las que se saben leer.
+- `set_object_properties(handles, {nombre: valor}, dry_run?)`: cambia varias propiedades de varios objetos en UNA transacción. Se valida
+  TODO antes de escribir (existe, es escribible, el valor convierte al tipo); si algo falla (capa inexistente, valor inválido) no queda nada a
+  medias. Devuelve `before`/`after` por objeto. `dry_run` muestra qué cambiaría.
+
+Valores: números, texto, booleanos, puntos `[x,y,z]`, vectores, escalas, colores (índice 1-255, `"ByLayer"`, `"ByBlock"` o `[r,g,b]`) y
+enumeraciones por nombre (`"LineWeight050"`). Lo que no es de esos tipos (colecciones, objetos anidados) no se maneja y el error lo dice. Los
+nombres no distinguen mayúsculas; los de infraestructura (`Database`, `ObjectId`...) nunca se escriben. Es de PROPIEDADES: no ejecuta
+métodos ni llama a nada estático. Para elegir los objetos: `query_entities`; para cambiar muchos de una vez: sus handles a `set_object_properties`.
+
+Verificado en vivo (2027) sobre línea, círculo, arco, polilínea, texto, MText y achurado: cambió extremos, capa, color (índice y RGB),
+espesor de línea por nombre, escala de tipo de línea, radio (el área se recalculó), texto, altura, rotación, cierre de polilínea y escala de
+patrón; rechazó con motivo una propiedad de solo lectura, una inexistente, un tipo equivocado, una enumeración inválida y una capa que no
+existe, sin tocar nada; la llamada con una propiedad buena y una mala no cambió ninguna. `undo` la revierte si no hay lecturas entre medio
+(misma limitación que arriba). Falta la 2022 y probar propiedades de 3D sobre objetos reales.
+
 ## 4. Muros: una planta entera es `create_wall_network`
 
 Un muro NO es una línea. Los muros de una planta van en **UNA** llamada a

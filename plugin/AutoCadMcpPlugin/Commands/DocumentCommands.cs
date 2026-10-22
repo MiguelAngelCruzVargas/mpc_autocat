@@ -332,6 +332,6 @@ namespace AutoCadMcpPlugin.Commands
     /// </summary>
     public static class PluginInfo
     {
-        public const string Version = "1.10.1";
+        public const string Version = "1.11.0";
     }
 }

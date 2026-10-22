@@ -19,6 +19,7 @@ import civil as civil_mod
 import compose as compose_mod
 import consulta as consulta_mod
 import edicion as edicion_mod
+import propiedades as prop_mod
 import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
@@ -5489,6 +5490,63 @@ def zoom_extents() -> dict[str, Any]:
     capture_viewport pedido inmediatamente después no choca con un comando
     en curso."""
     return acad.call("zoom_extents", {})
+
+
+def _prop(fn, *args, **kw) -> dict[str, Any]:
+    try:
+        return fn(*args, **kw)
+    except prop_mod.PropiedadesError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+def get_object_properties(handles: list[str], names: Optional[list[str]] = None) -> dict[str, Any]:
+    """Lee propiedades de CUALQUIER objeto del dibujo: línea, polilínea, texto,
+    cota, achurado, bloque, sólido 3D, capa, estilo...
+
+    Descubre las propiedades por reflexión sobre la clase real del objeto en la
+    versión de AutoCAD instalada: unas 3.700 escribibles entre todas las
+    entidades (descompilado de la API). Más cobertura que las tools de
+    consulta, que solo tienen unos pocos campos por tipo.
+
+    handles: handles de los objetos (hasta 500).
+    names: propiedades a leer ('Layer', 'Radius', 'StartPoint', 'LineWeight'...,
+        sin distinguir mayúsculas); sin names, todas las que se saben leer.
+    Valores: números, texto, booleanos, puntos [x,y,z], colores (índice,
+        'ByLayer', 'ByBlock' o [r,g,b]), enumeraciones por nombre. Las
+        propiedades de otro tipo (colecciones, objetos anidados) no se manejan.
+    Devuelve 'objects' {handle: {type, properties, unreadable}}. Para saber qué
+    existe en un tipo: list_object_properties."""
+    return _prop(prop_mod.get_properties, handles, names)
+
+
+@mcp.tool()
+def set_object_properties(handles: list[str], properties: dict[str, Any],
+                   dry_run: bool = False) -> dict[str, Any]:
+    """Cambia propiedades de uno o muchos objetos de una sola vez, con el mismo
+    mecanismo que get_properties.
+
+    Ej.: set_object_properties(["3E5C"], {"Layer": "MUROS", "Color": 7, "LineWeight": "LineWeight050"})
+         set_object_properties(handles_de_un_query, {"Radius": 0.25})
+    Se valida TODO antes de escribir (la propiedad existe, es escribible, el
+    valor convierte al tipo) y se aplica en UNA transacción: si algo falla no
+    queda nada a medias. Devuelve 'changes' con 'before' y 'after' por objeto.
+    dry_run=True valida y muestra qué cambiaría sin escribir.
+    Rechaza con motivo: propiedad inexistente o de solo lectura, tipo no
+    soportado, capa bloqueada. Para cambios de muchos objetos, sacá los handles
+    con query_entities."""
+    return _prop(prop_mod.set_properties, handles, properties, dry_run)
+
+
+@mcp.tool()
+def list_object_properties(entity_type: Optional[str] = None,
+                    handle: Optional[str] = None) -> dict[str, Any]:
+    """Qué propiedades tiene un tipo de objeto (por nombre de clase, p.ej.
+    'Polyline', 'Circle', 'DBText', 'Hatch', 'Solid3d', 'LayerTableRecord') o
+    el objeto de un handle: nombre, tipo, si se puede escribir y de qué clase
+    heredada viene; las enumeraciones traen sus valores. Es la lista REAL de la
+    versión de AutoCAD instalada."""
+    return _prop(prop_mod.list_properties, entity_type, handle)
 
 
 def _edicion(fn, *args, **kw) -> dict[str, Any]:

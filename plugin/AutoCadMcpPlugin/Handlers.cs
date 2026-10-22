@@ -189,6 +189,14 @@ namespace AutoCadMcpPlugin
                 case "undo":
                     return UndoCommand.Run(doc, pars);
 
+                // Propiedades de cualquier objeto por reflexión (PropertiesCommands)
+                case "get_properties":
+                    return PropertiesCommands.Get(doc, pars);
+                case "set_properties":
+                    return PropertiesCommands.Set(doc, pars);
+                case "list_properties":
+                    return PropertiesCommands.List(doc, pars);
+
                 // Edición con el motor nativo de AutoCAD: TRIM, EXTEND, FILLET, JOIN,
                 // OVERKILL (comando fijo por operación; ver NativeOpsCommand)
                 case "native_op":
