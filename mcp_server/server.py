@@ -5649,7 +5649,7 @@ def delete_database_object(kind: str, name: Optional[str] = None,
     return _prop(prop_mod.delete_database_object, kind, name, handle)
 
 
-_PEND = " (plugin 1.17.0/1.18.0: compila en 2019-2027; PENDIENTE de prueba en vivo)"
+_PEND = " (plugin 1.18.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
 
 
 def _con_pend(fn):

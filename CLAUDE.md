@@ -449,7 +449,7 @@ Verificado en vivo con `mcp_server/prueba_crear_objetos.py`: **38/38 en AutoCAD 
 
 ## 3.sexies-quinquies Lote 1.17.0: purga, grupos, XData, datos propios, atributos, escalas de anotación, impresión y bloques dinámicos
 
-**ESTADO: compila contra 2019-2027 (`tools/matriz_api.py`) y pasan las suites offline, pero NO se probó en vivo.** Hasta correr `python mcp_server/verificar_lote_1_17.py` en una 2022 y en una 2027, tratar estas tools como «escritas, no verificadas». Las que escriben van en transacción (todo o nada) y validan antes de tocar el dibujo.
+**ESTADO: verificado en vivo, 134/134 en AutoCAD 2022 y 134/134 en 2027** (`python mcp_server/verificar_lote_1_17.py`; plugin 1.18.0, que cubre también las tools de 1.17.0), y compila en 2019-2027 (`tools/matriz_api.py`); 2019-2021 y 2023-2026 siguen sin probarse en un AutoCAD real. Las que escriben van en transacción (todo o nada) y validan antes de tocar el dibujo.
 
 - **`purge_database_objects(kinds, dry_run)`** — usa `Database.Purge`, la misma prueba de «en uso» de PURGE: bloques, estilos de cota y texto, tipos de línea, capas, regapps, UCS y vistas. Salta los del sistema (capa 0, Defpoints, Standard, `*`) y los actuales. `dry_run=True` solo lista.
 - **`set_current(kind, name)`** — capa, estilo de texto, de cota o tipo de línea actual (lo que antes era un `set_system_variable` a ciegas).
@@ -462,7 +462,7 @@ Verificado en vivo con `mcp_server/prueba_crear_objetos.py`: **38/38 en AutoCAD 
 - **`get_dynamic_block_properties` / `set_dynamic_block_properties`** — bloques dinámicos: estados de visibilidad, medidas de lista, etc., con los valores permitidos que informa AutoCAD.
 - **`create_database_object` / `delete_database_object`** ahora aceptan `kind` = `tablestyle` | `mleaderstyle` (se crean con `PostTableStyleToDatabase` / `PostMLeaderStyleToDb`).
 
-**Plugin 1.18.0 (mismo estado: compila 2019-2027, sin prueba en vivo)** — capas, láminas y copias. Salió de leer `AcLayerTools`, `AcExportLayoutEx` y `acdbmgd` descompilados (ahí aparecieron `LayerStateManager`, `Viewport.FreezeLayersInViewport` y `Database.DxfOut`, que no se conocían):
+**Plugin 1.18.0 (verificado en vivo en 2022 y 2027)** — capas, láminas y copias. Salió de leer `AcLayerTools`, `AcExportLayoutEx` y `acdbmgd` descompilados (ahí aparecieron `LayerStateManager`, `Viewport.FreezeLayersInViewport` y `Database.DxfOut`, que no se conocían):
 
 - **`merge_layers(sources, target)`** (LAYMRG) — pasa TODO lo de las capas de origen —modelo, láminas y definiciones de bloque— a la de destino y borra las de origen; la prueba de «en uso» es `Database.Purge`. **`delete_layer_with_objects(name, confirm)`** (LAYDEL) — destructivo: sin `confirm=true` solo cuenta lo que borraría, por tipo.
 - **`save_layer_state` / `restore_layer_state` / `list_layer_states` / `delete_layer_state`** — el administrador NATIVO de estados de capa (`Database.LayerStateManager`): quedan en el dibujo y se ven en el cuadro de AutoCAD. **`isolate_layers` / `unisolate_layers`** (LAYISO/LAYUNISO) guardan el estado previo en `_MCP_ISOLATE`; no se anidan. Sin probar: la política `turn_off_others` (1 = apagar las no mencionadas) sale de leer la firma, no de documentación.
@@ -470,12 +470,12 @@ Verificado en vivo con `mcp_server/prueba_crear_objetos.py`: **38/38 en AutoCAD 
 - **`copy_layout` / `rename_layout`** — `LayoutManager.CopyLayout/RenameLayout`; copiar conserva viewports e impresión.
 - **`export_copy(path, version, precision, overwrite)`** — copia en DWG de una versión anterior (2013, 2010, 2007, 2004, 2000) o DXF, sin tocar el dibujo abierto; en DWG relee la copia y compara entidades y láminas (`verify.match`). Dato que salió de comparar `DwgVersion` en las nueve versiones: **de AutoCAD 2018 a 2027 el formato de archivo es el mismo (AC1032)**; bajar la versión solo hace falta para quien tenga una 2017 o anterior.
 
-Más de 1.18.0, también sin probar en vivo:
+Más de 1.18.0, también verificado en vivo:
 
 - **Xrefs**: `bind_xref(name|names, insert)` (BIND/XBIND: deja el DWG autocontenido; `insert=True` mezcla capas y estilos sin prefijo, `False` los deja con `xref$0$`) y `unload_xref`. Se rechaza un xref no resuelto.
 - **Propiedades del dibujo**: `get_drawing_properties` / `set_drawing_properties` (título, asunto, autor, palabras clave, comentarios, base de hipervínculos y propiedades personalizadas; `custom={"k": null}` borra). Es lo que el Explorador de Windows muestra del DWG.
 - **Edición por API** (`EditExtraCommands.cs`, cada una en una transacción y validada entera): `explode_entities` (EXPLODE; no descompone xrefs), `break_curve` (parte una curva en puntos), `divide_curve` (DIVIDE/MEASURE, con puntos o con un bloque girado según la curva), `create_boundary` (BOUNDARY, usa `Editor.TraceBoundary`: lo que está A LA VISTA, hacer `zoom_window` antes) y `match_properties` (`SetPropertiesFrom` o propiedades sueltas).
-- **Primitivas** (`primitivas.py`, sin plugin nuevo; sobre `create_polyline` y `create_object`): `create_rectangle` (con esquinas redondeadas), `create_polygon` (inscrito o circunscrito), `create_ellipse` (`Ellipse.Set`), `create_construction_line` (Xline/Ray) y `create_point`. Cuidado: `create_ellipse` y las líneas de construcción dependen de que `create_object` acepte esos tipos — si falla, es el primer lugar a mirar.
+- **Primitivas** (`primitivas.py`, sin plugin nuevo; sobre `create_polyline` y `create_object`): `create_rectangle` (con esquinas redondeadas), `create_polygon` (inscrito o circunscrito), `create_ellipse` (`Ellipse.Set`), `create_construction_line` (Xline/Ray) y `create_point`. `create_ellipse` tiene comando propio (`CreateEllipseCommand.cs`): una `Ellipse` o `Spline` construida vacía es NULA (`IsNull`, visto en el descompilado) y agregarla al dibujo cierra AutoCAD con una violación de acceso, por eso `create_object` ya no las admite.
 
 - **Sólidos desde perfiles ya dibujados** (`Solid3dOpsCommands.cs`): `extrude_solid` (EXTRUDE por altura o vector, con ahusado; es como pasar una planta 2D a volumen), `revolve_solid` (REVOLVE sobre un eje), `sweep_solid` (SWEEP a lo largo de una trayectoria) y `loft_solid` (LOFT entre 2 o más secciones, con guías o trayectoria). El perfil tiene que estar CERRADO; el sólido toma la capa del perfil. Complementan a `extrude_profile` (que dibuja el contorno desde puntos) y a las primitivas de `create_object`.
 

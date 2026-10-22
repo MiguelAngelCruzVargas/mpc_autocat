@@ -205,7 +205,7 @@ def main() -> int:
     for cambio in ("merge_layers", "delete_layer_with_objects", "save_layer_state", "restore_layer_state",
                    "isolate_layers", "unisolate_layers", "set_viewport_layers"):
         check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
-        check(f"{cambio}: el docstring avisa PENDIENTE", "PENDIENTE" in (getattr(server, cambio).__doc__ or ""), True)
+        check(f"{cambio}: el docstring dice qué versiones se probaron", "verificado en vivo" in (getattr(server, cambio).__doc__ or ""), True)
 
     # ---- copias y layouts (1.18.0)
     manda("export_copy dwg 2013", lambda: server.export_copy("C:/tmp/plano.dwg", "2013"),
@@ -312,7 +312,7 @@ def main() -> int:
 
     # ---- los docstrings avisan que falta la prueba en vivo
     for t in ("purge_database_objects", "set_xdata", "create_group", "add_annotation_scale"):
-        check(f"{t}: el docstring avisa PENDIENTE", "PENDIENTE" in (getattr(server, t).__doc__ or ""), True)
+        check(f"{t}: el docstring dice qué versiones se probaron", "verificado en vivo" in (getattr(server, t).__doc__ or ""), True)
 
     if FAILED:
         print("\nFALLARON:")
