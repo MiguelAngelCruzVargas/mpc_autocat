@@ -162,7 +162,7 @@ namespace AutoCadMcpPlugin.Commands.RunCode
             {
                 if (string.IsNullOrEmpty(ruta) || !File.Exists(ruta))
                     return;
-#if NET10_0_OR_GREATER
+#if NET8_0_OR_GREATER
                 // AutoCAD 2027 carga en el proceso archivos que no son assemblies administrados
                 // (slidelib.exe): Roslyn falla entero si uno de ellos va como referencia. Solo en el
                 // target de 2027, para no tocar el comportamiento de las versiones ya probadas.

@@ -1358,8 +1358,11 @@ todo el plano de una; ir texto por texto no.
 ## Antes de tocar el plugin C#
 **Versiones de AutoCAD:** probado en vivo en **2022** (net48) y **2027** (R26.0, .NET 10); `test_live.py`
 da 71/71 en las dos, `test_live_mejoras.py` pasa en la 2027, y las láminas del pórtico de Mixtan
-exportadas por la 2027 salen idénticas píxel a píxel a las de la 2022. 2019-2021 y 2023-2024 comparten el DLL de net48 y 2025-2026 el de .NET 8, pero ESO NO
-SE PROBÓ en vivo. El DLL de .NET 10 se compila contra los DLL de la propia instalación
+exportadas por la 2027 salen idénticas píxel a píxel a las de la 2022. 2019-2021 y 2023-2024 comparten el DLL de net48 y 2025-2026 el de .NET 8.
+`python tools/matriz_api.py` compila el código contra la API oficial de CADA versión 2019-2027 (NuGet, sin
+instalar nada) y da 0 errores en las nueve: la API que usa el plugin existe con la misma firma. Eso prueba
+que COMPILA, no que ande en vivo: 2019-2021 y 2023-2026 siguen sin probarse en un AutoCAD real, y no se
+vende como «probado» hasta tenerlo. El DLL de .NET 10 se compila contra los DLL de la propia instalación
 (`AcadDir2027`, incluye `acdbmgdbrep.dll`); `tools/install_bundle.ps1` copia los tres. Un AutoCAD en
 castellano usa CENTRO2/OCULTA2: cualquier tool que pida un tipo de línea tiene que pasar por
 `layers.ensure`, nunca llamar `set_layer` con el nombre en inglés. La primera vez, AutoCAD 2027 pide iniciar
