@@ -494,6 +494,9 @@ Antes, ante un timeout o un AutoCAD cerrado, lo único que había era «no se pu
 - **Del lado del servidor**: los últimos 40 comandos enviados con su resultado.
 - Las fallas de conexión y los cortes (`AutoCadConnectionError`, «se cortó la conexión», «cerró sin responder») traen pegado un `DIAGNÓSTICO:` con la conclusión en una frase («AutoCAD MURIÓ ejecutando «list_plot_options» … Error de AutoCAD: «eNotOpenForWrite»»). `diagnose_autocad()` lo da a pedido, y es lo PRIMERO que se llama ante un cuelgue, antes de repetir nada.
 
+**Regla antes de escribir una herramienta nueva sobre la API: `python tools/precondiciones.py <Clase> ...`.** Lee el descompilado y marca, por clase: si NACE NULA (`IsNull`: Ellipse, Spline, Region, Body, Solid3d), si tiene constructor vacío y otros con datos (usar el de datos), si no tiene constructor público (se obtiene de la base de datos), qué métodos MODIFICAN, y cuáles modifican un ARGUMENTO que es objeto de la base de datos (ese argumento tiene que estar abierto para ESCRITURA o ser una copia suelta; en lectura es una aserción fatal que cierra AutoCAD, no una excepción: así cayó `RefreshLists`). `--catalogo` barre todo (`Desktop\Autodesk_descompilado
+otas\K_precondiciones.md`). Es una heurística de dónde mirar, no un veredicto: el descompilado es un envoltorio sobre código nativo y no dice qué exige cada método por dentro; lo que marca como sospechoso se prueba en un dibujo descartable y lo comprobado queda anotado en `CONOCIDO` (Ellipse cierra AutoCAD; Solid3d, Region y Body vacíos se pueden agregar). `test_precondiciones.py` lo cubre sin AutoCAD.
+
 Lo que NO ve todavía: la salida de la línea de comandos de AutoCAD (no hay evento administrado que la entregue; Autodesk la captura con código nativo). Solo lee: no cierra diálogos ni mata procesos.
 
 ## 3.septies Verificar una versión de AutoCAD en vivo: `mcp_server/verificar_version.py`
