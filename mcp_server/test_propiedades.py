@@ -27,7 +27,7 @@ def con_plugin(fn):
 
     def fake(cmd, params=None):
         llamadas.append((cmd, params or {}))
-        return {"ok": True, "echo": cmd}
+        return {"ok": True, "echo": cmd, "handle": "AB"}
 
     real = server.acad.call
     server.acad.call = fake
@@ -82,6 +82,42 @@ def main() -> int:
     rechazada("list sin nada", lambda: server.list_object_properties())
     rechazada("list con los dos", lambda: server.list_object_properties("Line", "A1"))
     rechazada("list con un nombre que no es de clase", lambda: server.list_object_properties("Line; DROP"))
+
+    # ---- create_object
+    r, ll = con_plugin(lambda: server.create_object("Circle", {"Center": [5, 5, 0], "Radius": 2.5}))
+    check("create manda tipo y propiedades", ll[0], ("create_object",
+          {"type": "Circle", "properties": {"Center": [5, 5, 0], "Radius": 2.5}}))
+    r, ll = con_plugin(lambda: server.create_object("Solid3d"))
+    check("create sin propiedades manda un objeto vacío", ll[0][1], {"type": "Solid3d", "properties": {}})
+    r, ll = con_plugin(lambda: server.create_object("Solid3d", init_method="CreateBox", init_args=[10, 5, 3]))
+    check("create con método: crea y luego llama", [c[0] for c in ll], ["create_object", "call_method"])
+    check("el método se llama sobre la entidad nueva", ll[1][1]["method"], "CreateBox")
+    rechazada("create con nombre de clase inválido", lambda: server.create_object("Circle; x"))
+    rechazada("create con propiedades que no son un objeto", lambda: server.create_object("Circle", ["Radius"]))
+    rechazada("create con valor null", lambda: server.create_object("Circle", {"Radius": None}))
+    rechazada("create con demasiadas propiedades", lambda: server.create_object("Circle", {"P%d" % i: 1 for i in range(61)}))
+    # si el método de inicio falla, se borra lo creado
+    llamadas: list[tuple[str, dict]] = []
+
+    def falla(cmd, params=None):
+        llamadas.append((cmd, params or {}))
+        if cmd == "create_object":
+            return {"handle": "AB", "type": "Solid3d"}
+        if cmd == "call_method":
+            raise server.acad.AutoCadError("AutoCAD rechazó la llamada")
+        return {}
+
+    real = server.acad.call
+    server.acad.call = falla
+    try:
+        try:
+            server.create_object("Solid3d", init_method="CreateBox", init_args=[1, 1, 1])
+            check("método que falla propaga el error", False, True)
+        except server.acad.AutoCadError:
+            check("método que falla propaga el error", True, True)
+    finally:
+        server.acad.call = real
+    check("...y borra la entidad vacía", llamadas[-1], ("delete_entity", {"handle": "AB"}))
 
     # ---- sesión: leer es de lectura; cambiar no se reintenta
     check("get_properties es de lectura", session.retry_safe("get_properties"), True)

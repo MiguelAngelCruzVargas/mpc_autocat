@@ -467,6 +467,87 @@ namespace AutoCadMcpPlugin.Commands
             };
         }
 
+        /// <summary>Entidades que no se pueden crear de la nada: necesitan algo más que propiedades
+        /// (una definición de bloque o de imagen, un contenedor OLE, el marco de una lámina).</summary>
+        private static readonly HashSet<string> NoCreables = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Viewport", "OleFrame", "Ole2Frame", "ProxyEntity", "RasterImage", "Wipeout", "DgnUnderlay",
+            "DwfUnderlay", "PdfUnderlay", "Underlay", "PointCloudEx", "AttributeReference", "Mline"
+        };
+
+        /// <summary>params: type (clase de entidad, p.ej. "Solid3d", "Circle"), [properties].
+        /// Crea una entidad VACÍA o con esas propiedades y la agrega al espacio activo. Para lo que no
+        /// se puede fijar con propiedades (las primitivas de Solid3d: CreateBox, CreateSphere...) se
+        /// llama después a call_method sobre el handle devuelto.</summary>
+        public static JsonObject Create(Document doc, JsonObject pars)
+        {
+            string nombre = pars["type"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(nombre)) throw new ArgumentException("Falta 'type': la clase de la entidad.");
+            var pedidas = pars["properties"] as JsonObject ?? new JsonObject();
+            if (pedidas.Count > MaxPropiedades)
+                throw new ArgumentException("Máximo " + MaxPropiedades + " propiedades por llamada.");
+            var t = typeof(Entity).Assembly.GetType("Autodesk.AutoCAD.DatabaseServices." + nombre, false, true);
+            if (t == null || !typeof(Entity).IsAssignableFrom(t))
+                throw new ArgumentException("'" + nombre + "' no es una clase de entidad de DatabaseServices (Line, Circle, Solid3d, DBText...).");
+            if (t.IsAbstract || NoCreables.Contains(t.Name))
+                throw new ArgumentException("No se puede crear un " + t.Name + " de la nada con esta capa.");
+            if (t.GetConstructor(Type.EmptyTypes) == null)
+                throw new ArgumentException(t.Name + " no tiene constructor sin parámetros.");
+
+            // Se valida TODO antes de crear: las propiedades existen, se escriben y el valor convierte.
+            var plan = new List<Tuple<PropertyInfo, object>>();
+            foreach (var kv in pedidas)
+            {
+                var p = Buscar(t, kv.Key);
+                if (!Escribible(p))
+                    throw new ArgumentException("La propiedad '" + p.Name + "' de " + t.Name + " es de solo lectura.");
+                plan.Add(Tuple.Create(p, DeJson(p.PropertyType, kv.Value, p.Name)));
+            }
+
+            var db = doc.Database;
+            Entity ent = (Entity)Activator.CreateInstance(t);
+            try
+            {
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    try
+                    {
+                        try { ent.SetDatabaseDefaults(); } catch (SysException) { }
+                        foreach (var item in plan)
+                            item.Item1.SetValue(ent, item.Item2);
+                        var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+                        btr.AppendEntity(ent);
+                        tr.AddNewlyCreatedDBObject(ent, true);
+                        tr.Commit();
+                    }
+                    catch (TargetInvocationException ex)
+                    {
+                        tr.Abort();
+                        var real = ex.InnerException ?? ex;
+                        throw new InvalidOperationException(
+                            "AutoCAD rechazó la creación" + (real is AcException ae ? " (" + ae.ErrorStatus + ")" : "") + ": " +
+                            real.Message + ". No se creó nada.");
+                    }
+                    catch (AcException ex)
+                    {
+                        tr.Abort();
+                        throw new InvalidOperationException(
+                            "AutoCAD rechazó la creación (" + ex.ErrorStatus + "): " + ex.Message + ". No se creó nada.");
+                    }
+                }
+            }
+            catch (SysException)
+            {
+                if (!ent.ObjectId.IsValid) { try { ent.Dispose(); } catch (SysException) { } }
+                throw;
+            }
+            return new JsonObject
+            {
+                ["handle"] = ent.Handle.ToString(), ["type"] = t.Name, ["layer"] = ent.Layer,
+                ["note"] = pedidas.Count == 0 ? "Entidad vacía: configurala con set_object_properties o call_object_method." : null
+            };
+        }
+
         /// <summary>params: handle | type (nombre de clase, p.ej. "Polyline").</summary>
         public static JsonObject List(Document doc, JsonObject pars)
         {

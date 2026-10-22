@@ -83,3 +83,19 @@ def list_properties(entity_type: Optional[str] = None,
     if not re.match(r"^[A-Za-z][A-Za-z0-9_]*$", entity_type or ""):
         raise PropiedadesError(f"'{entity_type}' no es un nombre de clase.")
     return acad.call("list_properties", {"type": entity_type})
+
+
+def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    if not isinstance(entity_type, str) or not re.match(r"^[A-Za-z][A-Za-z0-9_]*$", entity_type):
+        raise PropiedadesError(f"'{entity_type}' no es un nombre de clase de entidad.")
+    properties = {} if properties is None else properties
+    if not isinstance(properties, dict):
+        raise PropiedadesError("'properties' tiene que ser un objeto {nombre: valor}.")
+    if len(properties) > MAX_PROPIEDADES:
+        raise PropiedadesError(f"Máximo {MAX_PROPIEDADES} propiedades por llamada.")
+    for k, v in properties.items():
+        if not isinstance(k, str) or not k.strip():
+            raise PropiedadesError("Los nombres de propiedad tienen que ser texto no vacío.")
+        if v is None:
+            raise PropiedadesError(f"'{k}': el valor no puede ser null.")
+    return acad.call("create_object", {"type": entity_type, "properties": properties})

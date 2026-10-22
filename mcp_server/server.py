@@ -5547,6 +5547,44 @@ def call_object_method(handle: str, method: str, args: Optional[list[Any]] = Non
     return _met(met_mod.call_method, handle, method, args, add_results_to_space, mode)
 
 
+@mcp.tool()
+def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None,
+                  init_method: Optional[str] = None,
+                  init_args: Optional[list[Any]] = None) -> dict[str, Any]:
+    """Crea una entidad de CUALQUIER clase de AutoCAD (Line, Circle, Arc,
+    Polyline, DBText, MText, Hatch, Solid3d, SubDMesh, PlaneSurface, Table...)
+    en el espacio activo, con sus propiedades, y devuelve su handle: la
+    otra mitad de get/set_object_properties y call_object_method.
+
+    entity_type: nombre de la clase ('Solid3d', 'Circle'...). Sin lista cerrada: se
+        descubre por reflexión (list_object_properties lo dice).
+    properties: {nombre: valor} de lo que se pueda fijar al crear ('Center', 'Radius',
+        'StartPoint', 'TextString', 'Layer'...), validado ENTERO antes de crear.
+    init_method / init_args: un método a llamar sobre la entidad recién creada, para
+        lo que no es una propiedad. Las primitivas 3D son así: create_object('Solid3d',
+        init_method='CreateBox', init_args=[10, 5, 3]) levanta una caja; 'CreateSphere'
+        [radio], 'CreateTorus', 'CreateWedge', 'CreatePyramid', 'CreateFrustum'. Si el
+        método falla la entidad se borra: no queda una entidad vacía.
+    No se pueden crear de la nada las que necesitan más que propiedades (Viewport, OLE,
+    imágenes, referencias de atributos...). Ojo: las primitivas y los métodos de Solid3d
+    corren código nativo: probalos en un dibujo descartable."""
+    try:
+        r = prop_mod.create_object(entity_type, properties)
+    except prop_mod.PropiedadesError as exc:
+        return {"ok": False, "error": str(exc)}
+    if init_method:
+        try:
+            r2 = met_mod.call_method(r["handle"], init_method, init_args or [])
+        except Exception:
+            try:
+                acad.call("delete_entity", {"handle": r["handle"]})
+            except acad.AutoCadError:
+                pass
+            raise
+        r = dict(r, init=r2)
+    return r
+
+
 def _prop(fn, *args, **kw) -> dict[str, Any]:
     try:
         return fn(*args, **kw)
