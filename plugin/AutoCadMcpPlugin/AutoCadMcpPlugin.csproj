@@ -6,7 +6,7 @@
          2025+ (Autodesk migró el runtime a .NET 8, mismo namespace/API para lo
          básico). `dotnet build` compila los dos DLLs de una — en la otra máquina
          se carga con NETLOAD el que corresponda a la versión real instalada. -->
-    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <TargetFrameworks>net48;net8.0-windows;net10.0-windows</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <AssemblyName>AutoCadMcpPlugin</AssemblyName>
     <RootNamespace>AutoCadMcpPlugin</RootNamespace>
@@ -25,7 +25,7 @@
        las anota en deps.json), y AutoCAD carga el plugin desde la carpeta del
        bundle: sin esto, Roslyn no estaría ahí y run_code fallaría en 2025+.
        Las DLL de AutoCAD no se copian igual: van con ExcludeAssets=runtime. -->
-  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows' Or '$(TargetFramework)' == 'net10.0-windows'">
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
@@ -48,6 +48,21 @@
     <PackageReference Include="ModPlus.AutoCAD.API.2025" Version="3.0.0" ExcludeAssets="runtime" />
     <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
     <!-- System.Text.Json ya viene incluido en el runtime de .NET 8. -->
+  </ItemGroup>
+
+  <!-- AutoCAD 2027 (.NET 10): no hay paquete NuGet de la API, asi que se compila contra los
+       DLL administrados de la propia instalacion (solo referencia, Private=false: AutoCAD los
+       provee en runtime). Para compilar este target hace falta AutoCAD 2027 instalado, o
+       AcadDir2027 apuntando a su carpeta. Sin el, `dotnet build -f net8.0-windows` sigue andando. -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows'">
+    <AcadDir2027 Condition="'$(AcadDir2027)' == ''">C:\Program Files\Autodesk\AutoCAD 2027</AcadDir2027>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows'">
+    <Reference Include="accoremgd"><HintPath>$(AcadDir2027)\accoremgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="acdbmgd"><HintPath>$(AcadDir2027)\acdbmgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="acdbmgdbrep"><HintPath>$(AcadDir2027)\acdbmgdbrep.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="acmgd"><HintPath>$(AcadDir2027)\acmgd.dll</HintPath><Private>false</Private></Reference>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
   </ItemGroup>
 
 </Project>

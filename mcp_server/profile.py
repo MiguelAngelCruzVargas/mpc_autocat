@@ -31,6 +31,12 @@ LW_TEXT = 18
 
 def _layer(name: str, color: int, lineweight: int,
            linetype: Optional[str] = None) -> None:
+    # Por layers.ensure: si el AutoCAD esta en castellano (CENTRO2 en vez de CENTER2),
+    # prueba el equivalente y, si tampoco, deja la capa continua en vez de fallar.
+    if linetype:
+        import layers as layers_mod
+        layers_mod.ensure(name, color, lineweight, linetype, force=True)
+        return
     acad.call("set_layer", {"name": name, "colorIndex": color,
                             "linetype": linetype,
                             "lineweightHundredthsMm": lineweight})

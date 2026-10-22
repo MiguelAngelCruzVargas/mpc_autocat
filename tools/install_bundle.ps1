@@ -117,6 +117,7 @@ if (-not $SkipBuild) {
 
 $net48 = Join-Path $projectDir 'bin\Debug\net48'
 $net8 = Join-Path $projectDir 'bin\Debug\net8.0-windows'
+$net10 = Join-Path $projectDir 'bin\Debug\net10.0-windows'
 
 if (-not (Test-Path (Join-Path $net48 'AutoCadMcpPlugin.dll'))) {
     throw "No se encontro el DLL de net48. Compila primero (sin -SkipBuild)."
@@ -146,6 +147,17 @@ if (Test-Path (Join-Path $net8 'AutoCadMcpPlugin.dll')) {
     if (Test-Path $deps) { Copy-Item $deps (Join-Path $target 'Contents\net8') }
 } else {
     Write-Warning "No hay DLL de net8: el bundle solo servira para AutoCAD 2019-2024."
+}
+
+# AutoCAD 2027 (.NET 10): el DLL se compila contra la propia instalacion; si no hay 2027 en
+# esta maquina no se genera y el bundle queda sin esa carpeta (AutoCAD 2027 no cargaria el plugin).
+if (Test-Path (Join-Path $net10 'AutoCadMcpPlugin.dll')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $target 'Contents\net10') | Out-Null
+    Copy-Item (Join-Path $net10 '*.dll') (Join-Path $target 'Contents\net10')
+    $deps10 = Join-Path $net10 'AutoCadMcpPlugin.deps.json'
+    if (Test-Path $deps10) { Copy-Item $deps10 (Join-Path $target 'Contents\net10') }
+} else {
+    Write-Warning "No hay DLL de net10: el bundle no servira para AutoCAD 2027 (hay que compilar con AutoCAD 2027 instalado)."
 }
 
 # --- 3. Reportar ---------------------------------------------------------

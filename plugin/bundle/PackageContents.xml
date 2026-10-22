@@ -12,10 +12,10 @@
   Códigos de versión: R23.0=2019, R23.1=2020, R24.0=2021, R24.1=2022,
   R24.2=2023, R24.3=2024, R25.0=2025, R25.1=2026, R26.0=2027.
 
-  2026 (R25.1) usa el mismo DLL de .NET 8 que 2025: el rango lo cubre, pero ESTE
-  REPO SOLO SE PROBÓ EN AUTOCAD 2022. 2027 (R26.0) pasa a .NET 10: el DLL de
-  .NET 8 no sirve ahí, por eso el tope SeriesMax="R25.1" (sin tope, AutoCAD 2027
-  intentaría cargarlo y fallaría).
+  PROBADO EN VIVO: AutoCAD 2022 y AutoCAD 2027 (test_live 71/71 en las dos). 2026 (R25.1) usa el mismo DLL de .NET 8 que 2025 (sin probar en vivo). 2027 (R26.0)
+  pasa a .NET 10: el DLL de .NET 8 no sirve ahí, por eso el tope SeriesMax="R25.1" del
+  bloque de .NET 8 y un bloque propio con el DLL de .NET 10, compilado contra los DLL
+  de AutoCAD 2027.
 -->
 <ApplicationPackage
     SchemaVersion="1.0"
@@ -45,6 +45,17 @@
         AppName="AutoCadMcpPlugin"
         Version="1.9.2"
         ModuleName="./Contents/net8/AutoCadMcpPlugin.dll"
+        AppDescription="Servidor MCP embebido en AutoCAD"
+        LoadOnAutoCADStartup="True" />
+  </Components>
+
+  <Components Description="AutoCAD 2027 (.NET 10)">
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD*"
+                         SeriesMin="R26.0" SeriesMax="R26.0" />
+    <ComponentEntry
+        AppName="AutoCadMcpPlugin"
+        Version="1.9.2"
+        ModuleName="./Contents/net10/AutoCadMcpPlugin.dll"
         AppDescription="Servidor MCP embebido en AutoCAD"
         LoadOnAutoCADStartup="True" />
   </Components>
