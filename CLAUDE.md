@@ -358,7 +358,7 @@ achurar o medir, líneas duplicadas que duplican el largo cuantificado (`overkil
 No son un ejecutor de comandos: cada operación tiene su comando FIJO en el plugin (`NativeOpsCommand.cs`) y solo
 recibe handles de entidades que existen y números; nadie elige qué comando corre. Devuelven `created`, `deleted`
 y `modified` (la caja antes/después) para verificar, y si no cambió nada lo dicen en `warning` (punto que no cae
-sobre el tramo, bordes que no cortan —`extend_edges=True`—, capa bloqueada). Van agrupadas en un UNDO, pero **no está verificado que la tool `undo` las revierta**: en la prueba en vivo `undo` no revirtió nada, ni siquiera una línea creada por API (comportamiento de `undo`, anterior a esto, sin investigar).
+sobre el tramo, bordes que no cortan —`extend_edges=True`—, capa bloqueada). **No se pueden deshacer con la tool `undo`**: AutoCAD informa que deshizo `MCPNATIVEOP` pero la geometría queda como estaba (probado en vivo en la 2027 con JOIN, FILLET, TRIM y OVERKILL, con y sin grupo UNDO propio; `undo` sí deshace lo creado por las tools de dibujo, ~2 s después de encolarse). Causa sin resolver: parece que los cambios que hace `Editor.Command` dentro del comando registrado no quedan en su paso de deshacer. Hasta resolverlo: `save_drawing` ANTES de editar, y revisar `modified`/`deleted` del resultado.
 Rechazan con motivo si hay un comando en curso, el editor de bloques abierto o la vista no está en planta
 (`zoom_extents` la devuelve a planta). Los puntos (`point`, `point1`...) se llevan solos a la curva y la vista se
 encuadra un instante alrededor porque el cursor de selección mide en píxeles; se restaura al terminar.

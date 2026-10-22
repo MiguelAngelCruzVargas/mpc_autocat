@@ -5731,7 +5731,14 @@ def undo(steps: int = 1) -> dict[str, Any]:
 
     Se encola en la línea de comandos (igual que zoom_extents), así que no
     devuelve confirmación de qué se deshizo — si hace falta verificar,
-    segui con get_drawing_info o list_entities después."""
+    segui con get_drawing_info o list_entities después, y esperá ~2 s: AutoCAD
+    lo ejecuta cuando procesa su cola, no al momento de responder.
+
+    Verificado en vivo (2027): deshace lo creado por las tools de dibujo
+    (create_line...). NO revierte las operaciones nativas (trim_entity,
+    extend_entity, fillet_entities, join_entities, overkill_entities): AutoCAD
+    informa que deshizo MCPNATIVEOP pero la geometría queda como estaba. Para
+    esas, guardá el dibujo antes de editar (save_drawing) o corregí a mano."""
     if steps < 1:
         raise ValueError("steps tiene que ser >= 1.")
     return acad.call("undo", {"steps": steps})

@@ -30,8 +30,8 @@ namespace AutoCadMcpPlugin.Commands
     /// Cómo corre. Editor.Command solo anda dentro del contexto de un comando
     /// registrado, no desde el evento Idle donde corre el resto del plugin. La
     /// operación se valida y se deja anotada; se encola MCPNATIVEOP (comando
-    /// registrado de este plugin) y recién ahí se ejecutan los tokens, agrupados
-    /// en UN deshacer. El cliente pregunta el resultado con native_status.
+    /// registrado de este plugin) y recién ahí se ejecutan los tokens, dentro de un
+    /// solo paso de deshacer (el propio comando registrado). El cliente pregunta el resultado con native_status.
     ///
     /// Las selecciones por punto (qué tramo recortar, qué esquina empalmar) se
     /// hacen sobre la entidad real: el punto se lleva al punto más cercano de la
@@ -473,12 +473,10 @@ namespace AutoCadMcpPlugin.Commands
                     }
                 }
                 var tokens = job.Tokens(ed);
-                ed.Command(new object[] { "_.UNDO", "_Begin" });
-                try { ed.Command(tokens); }
-                finally
-                {
-                    try { ed.Command(new object[] { "_.UNDO", "_End" }); } catch (SysException) { }
-                }
+                // SIN UNDO Begin/End propio: este comando registrado ya es UN paso de
+                // deshacer, y un grupo explícito adentro hacía que UNDO 1 no revirtiera
+                // la operación (probado en vivo: JOIN no se deshacía).
+                ed.Command(tokens);
                 Terminar(job, null, doc);
             }
             catch (AcException ex)
