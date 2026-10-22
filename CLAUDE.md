@@ -307,6 +307,25 @@ lámina, no por dibujo): si esta lámina es otra escala, `create_sheet` antes de
 anotar, o el texto sale del tamaño de la lámina anterior. Los `warnings` que
 devuelven esas tres tools lo recuerdan.
 
+## 3.bis Preguntarle al dibujo: `query_entities` / `aggregate_entities`
+
+Para «¿cuántas líneas hay por capa?», «¿qué polilíneas cerradas miden más de 12 m²?» o «¿cuántos metros de
+muro hay?» NO se cuenta a mano lo que devuelve `list_entities` ni se escribe un script: `aggregate_entities`
+cuenta, suma, promedia y busca extremos (`count sum avg min max minabs maxabs`, con `group_by`), y
+`query_entities` devuelve las entidades que cumplen un filtro de propiedades
+(`layer = MUROS AND length > 3`, `type = Polyline AND closed = true AND area > 12`,
+`text contains "NPT"`). `describe_entity_fields` dice qué campos existen por tipo y cuánto cuesta cada uno:
+llamala antes de consultar un tipo que no conocés.
+
+Lo que hay que saber: el handle, el tipo, la capa, la caja (`bboxArea`, `width`...) y el texto salen de UNA
+llamada; el resto (`length`, `area`, `blockName`...) se lee en detalle, en lotes, y **solo de lo que sobrevive
+a las condiciones baratas**. Si quedan más de `hydrate_limit` (500) el resultado es PARCIAL y lo avisa en
+`notices`/`partial`: se acota (entity_type, layer, bboxArea) en vez de subir el tope a ciegas. Un campo que
+falta no cumple ninguna comparación. Es de solo lectura y no necesita plugin nuevo (usa `list_entities` y el
+comando `batch` con `get_entity`). Diseño tomado del servidor MCP nativo de la 2027 (consulta por tipo y
+filtro con agregaciones), escrito desde cero. `mcp_server/test_consulta.py` lo prueba sin AutoCAD; **falta
+probarlo en vivo** en un dibujo grande (tiempo del lote de detalle).
+
 ## 4. Muros: una planta entera es `create_wall_network`
 
 Un muro NO es una línea. Los muros de una planta van en **UNA** llamada a

@@ -17,6 +17,7 @@ import arch as arch_mod
 import autocad_client as acad
 import civil as civil_mod
 import compose as compose_mod
+import consulta as consulta_mod
 import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
@@ -4130,6 +4131,110 @@ def list_entities(entity_type: Optional[str] = None, limit: int = 200,
     if include_extents:
         pars["includeExtents"] = True
     return acad.call("list_entities", pars)
+
+
+def _listar_para_consulta(pars: dict[str, Any]) -> dict[str, Any]:
+    return acad.call("list_entities", pars)
+
+
+def _detallar_para_consulta(handles: list[str]) -> dict[str, dict[str, Any]]:
+    """get_entity de muchos handles en pocos viajes (comando batch del plugin,
+    de a 300): uno por handle serían ~0.5 s cada uno."""
+    out: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(handles), 300):
+        tramo = handles[i:i + 300]
+        r = acad.call("batch", {"commands": [
+            {"id": h, "cmd": "get_entity", "params": {"handle": h}} for h in tramo]})
+        for h, res in zip(tramo, r.get("results", [])):
+            if res.get("ok") and isinstance(res.get("result"), dict):
+                out[h] = res["result"]
+    return out
+
+
+@mcp.tool()
+def query_entities(entity_type: Optional[str] = None,
+                   fields: Optional[list[str]] = None,
+                   filter: Optional[str] = None, skip: int = 0, take: int = 200,
+                   all_spaces: bool = False, hydrate_limit: int = 500,
+                   scan_limit: int = 20000) -> dict[str, Any]:
+    """Consulta entidades por tipo y filtro de PROPIEDADES, no solo por zona.
+
+    Responde «qué polilíneas cerradas miden más de 12 m²», «los textos de la
+    capa COTAS que digan 0.00» o «los bloques llamados PUERTA» en una llamada,
+    sin escribir un script. Para contar o sumar usá aggregate_entities: no
+    cuentes a mano lo que devuelve esto.
+
+    entity_type: 'Line', 'Polyline', 'Circle', 'DBText'... (sin él, todo el
+        espacio activo).
+    fields: qué campos devolver (siempre vuelve el handle); admite rutas con
+        punto ('center.0', 'attributes.TAG'). Sin fields: handle, type, layer,
+        space. `describe_entity_fields` lista los campos de cada tipo.
+    filter: `campo operador valor` unidos con AND / OR (AND liga más fuerte,
+        sin paréntesis). Operadores: = != < > <= >= contains startswith
+        endswith. Ej.: `layer = MUROS AND length > 3` /
+        `type = Polyline AND closed = true AND area > 12` /
+        `text contains "NPT"`. Texto sin distinguir mayúsculas. `= null` mira
+        si el campo falta. Un campo que falta no cumple ninguna comparación.
+    skip / take: paginación (200 por default).
+    all_spaces: modelo Y todas las láminas, no solo el espacio activo.
+
+    Costo: handle, type, layer, caja (minX..bboxArea) y text vienen gratis en
+    una llamada; el resto (length, area, radius, blockName...) se lee en
+    detalle, y SOLO de lo que sobrevive a las condiciones baratas. Si quedan
+    más de `hydrate_limit` el resultado es PARCIAL y lo dice en 'notices' y
+    'partial': acotá con entity_type, layer o bboxArea en vez de subir el tope
+    a ciegas. Las coordenadas son las del dibujo (WCS) y las unidades las del
+    dibujo; no se les agrega ninguna unidad."""
+    try:
+        return consulta_mod.consultar(
+            _listar_para_consulta, _detallar_para_consulta,
+            entity_type=entity_type, fields=fields, filtro=filter, skip=skip,
+            take=take, todos_los_espacios=all_spaces,
+            hydrate_limit=hydrate_limit, scan_limit=scan_limit)
+    except consulta_mod.ConsultaError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def aggregate_entities(aggregations: Optional[list[dict[str, Any]]] = None,
+                       entity_type: Optional[str] = None,
+                       filter: Optional[str] = None, all_spaces: bool = False,
+                       hydrate_limit: int = 500,
+                       scan_limit: int = 20000) -> dict[str, Any]:
+    """Cuenta, suma, promedia o busca extremos sobre las entidades que cumplen
+    un filtro — el número sale de MEDIR el dibujo, no de contar a mano.
+
+    aggregations: lista de {type, field?, group_by?, order_by?, ascending?}.
+      type: count | sum | avg | min | max | minabs | maxabs (minabs/maxabs
+        miran el valor absoluto, para campos con signo).
+      field: el campo numérico (obligatorio salvo en count).
+      group_by: campo por el que agrupar ('layer', 'type', 'blockName'...).
+      order_by: 'value' (default) o el mismo campo de group_by; ascending
+        False por default (de mayor a menor).
+    Sin aggregations: un solo conteo. Ej.:
+      [{"type": "count", "group_by": "layer"}]  -> entidades por capa
+      [{"type": "sum", "field": "length", "group_by": "layer"}] -> metros de
+        línea por capa (solo Line y Polyline traen length)
+    entity_type / filter / all_spaces / hydrate_limit: igual que query_entities.
+    Si una entidad no tiene el campo numérico se salta y se informa en
+    'skippedNonNumeric'; un resultado parcial lo dice en 'notices'."""
+    try:
+        return consulta_mod.agregar(
+            _listar_para_consulta, _detallar_para_consulta,
+            aggregations=aggregations, entity_type=entity_type, filtro=filter,
+            todos_los_espacios=all_spaces, hydrate_limit=hydrate_limit,
+            scan_limit=scan_limit)
+    except consulta_mod.ConsultaError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def describe_entity_fields(entity_type: Optional[str] = None) -> dict[str, Any]:
+    """Qué campos se pueden pedir y filtrar en query_entities /
+    aggregate_entities, y cuánto cuesta cada uno. Llamala antes de consultar
+    un tipo que no conocés en vez de adivinar los nombres. Con entity_type
+    ('Polyline', 'Hatch'...) devuelve solo los campos de ese tipo."""
+    return consulta_mod.esquema(entity_type)
 
 
 @mcp.tool()
