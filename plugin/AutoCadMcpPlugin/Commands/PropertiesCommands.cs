@@ -65,7 +65,27 @@ namespace AutoCadMcpPlugin.Commands
             t = Nullable.GetUnderlyingType(t) ?? t;
             return t == typeof(string) || t == typeof(bool) || EsNumero(t) || t.IsEnum
                 || t == typeof(Point3d) || t == typeof(Point2d) || t == typeof(Vector3d) || t == typeof(Vector2d)
-                || t == typeof(Scale3d) || t == typeof(Color) || t == typeof(Extents3d) || t == typeof(ObjectId);
+                || t == typeof(Scale3d) || t == typeof(Color) || t == typeof(Extents3d) || t == typeof(ObjectId)
+                || t == typeof(Matrix3d) || t == typeof(Plane);
+        }
+
+        /// <summary>Estructuras de la API con campos simples de solo lectura (Solid3dMassProperties:
+        /// volumen, centroide, momentos de inercia...): se LEEN como un objeto {campo: valor}.
+        /// No se escriben ni se pasan como argumento.</summary>
+        internal static bool EsPlano(Type t)
+        {
+            t = Nullable.GetUnderlyingType(t) ?? t;
+            if (!t.IsValueType || t.IsEnum || t.IsPrimitive || Soportado(t)) return false;
+            var ns = t.Namespace ?? "";
+            return ns.StartsWith("Autodesk.AutoCAD", StringComparison.Ordinal) && PropsPlanas(t).Length > 0;
+        }
+
+        private static PropertyInfo[] PropsPlanas(Type t)
+        {
+            return t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => p.GetIndexParameters().Length == 0 && p.GetMethod != null && p.GetMethod.IsPublic
+                            && Soportado(p.PropertyType))
+                .OrderBy(p => p.Name, StringComparer.Ordinal).ToArray();
         }
 
         private static bool EsEscribibleTipo(Type t)
@@ -82,7 +102,7 @@ namespace AutoCadMcpPlugin.Commands
                 var lista = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .Where(p => p.GetIndexParameters().Length == 0)
                     .Where(p => !Infraestructura.Contains(p.Name))
-                    .Where(p => Soportado(p.PropertyType))
+                    .Where(p => Soportado(p.PropertyType) || EsPlano(p.PropertyType))
                     .Where(p => p.GetMethod != null && p.GetMethod.IsPublic)
                     .OrderBy(p => p.Name, StringComparer.Ordinal)
                     .ToArray();
@@ -141,6 +161,11 @@ namespace AutoCadMcpPlugin.Commands
                     return new JsonArray(ex.MinPoint.X, ex.MinPoint.Y, ex.MinPoint.Z,
                                          ex.MaxPoint.X, ex.MaxPoint.Y, ex.MaxPoint.Z);
                 case ObjectId oid: return oid.IsNull ? null : JsonValue.Create(oid.Handle.ToString());
+                case Matrix3d m3:
+                    return new JsonArray(Enumerable.Range(0, 4).Select(f =>
+                        (JsonNode)new JsonArray(m3[f, 0], m3[f, 1], m3[f, 2], m3[f, 3])).ToArray());
+                case Plane pl:
+                    return new JsonObject { ["point"] = AJson(pl.PointOnPlane), ["normal"] = AJson(pl.Normal) };
                 case Color c:
                     switch (c.ColorMethod)
                     {
@@ -149,7 +174,18 @@ namespace AutoCadMcpPlugin.Commands
                         case ColorMethod.ByColor: return new JsonArray((int)c.Red, (int)c.Green, (int)c.Blue);
                         default: return JsonValue.Create((int)c.ColorIndex);
                     }
-                default: return JsonValue.Create(Convert.ToString(v));
+                default:
+                    if (EsPlano(v.GetType()))
+                    {
+                        var o = new JsonObject();
+                        foreach (var p in PropsPlanas(v.GetType()))
+                        {
+                            try { o[p.Name] = AJson(p.GetValue(v)); }
+                            catch (SysException) { }
+                        }
+                        return o;
+                    }
+                    return JsonValue.Create(Convert.ToString(v));
             }
         }
 
@@ -229,6 +265,27 @@ namespace AutoCadMcpPlugin.Commands
                 if (t == typeof(Vector3d)) { var a = Vec(v, 3, 3, nombre); return new Vector3d(a[0], a[1], a[2]); }
                 if (t == typeof(Vector2d)) { var a = Vec(v, 2, 2, nombre); return new Vector2d(a[0], a[1]); }
                 if (t == typeof(Scale3d)) { var a = Vec(v, 3, 3, nombre); return new Scale3d(a[0], a[1], a[2]); }
+                if (t == typeof(Matrix3d))
+                {
+                    // 4 filas de 4 números, o 16 números seguidos (por filas).
+                    var m = v as JsonArray;
+                    double[] d;
+                    if (m != null && m.Count == 4 && m.All(f => f is JsonArray))
+                        d = m.SelectMany(f => Vec(f, 4, 4, nombre)).ToArray();
+                    else
+                        d = Vec(v, 16, 16, nombre);
+                    return new Matrix3d(d);
+                }
+                if (t == typeof(Plane))
+                {
+                    var o = v as JsonObject;
+                    if (o == null || o["point"] == null || o["normal"] == null)
+                        throw new ArgumentException("un plano es {\"point\": [x,y,z], \"normal\": [x,y,z]}");
+                    var pt = Vec(o["point"], 3, 3, nombre); var nv = Vec(o["normal"], 3, 3, nombre);
+                    var normal = new Vector3d(nv[0], nv[1], nv[2]);
+                    if (normal.Length < 1e-12) throw new ArgumentException("la normal del plano no puede ser cero");
+                    return new Plane(new Point3d(pt[0], pt[1], pt[2]), normal);
+                }
                 if (t == typeof(Color))
                 {
                     if (v is JsonArray ca)

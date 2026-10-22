@@ -60,7 +60,7 @@ namespace AutoCadMcpPlugin.Commands
 
         /// <summary>Prefijos que indican que el método solo lee.</summary>
         private static readonly Regex Lectura = new Regex(
-            @"^(Get|Is|Has|Can|Contains|Compare|Find|Intersect|Closest|Distance|Length|Equals|Check|Test|Hit|Is|To(?!ggle))",
+            @"^(Get|Is|Has|Can|Contains|Compare|Find|Intersect|Closest|Distance|Length|Equals|Check|Test|Hit|Compute|Calculate|Measure|To(?!ggle))",
             RegexOptions.Compiled);
 
         // ------------------------------------------------------------ reflexión
@@ -320,6 +320,7 @@ namespace AutoCadMcpPlugin.Commands
 
                     // Se elige la primera sobrecarga cuyos argumentos convierten bien.
                     MethodInfo elegido = null; object[] valores = null; string ultimoError = null;
+                    Dictionary<int, ObjectId> objetosArg = null;
                     foreach (var m in candidatos)
                     {
                         try
@@ -329,6 +330,7 @@ namespace AutoCadMcpPlugin.Commands
                             int k = 0;
                             int entradas = ps.Count(EsEntrada);
                             int extra = entradas;       // desde acá los argumentos son colecciones de entrada
+                            var ids = new Dictionary<int, ObjectId>();
                             for (int i = 0; i < ps.Length; i++)
                             {
                                 var pt = ps[i].ParameterType.IsByRef ? ps[i].ParameterType.GetElementType() : ps[i].ParameterType;
@@ -349,18 +351,26 @@ namespace AutoCadMcpPlugin.Commands
                                     if (!pt.IsAssignableFrom(o.GetType()))
                                         throw new ArgumentException(ps[i].Name + " tiene que ser un " + pt.Name + ", y el handle es un " + o.GetType().Name + ".");
                                     v[i] = o;
+                                    ids[i] = oid;
                                 }
                                 else v[i] = PropertiesCommands.DeJson(pt, arg, ps[i].Name);
                             }
-                            elegido = m; valores = v; break;
+                            elegido = m; valores = v; objetosArg = ids; break;
                         }
-                        catch (ArgumentException ex) { ultimoError = ex.Message; }
+                        catch (SysException ex) when (ex is ArgumentException || ex is InvalidOperationException || ex is FormatException || ex is InvalidCastException)
+                        { ultimoError = ex.Message; }
                     }
                     if (elegido == null)
                         throw new ArgumentException("Los argumentos no sirven para ninguna sobrecarga de '" + nombre + "': " + ultimoError);
 
                     bool escribe = modoPedido != null ? modoPedido == "write" : !EsDeLectura(elegido);
                     var objeto = escribe ? tr.GetObject(id, OpenMode.ForWrite) : objeto0;
+                    // Los objetos que van como ARGUMENTO se abren en escritura si el método escribe:
+                    // BooleanOperation consume al otro sólido, ImprintEntity lo modifica... Pasarlo
+                    // abierto en lectura NO lanza una excepción: AutoCAD se cae (probado en vivo).
+                    if (escribe)
+                        foreach (var kv in objetosArg)
+                            valores[kv.Key] = tr.GetObject(kv.Value, OpenMode.ForWrite);
 
                     object resultado;
                     try { resultado = elegido.Invoke(objeto, valores); }

@@ -418,7 +418,11 @@ de comandos ni de código: solo operaciones de los objetos del dibujo.
 Verificado en vivo (2027): punto más cercano, punto en un parámetro, distancia a un parámetro (polilínea, 15 en el parámetro 1.5),
 intersecciones línea×línea (5,0) y círculo×línea (2 puntos), desfase con y sin agregar, `Extend`, `ReverseCurve` (extremos intercambiados),
 `Explode` (2 líneas) y `GetSplitCurves` por puntos y por parámetros (3 pedazos); rechazó con motivo un método inexistente, `Dispose`, `Close`, un
-argumento de tipo equivocado y un handle inexistente. Falta la 2022 y 3D real. `IntersectWith` con `ExtendBoth` entre una línea y una polilínea
+argumento de tipo equivocado y un handle inexistente.
+
+**3D real, verificado en vivo (2027, plugin 1.13.2).** `Solid3d`: `MassProperties` se lee como objeto (volumen 500 de una caja 10×10×5, centroide, extensiones, momentos de inercia, radios de giro: el volumen REAL del modelo para cuantificar), `CheckInterference`, `TransformBy` con una matriz 4×4 (`[[1,0,0,10],[0,1,0,0],[0,0,1,0],[0,0,0,1]]` movió el centroide a 15,5,2.5), `OffsetBody` (volumen 1008 = 12×12×7), `Slice` con un plano `{"point":[..],"normal":[..]}` (la mitad negativa vuelve como sólido nuevo con `add_results_to_space`), `BooleanOperation` con `BoolUnite` (1500), `BoolSubtract` (500) y `BoolIntersect` (500); `Region`: área y perímetro como propiedades, `Explode` (8 líneas) y `BooleanOperation` entre regiones (150 − solape 50 = 100); malla `SubDMesh`: vértices/caras/aristas como propiedades, `ComputeVolume`, `ComputeSurfaceArea`, `GetVertexAt`, `SubdDivideUp` y `ConvertToSolid`. Tipos nuevos soportados: matriz 4×4 (16 números o 4 filas) y plano; las estructuras de solo lectura con campos simples (`Solid3dMassProperties`) se leen como `{campo: valor}`.
+
+**Una llamada mal armada puede TUMBAR AutoCAD, no solo fallar.** Pasó en vivo: `BooleanOperation` con el segundo sólido abierto en LECTURA (lo consume, necesita escritura) cerró AutoCAD sin excepción. Desde 1.13.2 los objetos que van como argumento se abren en escritura si el método escribe; pero cualquier método nativo puede tener una precondición que esta capa no conoce. **Probar un método nuevo en un dibujo descartable y con el trabajo guardado**, no sobre un plano en curso. Falta la 2022; los parámetros de tipo `Surface`/`Plane` en `Slice` con superficie, `Extrude` desde región y las primitivas (`CreateBox`...) sin probar. `IntersectWith` con `ExtendBoth` entre una línea y una polilínea
 devolvió 0 puntos: sin investigar.
 
 ## 4. Muros: una planta entera es `create_wall_network`
