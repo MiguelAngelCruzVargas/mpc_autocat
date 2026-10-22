@@ -20,16 +20,17 @@ Sistema para vender el producto con **pago único (perpetua)**, **anual** o **me
 ## Puesta en marcha (una sola vez)
 
 1. **Claves.** Ya generadas: la privada está en `licencias/secreto/privada.pem` (no se sube a git) y hay una **copia en `%USERPROFILE%\.autocad-ia-licencias\privada.pem`**. **Guárdala además en un gestor de contraseñas:** si la pierdes no se pueden emitir más licencias y hay que republicar el producto con otra clave pública; si se filtra, cualquiera fabrica licencias. La pública ya está dentro de `licencia.py` y `LicenciaGuard.cs`.
-2. **Servidor.** En Render (u otro hosting con disco persistente):
+2. **Servidor — YA DESPLEGADO** en tu VPS: `https://vigentra-architech.vigentra.mx` (respaldo: `https://licencias.169-58-78-148.sslip.io`). Corre como contenedor Docker en `/opt/autocad-ia-licencias` (puerto 127.0.0.1:8780, Caddy delante con HTTPS automático; la base SQLite vive en el volumen `licencias-datos`). Los secretos están en `/opt/autocad-ia-licencias/.env` del VPS y el token de administración en `%USERPROFILE%\.autocad-ia-licenciasdmin_token.txt`. Para actualizar el servidor: copiar `licencias/servidor/*` al VPS y `docker compose up -d --build`. **Haz copia periódica del volumen** (`docker run --rm -v autocad-ia-licencias_licencias-datos:/d -v $PWD:/b alpine tar czf /b/licencias.tgz -C /d .`): es tu registro de ventas.
+   Alternativa en Render (u otro hosting con disco persistente):
    - *New > Blueprint* sobre este repositorio (usa `licencias/servidor/render.yaml`). Hace falta el plan de pago más bajo: el gratis duerme y **no tiene disco**, y sin disco cada reinicio borra las licencias vendidas.
    - En el panel (*Environment*) carga `LICENCIA_CLAVE_PRIVADA` (el contenido del `.pem`) y `LICENCIA_ADMIN_TOKEN` (`python -c "import secrets;print(secrets.token_urlsafe(32))"`).
    - Comprueba `https://TU-SERVIDOR/salud` → `{"ok": true}`.
    - Haz copias de `/data/licencias.db` (descarga periódica): es tu registro de ventas.
 3. **Paquete.**
    ```
-   powershell -File tools\empaquetar.ps1 -ServidorLicencias https://TU-SERVIDOR
+   powershell -File tools\empaquetar.ps1
    ```
-   Genera `dist\AutoCAD-IA-<versión>.zip` con el plugin que exige licencia y la dirección del servidor ya puesta.
+   Genera `dist\AutoCAD-IA-<versión>.zip` con el plugin que exige licencia (la dirección del servidor ya viene en `licencia.py`; `-ServidorLicencias <url>` la cambia). El administrador: `set LICENCIA_URL=https://vigentra-architech.vigentra.mx` y `set LICENCIA_ADMIN_TOKEN=<contenido de admin_token.txt>`.
 
 ## Vender
 

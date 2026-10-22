@@ -1,0 +1,14 @@
+# Bloque para /etc/caddy/Caddyfile del VPS. El DNS de vigentra-architech.vigentra.mx ya apunta al VPS; el segundo nombre (sslip.io) funciona sin DNS.
+vigentra-architech.vigentra.mx, licencias.169-58-78-148.sslip.io {
+	encode zstd gzip
+	request_body {
+		max_size 16KB
+	}
+	reverse_proxy 127.0.0.1:8780 {
+		header_up X-Real-IP {remote_host}
+	}
+	log {
+		output file /var/log/caddy/licencias.log
+		format console
+	}
+}

@@ -68,7 +68,7 @@ $basura = @('.venv', '__pycache__', '.pytest_cache', 'entregables', '.git')
 Copiar-Carpeta (Join-Path $raiz 'mcp_server') (Join-Path $salida 'mcp_server') $basura
 # Marca del paquete vendido: licencia.py solo bloquea (con mensajes claros) si este archivo existe. En el repo de desarrollo no esta.
 # Direccion del servidor de licencias dentro del paquete (sin ella el cliente no puede activar).
-if (-not $ServidorLicencias) { Write-Warning 'Sin -ServidorLicencias el paquete NO podra activar licencias. Uso: empaquetar.ps1 -ServidorLicencias https://tu-servidor.onrender.com' }
+if (-not $ServidorLicencias) { Write-Output "Servidor de licencias: el que trae licencia.py por defecto." }
 else {
     $lic = Join-Path $salida 'mcp_server\licencia.py'
     (Get-Content $lic -Raw -Encoding UTF8).Replace('https://licencias.CAMBIAR-AL-PUBLICAR.invalid', $ServidorLicencias.TrimEnd('/')) | Set-Content $lic -Encoding UTF8

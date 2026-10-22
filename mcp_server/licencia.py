@@ -34,7 +34,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 # Clave PUBLICA de firma (punto P-256 sin comprimir). Se genera con licencias/generar_claves.py.
 CLAVE_PUBLICA_B64 = "BKfr7hVUaeNp+zRv0GuwOi89ZOHrIBrT+FdcEIz0BHPkWjXVyQZ/sJs4oUM7hEBLUDbsl1ZgBsbrAeEslx19vvc="
 # Direccion del servidor de licencias. Se fija al publicar; AUTOCAD_IA_LICENCIAS_URL la pisa (pruebas, o un servidor propio).
-SERVIDOR_URL = "https://licencias.CAMBIAR-AL-PUBLICAR.invalid"
+SERVIDOR_URL = "https://vigentra-architech.vigentra.mx"
 
 DIA = 86400
 RENOVAR_ANTES_DIAS = 3
