@@ -322,8 +322,13 @@ namespace AutoCadMcpPlugin.Commands
 
         // ------------------------------------------------------------ objetos
 
-        private static List<ObjectId> Objetos(Document doc, JsonObject pars)
+        /// <summary>El seudo-objeto que representa la base de datos del dibujo (unidades, escalas,
+        /// variables de cota por defecto, estilo actual...): no tiene handle.</summary>
+        internal const string SeudoDb = "DATABASE";
+
+        private static List<ObjectId> Objetos(Document doc, JsonObject pars, out bool conDb)
         {
+            conDb = false;
             var ids = new List<ObjectId>();
             var lista = pars["handles"] as JsonArray;
             if (lista == null && pars["handle"] != null)
@@ -334,10 +339,78 @@ namespace AutoCadMcpPlugin.Commands
                 throw new ArgumentException("Máximo " + MaxObjetos + " objetos por llamada (llegaron " + lista.Count + ").");
             foreach (var n in lista)
             {
-                var id = HandleHelper.GetObjectId(doc.Database, n.GetValue<string>());
+                string h = n.GetValue<string>();
+                if (SeudoDb.Equals(h, StringComparison.OrdinalIgnoreCase)) { conDb = true; continue; }
+                var id = HandleHelper.GetObjectId(doc.Database, h);
                 if (!ids.Contains(id)) ids.Add(id);
             }
             return ids;
+        }
+
+        /// <summary>Lee propiedades del seudo-objeto DATABASE.</summary>
+        private static JsonObject LeerDb(Database db, string[] nombres)
+        {
+            var t = typeof(Database);
+            var valores = new JsonObject();
+            var omitidas = new JsonObject();
+            IEnumerable<PropertyInfo> props = nombres == null ? Propiedades(t) : nombres.Select(nm => Buscar(t, nm));
+            foreach (var p in props)
+            {
+                try { valores[p.Name] = AJson(p.GetValue(db)); }
+                catch (SysException ex)
+                {
+                    var real = ex is TargetInvocationException ti && ti.InnerException != null ? ex.InnerException : ex;
+                    omitidas[p.Name] = real is AcException ae ? ae.ErrorStatus.ToString() : real.Message;
+                }
+            }
+            var o = new JsonObject { ["type"] = "Database", ["properties"] = valores };
+            if (omitidas.Count > 0) o["unreadable"] = omitidas;
+            return o;
+        }
+
+        /// <summary>Escribe propiedades de DATABASE. Todo o nada: si una falla, las anteriores vuelven a su
+        /// valor. 'deshacer' revierte lo escrito (para cuando falle lo que se hace después).</summary>
+        private static JsonObject EscribirDb(Database db, JsonObject pedidas, bool simulacro, out Action deshacer)
+        {
+            var t = typeof(Database);
+            deshacer = null;
+            var plan = new List<Tuple<PropertyInfo, object>>();
+            foreach (var kv in pedidas)
+            {
+                var p = Buscar(t, kv.Key);
+                if (!Escribible(p))
+                    throw new ArgumentException("La propiedad '" + p.Name + "' de Database es de solo lectura.");
+                plan.Add(Tuple.Create(p, DeJson(p.PropertyType, kv.Value, p.Name)));
+            }
+            var antes = new JsonObject();
+            var despues = new JsonObject();
+            var viejos = new List<Tuple<PropertyInfo, object>>();
+            try
+            {
+                foreach (var item in plan)
+                {
+                    var p = item.Item1;
+                    object viejo = p.GetValue(db);
+                    antes[p.Name] = AJson(viejo);
+                    if (simulacro) { despues[p.Name] = AJson(item.Item2); continue; }
+                    p.SetValue(db, item.Item2);
+                    viejos.Add(Tuple.Create(p, viejo));
+                    despues[p.Name] = AJson(p.GetValue(db));
+                }
+            }
+            catch (SysException)
+            {
+                for (int i = viejos.Count - 1; i >= 0; i--)
+                { try { viejos[i].Item1.SetValue(db, viejos[i].Item2); } catch (SysException) { } }
+                throw;
+            }
+            if (!simulacro)
+                deshacer = () =>
+                {
+                    for (int i = viejos.Count - 1; i >= 0; i--)
+                    { try { viejos[i].Item1.SetValue(db, viejos[i].Item2); } catch (SysException) { } }
+                };
+            return new JsonObject { ["type"] = "Database", ["before"] = antes, ["after"] = despues };
         }
 
         private static string[] Nombres(JsonNode n)
@@ -355,9 +428,10 @@ namespace AutoCadMcpPlugin.Commands
         /// <summary>params: handle | handles, [names] (sin names: todas las soportadas).</summary>
         public static JsonObject Get(Document doc, JsonObject pars)
         {
-            var ids = Objetos(doc, pars);
+            var ids = Objetos(doc, pars, out bool conDb);
             var nombres = Nombres(pars["names"]);
             var salida = new JsonObject();
+            if (conDb) salida[SeudoDb] = LeerDb(doc.Database, nombres);
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 foreach (var id in ids)
@@ -384,13 +458,13 @@ namespace AutoCadMcpPlugin.Commands
                 }
                 tr.Commit();
             }
-            return new JsonObject { ["objects"] = salida, ["count"] = ids.Count };
+            return new JsonObject { ["objects"] = salida, ["count"] = ids.Count + (conDb ? 1 : 0) };
         }
 
         /// <summary>params: handle | handles, properties {nombre: valor}, [dry_run].</summary>
         public static JsonObject Set(Document doc, JsonObject pars)
         {
-            var ids = Objetos(doc, pars);
+            var ids = Objetos(doc, pars, out bool conDb);
             var pedidas = pars["properties"] as JsonObject;
             if (pedidas == null || pedidas.Count == 0)
                 throw new ArgumentException("Falta 'properties': un objeto {nombre: valor}.");
@@ -399,6 +473,9 @@ namespace AutoCadMcpPlugin.Commands
             bool simulacro = pars["dry_run"]?.GetValue<bool>() ?? false;
 
             var cambios = new JsonObject();
+            // DATABASE primero: si lo que sigue falla, se deshace.
+            Action deshacerDb = null;
+            if (conDb) cambios[SeudoDb] = EscribirDb(doc.Database, pedidas, simulacro, out deshacerDb);
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 try
@@ -458,12 +535,13 @@ namespace AutoCadMcpPlugin.Commands
                 catch (SysException)
                 {
                     tr.Abort();
+                    deshacerDb?.Invoke();
                     throw;
                 }
             }
             return new JsonObject
             {
-                ["applied"] = !simulacro, ["dryRun"] = simulacro, ["changes"] = cambios, ["count"] = ids.Count
+                ["applied"] = !simulacro, ["dryRun"] = simulacro, ["changes"] = cambios, ["count"] = ids.Count + (conDb ? 1 : 0)
             };
         }
 
@@ -546,6 +624,147 @@ namespace AutoCadMcpPlugin.Commands
                 ["handle"] = ent.Handle.ToString(), ["type"] = t.Name, ["layer"] = ent.Layer,
                 ["note"] = pedidas.Count == 0 ? "Entidad vacía: configurala con set_object_properties o call_object_method." : null
             };
+        }
+
+        /// <summary>Nombres cortos de los contenedores de la base de datos -> propiedad de Database.</summary>
+        private static readonly Dictionary<string, string> Contenedores =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "layers", "LayerTableId" }, { "textstyles", "TextStyleTableId" }, { "dimstyles", "DimStyleTableId" },
+            { "linetypes", "LinetypeTableId" }, { "blocks", "BlockTableId" }, { "regapps", "RegAppTableId" },
+            { "ucs", "UcsTableId" }, { "views", "ViewTableId" }, { "viewports", "ViewportTableId" },
+            { "layouts", "LayoutDictionaryId" }, { "mleaderstyles", "MLeaderStyleDictionaryId" },
+            { "tablestyles", "TableStyleDictionaryId" }, { "mlinestyles", "MLStyleDictionaryId" },
+            { "materials", "MaterialDictionaryId" }, { "visualstyles", "VisualStyleDictionaryId" },
+            { "groups", "GroupDictionaryId" }, { "named", "NamedObjectsDictionaryId" },
+            { "plotsettings", "PlotSettingsDictionaryId" }, { "plotstyles", "PlotStyleNameDictionaryId" },
+        };
+
+        private static ObjectId? IdDeContenedor(Database db, string propiedad)
+        {
+            var p = typeof(Database).GetProperty(propiedad, BindingFlags.Public | BindingFlags.Instance);
+            if (p == null || p.PropertyType != typeof(ObjectId)) return null;
+            var id = (ObjectId)p.GetValue(db);
+            return id.IsNull ? (ObjectId?)null : id;
+        }
+
+        /// <summary>params: [target] ("DATABASE", un nombre corto como "layers", o el handle de una
+        /// tabla, un diccionario o un bloque), [skip], [take]. Recorre los contenedores del dibujo:
+        /// tablas de símbolos (capas, estilos, bloques, tipos de línea...), diccionarios (layouts,
+        /// estilos de directriz y de tabla, materiales...) y el contenido de un bloque, con nombre y
+        /// handle: lo que hace falta para llegar con get/set_object_properties a cada uno.</summary>
+        public static JsonObject Children(Document doc, JsonObject pars)
+        {
+            string target = pars["target"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(target)) target = SeudoDb;
+            int skip = pars["skip"]?.GetValue<int>() ?? 0;
+            int take = pars["take"]?.GetValue<int>() ?? 500;
+            if (skip < 0 || take < 1 || take > 2000)
+                throw new ArgumentException("'skip' >= 0 y 'take' entre 1 y 2000.");
+            var db = doc.Database;
+
+            if (SeudoDb.Equals(target, StringComparison.OrdinalIgnoreCase))
+            {
+                var cont = new JsonObject();
+                foreach (var p in typeof(Database).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (p.PropertyType != typeof(ObjectId) || p.GetIndexParameters().Length > 0) continue;
+                    if (!p.Name.EndsWith("TableId") && !p.Name.EndsWith("DictionaryId")) continue;
+                    try
+                    {
+                        var id = (ObjectId)p.GetValue(db);
+                        if (!id.IsNull) cont[p.Name] = id.Handle.ToString();
+                    }
+                    catch (SysException) { }
+                }
+                var alias = new JsonObject();
+                foreach (var kv in Contenedores)
+                    if (IdDeContenedor(db, kv.Value).HasValue) alias[kv.Key] = kv.Value;
+                return new JsonObject
+                {
+                    ["target"] = SeudoDb, ["type"] = "Database", ["containers"] = cont, ["shortNames"] = alias,
+                    ["note"] = "Usá list_children con un nombre corto ('layers', 'blocks', 'layouts'...) o con el handle de un contenedor; " +
+                               "get/set_object_properties acepta 'DATABASE' para las propiedades de la base de datos."
+                };
+            }
+
+            ObjectId objetivo;
+            if (Contenedores.TryGetValue(target, out var propId))
+            {
+                var id = IdDeContenedor(db, propId);
+                if (!id.HasValue)
+                    throw new ArgumentException("Este dibujo no tiene '" + target + "' (" + propId + ").");
+                objetivo = id.Value;
+            }
+            else
+                objetivo = HandleHelper.GetObjectId(db, target);
+
+            var items = new JsonArray();
+            int total = 0;
+            string tipo, nombre = null;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var obj = tr.GetObject(objetivo, OpenMode.ForRead);
+                tipo = obj.GetType().Name;
+                if (obj is SymbolTable tabla)
+                {
+                    foreach (ObjectId rid in tabla)
+                    {
+                        if (rid.IsErased) continue;
+                        total++;
+                        if (total <= skip || items.Count >= take) continue;
+                        var rec = tr.GetObject(rid, OpenMode.ForRead) as SymbolTableRecord;
+                        items.Add(new JsonObject
+                        {
+                            ["name"] = rec?.Name, ["handle"] = rid.Handle.ToString(), ["type"] = rec?.GetType().Name
+                        });
+                    }
+                }
+                else if (obj is DBDictionary dic)
+                {
+                    foreach (DBDictionaryEntry e in dic)
+                    {
+                        total++;
+                        if (total <= skip || items.Count >= take) continue;
+                        var o2 = tr.GetObject(e.Value, OpenMode.ForRead);
+                        items.Add(new JsonObject
+                        {
+                            ["name"] = e.Key, ["handle"] = e.Value.Handle.ToString(), ["type"] = o2.GetType().Name
+                        });
+                    }
+                }
+                else if (obj is BlockTableRecord btr)
+                {
+                    nombre = btr.Name;
+                    foreach (ObjectId eid in btr)
+                    {
+                        if (eid.IsErased) continue;
+                        total++;
+                        if (total <= skip || items.Count >= take) continue;
+                        var ent = tr.GetObject(eid, OpenMode.ForRead) as Entity;
+                        items.Add(new JsonObject
+                        {
+                            ["handle"] = eid.Handle.ToString(), ["type"] = ent?.GetType().Name, ["layer"] = ent?.Layer
+                        });
+                    }
+                }
+                else
+                {
+                    tr.Abort();
+                    throw new ArgumentException(
+                        "'" + target + "' es un " + tipo + ", no un contenedor. Los contenedores son tablas de símbolos " +
+                        "(capas, estilos, bloques...), diccionarios (layouts, estilos de directriz...) y bloques.");
+                }
+                tr.Commit();
+            }
+            var r = new JsonObject
+            {
+                ["target"] = objetivo.Handle.ToString(), ["type"] = tipo, ["total"] = total, ["skip"] = skip,
+                ["returned"] = items.Count, ["items"] = items
+            };
+            if (nombre != null) r["name"] = nombre;
+            if (skip + items.Count < total) r["hasMore"] = true;
+            return r;
         }
 
         /// <summary>params: handle | type (nombre de clase, p.ej. "Polyline").</summary>

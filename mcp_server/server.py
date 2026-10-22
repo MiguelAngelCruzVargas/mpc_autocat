@@ -5585,6 +5585,28 @@ def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None,
     return r
 
 
+@mcp.tool()
+def list_children(target: str = "DATABASE", skip: int = 0, take: int = 500) -> dict[str, Any]:
+    """Recorre el CONTENIDO del dibujo: tablas, diccionarios y bloques, con nombre y
+    handle, para llegar con get/set_object_properties y call_object_method a cada
+    objeto (una capa, un estilo de cota, un layout, un material...).
+
+    target: 'DATABASE' (sin nada: los contenedores raíz y sus nombres cortos), un
+        nombre corto —layers, textstyles, dimstyles, linetypes, blocks, regapps, ucs,
+        views, viewports, layouts, mleaderstyles, tablestyles, mlinestyles, materials,
+        visualstyles, groups, named, plotsettings, plotstyles— o el handle de una tabla,
+        un diccionario o un bloque (de un bloque devuelve sus entidades).
+    Ej.: list_children('layers') -> [{name, handle, type}...]; después
+        set_object_properties([handle_de_la_capa], {'IsFrozen': true}).
+        list_children('blocks') incluye '*Model_Space' y '*Paper_Space*': su handle
+        lista las entidades de ese espacio.
+    skip / take: paginación (500 por default, máximo 2000).
+    'DATABASE' también vale como handle en get_object_properties /
+    set_object_properties: las propiedades de la base de datos del dibujo
+    (unidades, escalas, variables de cota por defecto...)."""
+    return _prop(prop_mod.list_children, target, skip, take)
+
+
 def _prop(fn, *args, **kw) -> dict[str, Any]:
     try:
         return fn(*args, **kw)

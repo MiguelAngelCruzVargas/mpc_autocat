@@ -21,6 +21,7 @@ import autocad_client as acad
 _HANDLE = re.compile(r"^[0-9A-Fa-f]{1,16}$")
 MAX_OBJETOS = 500
 MAX_PROPIEDADES = 60
+SEUDO_DB = "DATABASE"
 
 
 class PropiedadesError(ValueError):
@@ -38,8 +39,12 @@ def _handles(handles: Any, un_handle: Any = None) -> list[str]:
         raise PropiedadesError(f"Máximo {MAX_OBJETOS} objetos por llamada (llegaron {len(handles)}).")
     salida: list[str] = []
     for h in handles:
+        if isinstance(h, str) and h.strip().upper() == SEUDO_DB:
+            if SEUDO_DB not in salida:
+                salida.append(SEUDO_DB)
+            continue
         if not isinstance(h, str) or not _HANDLE.match(h.strip()):
-            raise PropiedadesError(f"{h!r} no es un handle hexadecimal (el que devuelven los create_* y list_entities).")
+            raise PropiedadesError(f"{h!r} no es un handle hexadecimal (el que devuelven los create_* y list_entities) ni 'DATABASE'.")
         h = h.strip().upper()
         if h not in salida:
             salida.append(h)
@@ -99,3 +104,24 @@ def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None)
         if v is None:
             raise PropiedadesError(f"'{k}': el valor no puede ser null.")
     return acad.call("create_object", {"type": entity_type, "properties": properties})
+
+
+_NOMBRES_CORTOS = ("layers", "textstyles", "dimstyles", "linetypes", "blocks", "regapps", "ucs", "views",
+                   "viewports", "layouts", "mleaderstyles", "tablestyles", "mlinestyles", "materials",
+                   "visualstyles", "groups", "named", "plotsettings", "plotstyles")
+
+
+def list_children(target: str = SEUDO_DB, skip: int = 0, take: int = 500) -> dict[str, Any]:
+    if not isinstance(target, str) or not target.strip():
+        raise PropiedadesError("'target' es 'DATABASE', un nombre corto ('layers', 'blocks'...) o un handle.")
+    target = target.strip()
+    t = target.upper()
+    if t != SEUDO_DB and target.lower() not in _NOMBRES_CORTOS and not _HANDLE.match(target):
+        raise PropiedadesError(f"'{target}' no es 'DATABASE', ni un nombre corto ({', '.join(_NOMBRES_CORTOS)}), ni un handle.")
+    if not isinstance(skip, int) or isinstance(skip, bool) or skip < 0:
+        raise PropiedadesError("'skip' tiene que ser un entero >= 0.")
+    if not isinstance(take, int) or isinstance(take, bool) or not 1 <= take <= 2000:
+        raise PropiedadesError("'take' tiene que ser un entero entre 1 y 2000.")
+    return acad.call("list_children", {"target": SEUDO_DB if t == SEUDO_DB else
+                                       (target.lower() if target.lower() in _NOMBRES_CORTOS else target.upper()),
+                                       "skip": skip, "take": take})

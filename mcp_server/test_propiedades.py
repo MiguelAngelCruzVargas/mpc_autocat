@@ -119,6 +119,24 @@ def main() -> int:
         server.acad.call = real
     check("...y borra la entidad vacía", llamadas[-1], ("delete_entity", {"handle": "AB"}))
 
+    # ---- list_children y el seudo-objeto DATABASE
+    r, ll = con_plugin(lambda: server.list_children())
+    check("list_children sin nada: la raiz", ll[0], ("list_children", {"target": "DATABASE", "skip": 0, "take": 500}))
+    r, ll = con_plugin(lambda: server.list_children("Layers", 10, 50))
+    check("nombre corto en minuscula", ll[0][1], {"target": "layers", "skip": 10, "take": 50})
+    r, ll = con_plugin(lambda: server.list_children("3e5c"))
+    check("handle en mayuscula", ll[0][1]["target"], "3E5C")
+    r, ll = con_plugin(lambda: server.list_children("database"))
+    check("database en cualquier caso", ll[0][1]["target"], "DATABASE")
+    rechazada("list_children con un nombre desconocido", lambda: server.list_children("capas"))
+    rechazada("list_children con skip negativo", lambda: server.list_children("layers", -1))
+    rechazada("list_children con take enorme", lambda: server.list_children("layers", 0, 5000))
+    rechazada("list_children con target vacio", lambda: server.list_children(""))
+    r, ll = con_plugin(lambda: server.get_object_properties(["database", "A1"], ["Ltscale"]))
+    check("get acepta DATABASE junto a handles", ll[0][1]["handles"], ["DATABASE", "A1"])
+    r, ll = con_plugin(lambda: server.set_object_properties(["DATABASE"], {"Ltscale": 2.0}))
+    check("set acepta DATABASE", ll[0][1]["handles"], ["DATABASE"])
+
     # ---- sesión: leer es de lectura; cambiar no se reintenta
     check("get_properties es de lectura", session.retry_safe("get_properties"), True)
     check("list_properties es de lectura", session.retry_safe("list_properties"), True)

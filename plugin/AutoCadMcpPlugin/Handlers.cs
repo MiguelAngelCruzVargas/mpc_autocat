@@ -194,6 +194,8 @@ namespace AutoCadMcpPlugin
                     return PropertiesCommands.Get(doc, pars);
                 case "set_properties":
                     return PropertiesCommands.Set(doc, pars);
+                case "list_children":
+                    return PropertiesCommands.Children(doc, pars);
                 case "create_object":
                     return PropertiesCommands.Create(doc, pars);
                 case "list_properties":
