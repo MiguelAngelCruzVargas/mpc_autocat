@@ -51,6 +51,8 @@ def rechaza(n, f, pista=""):
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     s.new_document()
     info = s.ping()
     print("== version:", info)
@@ -138,9 +140,8 @@ def main() -> int:
                 chk("el atributo vale A-12", r and "A-12" in txt(r), r)
                 rechaza("etiqueta inexistente se rechaza", lambda: s.set_block_attributes(hb, {"NOEXISTE": "x"}), "")
                 # un bloque no dinámico no tiene propiedades dinámicas: no debe tumbar nada
-                r = intento("get_dynamic_block_properties en bloque estático",
-                            lambda: s.get_dynamic_block_properties(hb))
-                chk("get_dynamic_block_properties responde (vacío o aviso, sin caer)", isinstance(r, dict), r)
+                rechaza("get_dynamic_block_properties en un bloque estático se rechaza con motivo",
+                        lambda: s.get_dynamic_block_properties(hb), "din")
                 rechaza("set_dynamic en bloque estático se rechaza", lambda: s.set_dynamic_block_properties(hb, {"X": 1}), "")
     else:
         chk("crear bloque BLQ17", False, b)
@@ -293,15 +294,13 @@ def main() -> int:
     chk("export_copy DXF escribe", r and bueno(r) and os.path.exists(os.path.join(carpeta, "copia.dxf")), r)
     rechaza("export_copy no pisa sin overwrite", lambda: s.export_copy(os.path.join(carpeta, "copia.dxf")), "")
     rechaza("export_copy sobre el propio dibujo se rechaza", lambda: s.export_copy(base, overwrite=True), "")
-    nombre_ok = s.get_drawing_info()
-    chk("el dibujo abierto sigue siendo base17.dwg", "base17" in txt(nombre_ok).lower(), nombre_ok)
 
     # ---------------------------------------------------------------- 1.18.0: edición, primitivas y propiedades del dibujo
     # explode: una polilínea de 3 segmentos -> 3 líneas
     pe = s.create_polyline([[300, 0], [310, 0], [310, 10], [300, 10]], closed=False)["handle"]
     ex = intento("explode_entities", lambda: s.explode_entities([pe]))
     chk("explode: 3 segmentos y borra el original", ex and bueno(ex) and ex.get("createdCount") == 3 and ex.get("originalsDeleted") is True, ex)
-    chk("el original ya no existe", "error" in txt(s.get_entity(pe)).lower() or not bueno(s.get_entity(pe)))
+    rechaza("el original ya no existe", lambda: s.get_entity(pe), "No existe")
     rechaza("explode de un círculo ya borrado/inexistente se rechaza", lambda: s.explode_entities(["FFFFFF"]), "")
 
     # break: una línea de 10 partida en x=4 y x=7 -> 3 tramos

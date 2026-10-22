@@ -554,8 +554,19 @@ namespace AutoCadMcpPlugin.Commands
         private static readonly HashSet<string> NoCreables = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "Viewport", "OleFrame", "Ole2Frame", "ProxyEntity", "RasterImage", "Wipeout", "DgnUnderlay",
-            "DwfUnderlay", "PdfUnderlay", "Underlay", "PointCloudEx", "AttributeReference", "Mline"
+            "DwfUnderlay", "PdfUnderlay", "Underlay", "PointCloudEx", "AttributeReference", "Mline",
+            // Nacen NULOS (IsNull = true en la API descompilada: Ellipse.IsNull, Spline.IsNull) y agregar uno
+            // nulo al dibujo es una violación de acceso que CIERRA AutoCAD (pasó en vivo con Ellipse): se
+            // construyen con su constructor real, en tools propias.
+            "Ellipse", "Spline"
         };
+
+        private static string PistaNoCreable(string tipo)
+        {
+            if (tipo.Equals("Ellipse", StringComparison.OrdinalIgnoreCase)) return " Una elipse recién construida es NULA y agregarla tumba AutoCAD: usá create_ellipse.";
+            if (tipo.Equals("Spline", StringComparison.OrdinalIgnoreCase)) return " Una spline recién construida es NULA y agregarla tumba AutoCAD: usá create_spline.";
+            return "";
+        }
 
         /// <summary>params: type (clase de entidad, p.ej. "Solid3d", "Circle"), [properties].
         /// Crea una entidad VACÍA o con esas propiedades y la agrega al espacio activo. Para lo que no
@@ -573,7 +584,7 @@ namespace AutoCadMcpPlugin.Commands
             if (t == null || !typeof(Entity).IsAssignableFrom(t))
                 throw new ArgumentException("'" + nombre + "' no es una clase de entidad de DatabaseServices (Line, Circle, Solid3d, DBText...).");
             if (t.IsAbstract || NoCreables.Contains(t.Name))
-                throw new ArgumentException("No se puede crear un " + t.Name + " de la nada con esta capa.");
+                throw new ArgumentException("No se puede crear un " + t.Name + " de la nada con esta capa." + PistaNoCreable(t.Name));
             if (t.GetConstructor(Type.EmptyTypes) == null)
                 throw new ArgumentException(t.Name + " no tiene constructor sin parámetros.");
 

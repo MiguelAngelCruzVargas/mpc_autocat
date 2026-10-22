@@ -77,7 +77,7 @@ def main() -> int:
 
     # ---- elipse, líneas, punto
     e = prim.elipse(1, 2, 3, 0, 0.5)
-    check("elipse: Ellipse.Set con 6 argumentos", (e["entity_type"], e["init_method"], len(e["init_args"])), ("Ellipse", "Set", 6))
+    check("elipse: parámetros del comando create_ellipse", (e["cx"], e["cy"], e["major_x"], e["ratio"]), (1.0, 2.0, 3.0, 0.5))
     rechaza("elipse con relación 0", lambda: prim.elipse(0, 0, 3, 0, 0))
     rechaza("elipse con relación mayor que 1", lambda: prim.elipse(0, 0, 3, 0, 1.5))
     rechaza("elipse con eje mayor nulo", lambda: prim.elipse(0, 0, 0, 0, 0.5))
@@ -98,7 +98,7 @@ def main() -> int:
     r, ll = con_plugin(lambda: server.create_polygon(5, 0, 0, 2))
     check("create_polygon -> 5 vértices y vertexRadius", (len(ll[0][1]["points"]), r.get("vertexRadius")), (5, 2.0))
     r, ll = con_plugin(lambda: server.create_ellipse(0, 0, 4, 0, 0.5, layer="EJES"))
-    check("create_ellipse -> create_object Ellipse", (ll[0][0], "Ellipse" in str(ll[0][1])), ("create_object", True))
+    check("create_ellipse -> comando propio con la capa", (ll[0][0], ll[0][1].get("layer"), ll[0][1].get("ratio")), ("create_ellipse", "EJES", 0.5))
     r, ll = con_plugin(lambda: server.create_construction_line(0, 0, 1, 1))
     check("create_construction_line por defecto es Xline", "Xline" in str(ll[0][1]), True)
     r, ll = con_plugin(lambda: server.create_construction_line(0, 0, 1, 1, infinite_both_ways=False))

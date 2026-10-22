@@ -485,6 +485,17 @@ Más de 1.18.0, también sin probar en vivo:
 
 **La API que usa este proyecto es estable de 2019 a 2027.** `tools/api_diff.py` compara miembro por miembro los ensamblados de referencia de las nueve versiones (informe en `Desktop\Autodesk_descompilado\notas\J_api_por_version.md`): los 66 miembros que el plugin llama por nombre existen en todas; lo que cambia entre versiones son clases de interfaz (bloques, paletas, nube) y, en `Application`, la desaparición de `IsSteelInstalled` en 2021. Los saltos grandes de métodos 2024→2025 y 2026→2027 son un efecto del descompilado de los paquetes ModPlus (net8), no cambios reales.
 
+## 3.sexies-sexies Los ojos: `diagnose_autocad` y por qué ya no hay que adivinar qué pasó
+
+Antes, ante un timeout o un AutoCAD cerrado, lo único que había era «no se pudo conectar» y quien llamaba gastaba turnos averiguando (¿diálogo abierto? ¿se cayó? ¿qué comando fue?). Pasó en vivo con `list_plot_options`: AutoCAD mostró «INTERNAL ERROR: !dbobji.cpp@8673: eNotOpenForWrite» y se cerró; la causa era `PlotSettingsValidator.RefreshLists` sobre un layout abierto en LECTURA (modifica el objeto; en lectura no es una excepción sino una aserción fatal). Ahora la herramienta lo ve sola (`ojos.py`, `Bitacora.cs`):
+
+- **Desde afuera de AutoCAD** (así anda aun con AutoCAD bloqueado por un diálogo modal): las ventanas abiertas con su texto, `acad.err` (en el directorio de trabajo de `acad.exe`), volcados `.dmp` y `dialogos.log`.
+- **Desde adentro** (plugin 1.18.0): `Bitacora` deja en `%LOCALAPPDATA%\AutoCadMcp\ultimo_comando.json` el comando que está ejecutando («corriendo» → «ok»/«error»). Si AutoCAD muere, el que quedó «corriendo» es el culpable, aunque otro proceso lo haya mandado. No guarda el código de `run_code`.
+- **Del lado del servidor**: los últimos 40 comandos enviados con su resultado.
+- Las fallas de conexión y los cortes (`AutoCadConnectionError`, «se cortó la conexión», «cerró sin responder») traen pegado un `DIAGNÓSTICO:` con la conclusión en una frase («AutoCAD MURIÓ ejecutando «list_plot_options» … Error de AutoCAD: «eNotOpenForWrite»»). `diagnose_autocad()` lo da a pedido, y es lo PRIMERO que se llama ante un cuelgue, antes de repetir nada.
+
+Lo que NO ve todavía: la salida de la línea de comandos de AutoCAD (no hay evento administrado que la entregue; Autodesk la captura con código nativo). Solo lee: no cierra diálogos ni mata procesos.
+
 ## 3.septies Verificar una versión de AutoCAD en vivo: `mcp_server/verificar_version.py`
 
 Corre 31 comprobaciones sobre el AutoCAD abierto (consulta y agregados, variables de sistema, propiedades y métodos 2D, las cinco operaciones nativas con su `undo` verificado, y 3D: volumen real de sólidos, matriz, desfase, booleanas, corte, regiones y malla). Trabaja en un dibujo NUEVO descartable y lo cierra: **no usarlo con un plano en curso.** Resultado (plugin 1.13.2): **31/31 en AutoCAD 2022 y 31/31 en AutoCAD 2027.** Para otra versión (2019-2021, 2023-2026): abrirla con el bundle instalado (`tools/install_bundle.ps1`) y correr el script; es lo que falta para poder decir «probado» y no solo «compila» (`tools/matriz_api.py`).

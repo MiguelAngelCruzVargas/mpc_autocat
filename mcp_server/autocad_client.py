@@ -12,6 +12,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+import ojos
 import session
 
 HOST = os.environ.get("ACAD_MCP_HOST", "127.0.0.1")
@@ -225,6 +226,7 @@ def _do_call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any
         params["_live"] = True          # el plugin repinta tras cada comando
     request = {"id": str(uuid.uuid4()), "cmd": cmd, "params": params}
     payload = (json.dumps(request) + "\n").encode("utf-8")
+    ficha = ojos.anotar_envio(cmd, params)
 
     # Se relee en cada llamada: si AutoCAD se reinició y quedó en otro puerto,
     # la siguiente llamada lo encuentra sin tener que reiniciar este proceso.
@@ -234,13 +236,14 @@ def _do_call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any
         sock = socket.create_connection((HOST, port), timeout=TIMEOUT)
     except (ConnectionRefusedError, socket.timeout, OSError) as exc:
         # Conexión jamás establecida: seguro de reintentar para todo comando.
+        ojos.anotar_fin(ficha, "sin conexión", str(exc))
         raise AutoCadConnectionError(
             f"No se pudo conectar al plugin de AutoCAD en {HOST}:{port}. "
             "¿Está AutoCAD abierto con el plugin cargado? "
             "Si AutoCAD está abierto, fijate en su línea de comandos si el "
             "plugin avisó de un error al iniciar el servidor: el puerto puede "
             "estar ocupado por otro programa. "
-            f"Detalle: {exc}"
+            f"Detalle: {exc} " + ojos.resumen_para_error()
         ) from exc
 
     try:
@@ -256,14 +259,16 @@ def _do_call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any
     except (socket.timeout, OSError) as exc:
         # Acá el request pudo haber llegado: NO es un error "de conexión"
         # (reintentable a ciegas), aunque la causa sea de red.
+        ojos.anotar_fin(ficha, "cortado", str(exc))
         raise AutoCadError(
             f"Se cortó la conexión con el plugin de AutoCAD ({exc}). El "
             "comando pudo haberse ejecutado igual: verificá antes de repetir "
-            "uno que dibuje."
+            "uno que dibuje. " + ojos.resumen_para_error()
         ) from exc
 
     if not buffer:
-        raise AutoCadError("El plugin de AutoCAD cerró la conexión sin responder.")
+        ojos.anotar_fin(ficha, "sin respuesta")
+        raise AutoCadError("El plugin de AutoCAD cerró la conexión sin responder. " + ojos.resumen_para_error())
 
     try:
         response = json.loads(buffer.decode("utf-8"))
@@ -274,7 +279,9 @@ def _do_call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any
         ) from exc
 
     if not response.get("ok"):
+        ojos.anotar_fin(ficha, "error", str(response.get("error", "")))
         raise AutoCadError(response.get("error", "Error desconocido en el plugin de AutoCAD."))
+    ojos.anotar_fin(ficha, "ok")
     # session lleva la cuenta de lo dibujado sin guardar y avisa cruzado el
     # umbral — el aviso viaja en el resultado del propio comando que dibujó.
     return session.after_call(cmd, request["params"], response.get("result", {}))

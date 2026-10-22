@@ -112,7 +112,7 @@ namespace AutoCadMcpPlugin
                         // tira eLockViolation. Estos comandos no tocan la
                         // Database del documento actual, asi que no lo
                         // necesitan.
-                        tcs.SetResult(Handlers.Execute(cmd, doc, pars));
+                        tcs.SetResult(Bitacora.Ejecutar(cmd, () => Handlers.Execute(cmd, doc, pars), pars));
                         return;
                     }
                     // El activo se relee ACÁ, en el hilo principal: entre que
@@ -155,7 +155,7 @@ namespace AutoCadMcpPlugin
                         JsonObject r;
                         try
                         {
-                            r = Handlers.Execute(cmd, actual, pars);
+                            r = Bitacora.Ejecutar(cmd, () => Handlers.Execute(cmd, actual, pars), pars);
                         }
                         finally
                         {

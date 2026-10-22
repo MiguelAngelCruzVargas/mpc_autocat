@@ -22,6 +22,7 @@ import edicion as edicion_mod
 import propiedades as prop_mod
 import metodos as met_mod
 import bd_extra as bd_mod
+import ojos as ojos_mod
 import primitivas as prim_mod
 import electrical as elec_mod
 import engine as engine_mod
@@ -5977,6 +5978,8 @@ def export_copy(path: str, version: str = "2018", precision: int = 16, overwrite
     del DXF (0-16). En DWG se vuelve a leer la copia y se comparan entidades del modelo y
     láminas con el original (campo verify). overwrite=True para pisar un archivo existente.
     Para guardar el plano de trabajo es save_drawing."""
+    if _mismo_archivo(path, session_mod.last_save_path()):
+        return {"ok": False, "error": "Esa es la ruta del dibujo de trabajo (la última guardada en esta sesión): para eso está save_drawing."}
     return _bd(bd_mod.export_copy, path, version, precision, overwrite)
 
 
@@ -6128,10 +6131,14 @@ def create_ellipse(cx: float, cy: float, major_x: float, major_y: float, ratio: 
     del eje mayor; ratio = eje menor / eje mayor (0 a 1); start_rad/end_rad en radianes
     (por defecto la elipse completa). layer: capa EXISTENTE."""
     try:
-        spec = prim_mod.con_capa(prim_mod.elipse(cx, cy, major_x, major_y, ratio, start_rad, end_rad), layer)
+        spec = prim_mod.elipse(cx, cy, major_x, major_y, ratio, start_rad, end_rad)
+        if layer is not None:
+            if not isinstance(layer, str) or not layer.strip():
+                raise prim_mod.PrimitivaError("'layer' es el nombre de una capa existente.")
+            spec["layer"] = layer.strip()
     except prim_mod.PrimitivaError as exc:
         return {"ok": False, "error": str(exc)}
-    return create_object(spec["entity_type"], spec.get("properties"), spec["init_method"], spec["init_args"])
+    return acad.call("create_ellipse", spec)
 
 
 @mcp.tool()
@@ -6208,6 +6215,21 @@ def loft_solid(sections: list[str], guides: Optional[list[str]] = None, path: Op
     rectos; closed=True cierra del último al primero. Opcional: guides (curvas guía) o path
     (trayectoria), no ambas."""
     return _bd(bd_mod.loft_solid, sections, guides, path, ruled, closed, delete_sources, layer)
+
+
+@mcp.tool()
+def diagnose_autocad(recent_commands: int = 8, lookback_minutes: float = 15.0) -> dict[str, Any]:
+    """LOS OJOS: qué le pasó a AutoCAD, mirado desde afuera (funciona aunque AutoCAD esté bloqueado
+    por un diálogo y el plugin no conteste). Llamala cuando un comando se cuelga, da timeout o
+    AutoCAD se cierra, ANTES de adivinar o de repetir nada.
+
+    Devuelve: si AutoCAD está abierto; los diálogos abiertos con su texto (p.ej. «AutoCAD Error
+    Aborting: INTERNAL ERROR…»); lo que dejó escrito al caerse (`acad.err`, volcados .dmp, registro
+    de diálogos del plugin); los últimos comandos que este servidor le mandó y cómo terminó cada
+    uno (el culpable casi siempre es uno de los últimos); y una `conclusion` en una frase.
+    Solo lee: no cierra diálogos ni toca procesos. Las fallas de conexión y los cortes ya traen
+    este diagnóstico pegado al mensaje."""
+    return ojos_mod.diagnostico(max(1, min(int(recent_commands), 40)), max(1.0, float(lookback_minutes)) * 60.0)
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:

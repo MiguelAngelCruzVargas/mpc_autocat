@@ -72,8 +72,7 @@ def elipse(cx: float, cy: float, eje_mayor_x: float, eje_mayor_y: float, relacio
     a, b = _num(inicio_rad, "start_rad"), _num(fin_rad, "end_rad")
     if not 0 <= a < 2 * math.pi + 1e-9 or not 0 < b <= 2 * math.pi + 1e-9 or b <= a:
         raise PrimitivaError("Los ángulos van de 0 a 2π (en radianes) y el final tiene que ser mayor que el inicio.")
-    return {"entity_type": "Ellipse", "init_method": "Set",
-            "init_args": [[cx, cy, 0.0], [0.0, 0.0, 1.0], [mx, my, 0.0], rr, a, b]}
+    return {"cx": cx, "cy": cy, "major_x": mx, "major_y": my, "ratio": rr, "start_rad": a, "end_rad": b}
 
 
 def linea_infinita(tipo: str, x: float, y: float, dx: float, dy: float) -> dict[str, Any]:

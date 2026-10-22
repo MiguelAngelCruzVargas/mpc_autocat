@@ -20,6 +20,8 @@ namespace AutoCadMcpPlugin
                     return CreateLineCommand.Run(doc, pars);
                 case "create_polyline":
                     return CreatePolylineCommand.Run(doc, pars);
+                case "create_ellipse":
+                    return CreateEllipseCommand.Run(doc, pars);
                 case "create_circle":
                     return CreateCircleCommand.Run(doc, pars);
                 case "create_arc":

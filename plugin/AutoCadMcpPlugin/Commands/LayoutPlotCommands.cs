@@ -82,19 +82,24 @@ namespace AutoCadMcpPlugin.Commands
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 var layout = Buscar(tr, db, nombre, OpenMode.ForRead);
-                psv.RefreshLists(layout);
-                var r = new JsonObject
+                // RefreshLists MODIFICA el objeto que recibe (necesita escritura): sobre un layout abierto en lectura es una
+                // aserción interna fatal de AutoCAD (eNotOpenForWrite en dbobji.cpp), no una excepción. Se trabaja sobre una
+                // COPIA suelta (PlotSettings fuera de la base), que el layout nunca ve.
+                var r = new JsonObject();
+                using (var copia = new PlotSettings(layout.ModelType))
                 {
-                    ["layout"] = nombre,
-                    ["devices"] = Lista(psv.GetPlotDeviceList()),
-                    ["media"] = Lista(psv.GetCanonicalMediaNameList(layout)),
-                    ["styleSheets"] = Lista(psv.GetPlotStyleSheetList()),
-                    ["plotTypes"] = new JsonArray(Enum.GetNames(typeof(PlotType)).Select(x => (JsonNode)JsonValue.Create(x)).ToArray()),
-                    ["rotations"] = new JsonArray(Enum.GetNames(typeof(PlotRotation)).Select(x => (JsonNode)JsonValue.Create(x)).ToArray()),
-                    ["paperUnits"] = new JsonArray(Enum.GetNames(typeof(PlotPaperUnit)).Select(x => (JsonNode)JsonValue.Create(x)).ToArray()),
-                    ["standardScales"] = new JsonArray(Enum.GetNames(typeof(StdScaleType)).Select(x => (JsonNode)JsonValue.Create(x)).ToArray()),
-                    ["current"] = Estado(layout),
-                };
+                    copia.CopyFrom(layout);
+                    psv.RefreshLists(copia);
+                    r["layout"] = nombre;
+                    r["devices"] = Lista(psv.GetPlotDeviceList());
+                    r["media"] = Lista(psv.GetCanonicalMediaNameList(copia));
+                    r["styleSheets"] = Lista(psv.GetPlotStyleSheetList());
+                }
+                r["plotTypes"] = new JsonArray(Enum.GetNames(typeof(PlotType)).Select(x => (JsonNode)JsonValue.Create(x)).ToArray());
+                r["rotations"] = new JsonArray(Enum.GetNames(typeof(PlotRotation)).Select(x => (JsonNode)JsonValue.Create(x)).ToArray());
+                r["paperUnits"] = new JsonArray(Enum.GetNames(typeof(PlotPaperUnit)).Select(x => (JsonNode)JsonValue.Create(x)).ToArray());
+                r["standardScales"] = new JsonArray(Enum.GetNames(typeof(StdScaleType)).Select(x => (JsonNode)JsonValue.Create(x)).ToArray());
+                r["current"] = Estado(layout);
                 tr.Commit();
                 return r;
             }
@@ -151,14 +156,12 @@ namespace AutoCadMcpPlugin.Commands
                             papel = null;
                         if (papel != null) psv.SetCanonicalMediaName(layout, papel);
                     }
-                    if (pars["paper_units"] != null)
-                        psv.SetPlotPaperUnits(layout, Enumeracion<PlotPaperUnit>(pars["paper_units"], "paper_units"));
-                    if (pars["rotation"] != null)
-                        psv.SetPlotRotation(layout, Enumeracion<PlotRotation>(pars["rotation"], "rotation"));
-                    if (pars["centered"] != null)
-                        psv.SetPlotCentered(layout, pars["centered"].GetValue<bool>());
-                    if (pars["plot_type"] != null)
+                    if (pars["plot_type"] != null && pars["window"] == null)
+                    {
+                        if (pars["plot_type"].GetValue<string>() == "Window")
+                            throw new ArgumentException("plot_type=Window necesita también 'window' ([[x1,y1],[x2,y2]]): sin el área AutoCAD lo rechaza.");
                         psv.SetPlotType(layout, Enumeracion<PlotType>(pars["plot_type"], "plot_type"));
+                    }
                     if (pars["window"] != null)
                     {
                         var w = pars["window"] as JsonArray;
@@ -166,9 +169,16 @@ namespace AutoCadMcpPlugin.Commands
                             throw new ArgumentException("'window' es [[x1, y1], [x2, y2]].");
                         double x1 = a[0].GetValue<double>(), y1 = a[1].GetValue<double>(), x2 = b[0].GetValue<double>(), y2 = b[1].GetValue<double>();
                         if (x1 == x2 || y1 == y2) throw new ArgumentException("'window' tiene que tener área.");
-                        psv.SetPlotType(layout, PlotType.Window);
+                        // El área va ANTES que el tipo: SetPlotType(Window) sin área definida da eInvalidInput.
                         psv.SetPlotWindowArea(layout, new Extents2d(Math.Min(x1, x2), Math.Min(y1, y2), Math.Max(x1, x2), Math.Max(y1, y2)));
+                        psv.SetPlotType(layout, PlotType.Window);
                     }
+                    if (pars["paper_units"] != null)
+                        psv.SetPlotPaperUnits(layout, Enumeracion<PlotPaperUnit>(pars["paper_units"], "paper_units"));
+                    if (pars["rotation"] != null)
+                        psv.SetPlotRotation(layout, Enumeracion<PlotRotation>(pars["rotation"], "rotation"));
+                    if (pars["centered"] != null)
+                        psv.SetPlotCentered(layout, pars["centered"].GetValue<bool>());
                     if (pars["scale"] != null)
                     {
                         var sc = pars["scale"];
