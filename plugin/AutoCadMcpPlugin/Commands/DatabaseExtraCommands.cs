@@ -82,7 +82,7 @@ namespace AutoCadMcpPlugin.Commands
                     pedidos.Add(kk.ToLowerInvariant());
                 }
             }
-            else pedidos.AddRange(OrdenPurga);
+            else pedidos.AddRange(OrdenPurga.Where(k => k != "ucs" && k != "view"));   // PURGE de AutoCAD no toca vistas ni UCS con nombre
             var orden = OrdenPurga.Where(pedidos.Contains).ToList();
             bool simulacro = pars["dry_run"]?.GetValue<bool>() ?? false;
 
@@ -114,6 +114,7 @@ namespace AutoCadMcpPlugin.Commands
                                 var rec = tr.GetObject(rid, OpenMode.ForRead) as SymbolTableRecord;
                                 if (rec == null) continue;
                                 string nombre = rec.Name;
+                                if (rec.IsDependent) continue;                 // XREF|CAPA: no es del dibujo
                                 if (nombre.StartsWith("*") || info.Protegidos.Any(x => x.Equals(nombre, StringComparison.OrdinalIgnoreCase)))
                                     continue;
                                 candidatos.Add(rid);
@@ -330,10 +331,11 @@ namespace AutoCadMcpPlugin.Commands
                     if (!dic.Contains(nombre))
                         throw new ArgumentException("No hay un grupo llamado '" + nombre + "'.");
                     var g = (Group)tr.GetObject(dic.GetAt(nombre), OpenMode.ForWrite);
+                    var miembros = new HashSet<ObjectId>(g.GetAllEntityIds());
                     foreach (var id in quitar)
-                        if (g.GetIndex(id) >= 0) g.Remove(id);
+                        if (miembros.Remove(id)) g.Remove(id);
                     foreach (var id in agregar)
-                        if (g.GetIndex(id) < 0) g.Append(id);
+                        if (miembros.Add(id)) g.Append(id);
                     if (descripcion != null) g.Description = descripcion;
                     if (seleccionable.HasValue) g.Selectable = seleccionable.Value;
                     total = g.NumEntities;
@@ -502,7 +504,7 @@ namespace AutoCadMcpPlugin.Commands
                 try
                 {
                     AsegurarApp(tr, db, app);
-                    var obj = tr.GetObject(id, OpenMode.ForWrite);
+                    var obj = tr.GetObject(id, OpenMode.ForWrite, false, true);
                     using (var rb = new ResultBuffer(tvs.ToArray()))
                         obj.XData = rb;
                     tr.Commit();
@@ -542,7 +544,7 @@ namespace AutoCadMcpPlugin.Commands
             {
                 try
                 {
-                    var obj = tr.GetObject(id, OpenMode.ForWrite);
+                    var obj = tr.GetObject(id, OpenMode.ForWrite, false, true);
                     using (var rb = new ResultBuffer(new TypedValue(1001, app)))
                         obj.XData = rb;               // solo el nombre de la app: borra sus datos
                     tr.Commit();
@@ -568,6 +570,13 @@ namespace AutoCadMcpPlugin.Commands
             { 1, "text" }, { 10, "point" }, { 40, "real" }, { 70, "int16" }, { 90, "int" }, { 290, "bool" },
         };
 
+        private static int EnteroEnRango(double v, double min, double max, string cual)
+        {
+            if (v != Math.Floor(v)) throw new ArgumentException("'" + cual + "' tiene que ser un entero, no " + v + ".");
+            if (v < min || v > max) throw new ArgumentException("'" + cual + "' va de " + min + " a " + max + "; " + v + " no entra.");
+            return (int)v;
+        }
+
         internal static TypedValue ValorXrecord(JsonNode n)
         {
             if (n is JsonObject o)
@@ -578,8 +587,8 @@ namespace AutoCadMcpPlugin.Commands
                 {
                     case "text": return ValorXrecord(JsonValue.Create(kv.Value?.GetValue<string>() ?? throw new ArgumentException("text es un texto.")));
                     case "real": return new TypedValue(40, Real(kv.Value, "real"));
-                    case "int": return new TypedValue(90, (int)Real(kv.Value, "int"));
-                    case "int16": return new TypedValue(70, (short)Real(kv.Value, "int16"));
+                    case "int": return new TypedValue(90, EnteroEnRango(Real(kv.Value, "int"), int.MinValue, int.MaxValue, "int"));
+                    case "int16": return new TypedValue(70, (short)EnteroEnRango(Real(kv.Value, "int16"), short.MinValue, short.MaxValue, "int16"));
                     case "bool": return new TypedValue(290, kv.Value.GetValue<bool>());
                     case "point": return new TypedValue(10, Punto(kv.Value, "point"));
                 }
@@ -648,7 +657,7 @@ namespace AutoCadMcpPlugin.Commands
             {
                 try
                 {
-                    var obj = tr.GetObject(id, OpenMode.ForWrite);
+                    var obj = tr.GetObject(id, OpenMode.ForWrite, false, true);
                     if (obj.ExtensionDictionary.IsNull) obj.CreateExtensionDictionary();
                     var dic = (DBDictionary)tr.GetObject(obj.ExtensionDictionary, OpenMode.ForWrite);
                     var xr = new Xrecord();
@@ -751,6 +760,9 @@ namespace AutoCadMcpPlugin.Commands
                     foreach (ObjectId aid in br.AttributeCollection)
                     {
                         var ar = (AttributeReference)tr.GetObject(aid, OpenMode.ForRead);
+                        if (porTag.ContainsKey(ar.Tag))
+                            throw new InvalidOperationException("El bloque tiene dos atributos con la etiqueta '" + ar.Tag +
+                                "': no se sabe cuál cambiar. No se modificó nada.");
                         porTag[ar.Tag] = aid;
                     }
                     foreach (var kv in pedidos)
@@ -761,9 +773,11 @@ namespace AutoCadMcpPlugin.Commands
                     {
                         string nuevo = kv.Value is JsonValue v && v.TryGetValue<string>(out var s) ? s : kv.Value?.ToJsonString();
                         if (nuevo == null) throw new ArgumentException("El valor de '" + kv.Key + "' no puede ser null.");
-                        var ar = (AttributeReference)tr.GetObject(porTag[kv.Key], OpenMode.ForWrite);
+                        var ar = (AttributeReference)tr.GetObject(porTag[kv.Key], OpenMode.ForWrite, false, true);
                         string antes = ar.TextString;
                         ar.TextString = nuevo;
+                        if (ar.IsMTextAttribute) ar.UpdateMTextAttribute();
+                        ar.AdjustAlignment(doc.Database);
                         cambios[ar.Tag] = new JsonObject { ["before"] = antes, ["after"] = ar.TextString };
                     }
                     tr.Commit();

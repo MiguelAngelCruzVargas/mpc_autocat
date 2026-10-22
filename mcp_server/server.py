@@ -22,6 +22,7 @@ import edicion as edicion_mod
 import propiedades as prop_mod
 import metodos as met_mod
 import bd_extra as bd_mod
+import primitivas as prim_mod
 import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
@@ -5671,7 +5672,7 @@ def purge_database_objects(kinds: Optional[list[str]] = None, dry_run: bool = Fa
     y repite hasta que no quede nada purgable (borrar un bloque libera sus capas).
 
     kinds: lista de layer | textstyle | dimstyle | linetype | block | regapp | ucs | view;
-        sin lista, todos. Nunca toca la capa 0, Defpoints, Standard, ByBlock/ByLayer/
+        sin lista, todos menos ucs y view (como PURGE de AutoCAD: se piden explícitos). Nunca toca la capa 0, Defpoints, Standard, ByBlock/ByLayer/
         Continuous, los bloques que empiezan con * ni el actual de cada tipo.
     dry_run: solo informa lo purgable en la primera pasada (la cascada no se puede
         simular). Devuelve 'byKind' con los nombres, 'total' y 'passes'.
@@ -5993,6 +5994,220 @@ def copy_layout(name: str, new_name: str) -> dict[str, Any]:
     papel— con otro nombre: la forma de armar una serie (A-01, A-02...) desde una lámina ya
     resuelta. Después se ajustan los viewports con set_viewport_layers o compose_layout."""
     return _bd(bd_mod.copy_layout, name, new_name)
+
+
+@mcp.tool()
+@_con_pend
+def bind_xref(name: Optional[str] = None, names: Optional[list[str]] = None,
+              insert: bool = True) -> dict[str, Any]:
+    """Une un xref al dibujo (BIND/XBIND): deja de depender del archivo externo, ideal para
+    entregar un DWG autocontenido. Sin name/names une todos los xrefs resueltos.
+    insert=True (opción Insertar): sus capas, estilos y bloques se mezclan con los del
+    dibujo sin prefijo; insert=False (Unir): llevan el prefijo xref$0$ para no chocar con
+    los propios. Se rechaza un xref no resuelto (sin su archivo). Se puede deshacer con undo;
+    list_xrefs antes y después."""
+    return _bd(bd_mod.bind_xref, name, names, insert)
+
+
+@mcp.tool()
+@_con_pend
+def unload_xref(name: Optional[str] = None, names: Optional[list[str]] = None) -> dict[str, Any]:
+    """Descarga un xref de memoria sin quitarlo del dibujo (se vuelve a cargar con
+    reload_xref): alivia un dibujo pesado sin perder la referencia. Sin name/names, todos."""
+    return _bd(bd_mod.unload_xref, name, names)
+
+
+@mcp.tool()
+@_con_pend
+def get_drawing_properties() -> dict[str, Any]:
+    """Propiedades del dibujo (DWGPROPS): título, asunto, autor, palabras clave, comentarios,
+    base de hipervínculos, último guardado por, revisión y las propiedades personalizadas."""
+    return _bd(bd_mod.get_drawing_properties)
+
+
+@mcp.tool()
+@_con_pend
+def set_drawing_properties(title: Optional[str] = None, subject: Optional[str] = None,
+                           author: Optional[str] = None, keywords: Optional[str] = None,
+                           comments: Optional[str] = None, hyperlink_base: Optional[str] = None,
+                           custom: Optional[dict[str, Optional[str]]] = None) -> dict[str, Any]:
+    """Escribe las propiedades del dibujo: lo que el Explorador de Windows muestra del DWG y
+    lo que las listas de planos leen sin abrirlo (proyecto, autor, escuela...). Solo cambia
+    lo que se pasa. custom: {nombre: valor} agrega o cambia propiedades personalizadas
+    (p.ej. {"Obra": "Casa 9x12", "Lámina": "A-01"}); un valor null borra esa propiedad.
+    Se guardan con el dibujo: save_drawing después."""
+    return _bd(bd_mod.set_drawing_properties, title, subject, author, keywords, comments, hyperlink_base, custom)
+
+
+@mcp.tool()
+@_con_pend
+def explode_entities(handles: list[str], delete_original: bool = True) -> dict[str, Any]:
+    """Descompone entidades (EXPLODE): una polilínea en sus segmentos, un bloque en sus
+    entidades, una cota en líneas y texto, un achurado... Todo o nada: si una no se puede
+    descomponer, no se toca ninguna. No descompone xrefs (usá bind_xref antes). Devuelve los
+    handles de lo creado. delete_original=False deja los originales."""
+    return _bd(bd_mod.explode_entities, handles, delete_original)
+
+
+@mcp.tool()
+@_con_pend
+def break_curve(handle: str, points: list[list[float]]) -> dict[str, Any]:
+    """Parte una curva (línea, arco, círculo, polilínea, spline) en los puntos dados
+    (BREAK/split): cada punto se lleva a la curva. Una curva cerrada necesita al menos 2
+    puntos. Los tramos heredan capa, color, tipo de línea y grosor; el original se borra.
+    Devuelve los handles de los tramos."""
+    return _bd(bd_mod.break_curve, handle, points)
+
+
+@mcp.tool()
+@_con_pend
+def divide_curve(handle: str, count: Optional[int] = None, distance: Optional[float] = None,
+                 block: Optional[str] = None, align: bool = True, layer: Optional[str] = None) -> dict[str, Any]:
+    """Marca puntos sobre una curva: count=N la divide en N partes iguales (DIVIDE, N-1
+    marcas) y distance=d marca cada d desde el inicio (MEASURE). Sin block pone puntos (se ven
+    con set_system_variable PDMODE=3); con block inserta ese bloque en cada marca, girado según
+    la curva si align=True: columnas a eje, árboles en una hilera, luminarias en una calle."""
+    return _bd(bd_mod.divide_curve, handle, count, distance, block, align, layer)
+
+
+@mcp.tool()
+@_con_pend
+def create_boundary(point: list[float], islands: bool = True, layer: Optional[str] = None) -> dict[str, Any]:
+    """Traza el contorno cerrado que rodea un punto (BOUNDARY) y lo dibuja como polilínea
+    cerrada: de un recinto limitado por muros sale su polilínea interior, lista para
+    calculate_area o un achurado. islands=True detecta islas (columnas, huecos) como contornos
+    aparte. Mira lo que está a la vista en el espacio activo: haz zoom_window al recinto
+    antes. Falla con aviso si el recinto no está cerrado."""
+    return _bd(bd_mod.create_boundary, point, islands, layer)
+
+
+@mcp.tool()
+@_con_pend
+def match_properties(source: str, targets: list[str], properties: Optional[list[str]] = None) -> dict[str, Any]:
+    """Iguala propiedades a las de otra entidad (MATCHPROP). properties: layer | color |
+    linetype | linetype_scale | lineweight | transparency; sin lista usa SetPropertiesFrom,
+    que copia todo lo anterior más el estilo de trazado y la visibilidad."""
+    return _bd(bd_mod.match_properties, source, targets, properties)
+
+
+@mcp.tool()
+def create_rectangle(x1: float, y1: float, x2: float, y2: float, corner_radius: float = 0.0,
+                     layer: Optional[str] = None, lineweight: Optional[int] = None,
+                     color_index: Optional[int] = None) -> dict[str, Any]:
+    """Rectángulo (RECTANG) como polilínea cerrada, de una esquina a la opuesta, con esquinas
+    redondeadas si corner_radius > 0 (tiene que ser menor que la mitad del lado menor).
+    Para una pieza con medidas conocidas es más directo que armar los cuatro vértices."""
+    try:
+        g = prim_mod.rectangulo(x1, y1, x2, y2, corner_radius)
+    except prim_mod.PrimitivaError as exc:
+        return {"ok": False, "error": str(exc)}
+    return create_polyline(g["points"], True, layer, lineweight, color_index, g["bulges"])
+
+
+@mcp.tool()
+def create_polygon(sides: int, cx: float, cy: float, radius: float, circumscribed: bool = False,
+                   rotation_deg: float = 0.0, layer: Optional[str] = None, lineweight: Optional[int] = None,
+                   color_index: Optional[int] = None) -> dict[str, Any]:
+    """Polígono regular (POLYGON) como polilínea cerrada: 3 a 1000 lados. circumscribed=False:
+    el radio llega a los vértices; True: llega al punto medio de cada lado (apotema).
+    rotation_deg gira el primer vértice (0 = hacia +X)."""
+    try:
+        g = prim_mod.poligono(sides, cx, cy, radius, circumscribed, rotation_deg)
+    except prim_mod.PrimitivaError as exc:
+        return {"ok": False, "error": str(exc)}
+    r = create_polyline(g["points"], True, layer, lineweight, color_index)
+    return dict(r, vertexRadius=g["vertex_radius"])
+
+
+@mcp.tool()
+@_con_pend
+def create_ellipse(cx: float, cy: float, major_x: float, major_y: float, ratio: float,
+                   start_rad: float = 0.0, end_rad: float = 6.283185307179586,
+                   layer: Optional[str] = None) -> dict[str, Any]:
+    """Elipse o arco elíptico (ELLIPSE). (major_x, major_y) es el vector del centro al extremo
+    del eje mayor; ratio = eje menor / eje mayor (0 a 1); start_rad/end_rad en radianes
+    (por defecto la elipse completa). layer: capa EXISTENTE."""
+    try:
+        spec = prim_mod.con_capa(prim_mod.elipse(cx, cy, major_x, major_y, ratio, start_rad, end_rad), layer)
+    except prim_mod.PrimitivaError as exc:
+        return {"ok": False, "error": str(exc)}
+    return create_object(spec["entity_type"], spec.get("properties"), spec["init_method"], spec["init_args"])
+
+
+@mcp.tool()
+@_con_pend
+def create_construction_line(x: float, y: float, dx: float, dy: float, infinite_both_ways: bool = True,
+                             layer: Optional[str] = None) -> dict[str, Any]:
+    """Línea de construcción infinita (XLINE; en los dos sentidos) o rayo (RAY; solo hacia
+    (dx, dy)) por el punto (x, y). Sirve de guía para trazar y se elimina al terminar.
+    layer: capa EXISTENTE."""
+    try:
+        spec = prim_mod.con_capa(prim_mod.linea_infinita("Xline" if infinite_both_ways else "Ray", x, y, dx, dy), layer)
+    except prim_mod.PrimitivaError as exc:
+        return {"ok": False, "error": str(exc)}
+    return create_object(spec["entity_type"], spec.get("properties"))
+
+
+@mcp.tool()
+@_con_pend
+def create_point(x: float, y: float, z: float = 0.0, layer: Optional[str] = None) -> dict[str, Any]:
+    """Un punto (POINT). Se ve según PDMODE/PDSIZE (set_system_variable PDMODE=3 para una
+    cruz con círculo). layer: capa EXISTENTE."""
+    try:
+        spec = prim_mod.con_capa(prim_mod.punto(x, y, z), layer)
+    except prim_mod.PrimitivaError as exc:
+        return {"ok": False, "error": str(exc)}
+    return create_object(spec["entity_type"], spec.get("properties"))
+
+
+@mcp.tool()
+@_con_pend
+def extrude_solid(profile: str, height: Optional[float] = None, direction: Optional[list[float]] = None,
+                  taper_deg: float = 0.0, delete_profile: bool = False, layer: Optional[str] = None) -> dict[str, Any]:
+    """Levanta un SÓLIDO desde un perfil CERRADO que ya está dibujado (EXTRUDE): círculo,
+    polilínea cerrada, elipse, spline cerrada, región. Es la forma de pasar una planta 2D a 3D
+    (una polilínea de muro -> el volumen del muro). height: a lo largo de la normal del perfil
+    (con signo); o direction [x,y,z]: vector cuyo largo es la altura. taper_deg: ahusado.
+    delete_profile=True consume el perfil. El sólido toma la capa del perfil salvo layer.
+    Distinto de extrude_profile, que dibuja el contorno él mismo desde puntos y bulges."""
+    return _bd(bd_mod.extrude_solid, profile, height, direction, taper_deg, delete_profile, layer)
+
+
+@mcp.tool()
+@_con_pend
+def revolve_solid(profile: str, axis_point: list[float], axis_dir: list[float], angle_deg: float = 360.0,
+                  start_angle_deg: float = 0.0, twist_deg: float = 0.0, draft_deg: float = 0.0,
+                  close_to_axis: bool = False, delete_profile: bool = False,
+                  layer: Optional[str] = None) -> dict[str, Any]:
+    """Sólido de revolución (REVOLVE): gira un perfil CERRADO alrededor de un eje (punto +
+    dirección). Una columna redonda, una copa, un tanque, una cúpula. angle_deg 360 = vuelta
+    completa; start_angle_deg desde dónde. El perfil no debe cruzar el eje. close_to_axis cierra
+    un perfil abierto contra el eje."""
+    return _bd(bd_mod.revolve_solid, profile, axis_point, axis_dir, angle_deg, start_angle_deg, twist_deg,
+               draft_deg, close_to_axis, delete_profile, layer)
+
+
+@mcp.tool()
+@_con_pend
+def sweep_solid(profile: str, path: str, twist_deg: float = 0.0, scale: float = 1.0, align: bool = True,
+                bank: bool = False, delete_profile: bool = False, delete_path: bool = False,
+                layer: Optional[str] = None) -> dict[str, Any]:
+    """Barre un perfil CERRADO a lo largo de una trayectoria (SWEEP): tubería, barandal,
+    moldura, ducto. path: línea, arco, polilínea o spline. align=True orienta el perfil
+    perpendicular a la trayectoria. twist_deg y scale deforman progresivamente hasta el final."""
+    return _bd(bd_mod.sweep_solid, profile, path, twist_deg, scale, align, bank, delete_profile, delete_path, layer)
+
+
+@mcp.tool()
+@_con_pend
+def loft_solid(sections: list[str], guides: Optional[list[str]] = None, path: Optional[str] = None,
+               ruled: bool = False, closed: bool = False, delete_sources: bool = False,
+               layer: Optional[str] = None) -> dict[str, Any]:
+    """Une secciones en un sólido (LOFT): 2 o más perfiles CERRADOS, EN ORDEN, en planos
+    distintos (una transición de círculo a cuadrado, un casco). ruled=True une con tramos
+    rectos; closed=True cierra del último al primero. Opcional: guides (curvas guía) o path
+    (trayectoria), no ambas."""
+    return _bd(bd_mod.loft_solid, sections, guides, path, ruled, closed, delete_sources, layer)
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:

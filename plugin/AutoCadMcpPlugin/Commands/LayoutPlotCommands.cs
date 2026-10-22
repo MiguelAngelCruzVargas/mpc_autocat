@@ -275,6 +275,7 @@ namespace AutoCadMcpPlugin.Commands
                             throw new ArgumentException("El bloque no tiene la propiedad '" + kv.Key + "'. Tiene: " + string.Join(", ", nombres) + ".");
                         }
                         if (prop.ReadOnly) throw new ArgumentException("La propiedad '" + prop.PropertyName + "' es de solo lectura.");
+                        if (kv.Value == null) throw new ArgumentException("El valor de '" + kv.Key + "' no puede ser null.");
                         object actual = prop.Value;
                         object nuevo;
                         if (actual is string) nuevo = kv.Value is JsonValue sv && sv.TryGetValue<string>(out var s1) ? s1 : kv.Value.ToString();
@@ -294,7 +295,7 @@ namespace AutoCadMcpPlugin.Commands
                         }
                         plan.Add(Tuple.Create(prop.PropertyName, nuevo));
                     }
-                    var br = (BlockReference)tr.GetObject(id, OpenMode.ForWrite);
+                    var br = (BlockReference)tr.GetObject(id, OpenMode.ForWrite, false, true);
                     foreach (var item in plan)
                     {
                         foreach (DynamicBlockReferenceProperty p in br.DynamicBlockReferencePropertyCollection)

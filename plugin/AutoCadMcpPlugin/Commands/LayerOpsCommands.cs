@@ -83,12 +83,14 @@ namespace AutoCadMcpPlugin.Commands
             var borradas = new JsonArray();
             int movidas = 0;
             bool cambioActual = false;
+            ObjectId clayerPrevio = db.Clayer;
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
                     var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+                    if (destino.IndexOf('|') >= 0) throw new ArgumentException("El destino '" + destino + "' es una capa de xref.");
                     if (!lt.Has(destino)) throw new ArgumentException("La capa destino '" + destino + "' no existe.");
                     var idDestino = lt[destino];
                     var nombresReales = new List<string>();
@@ -110,6 +112,10 @@ namespace AutoCadMcpPlugin.Commands
 
                     if (idsFuente.ContainsKey(db.Clayer))
                     {
+                        // La capa actual no se puede purgar: hay que cambiarla antes. Eso NO es transaccional,
+                        // así que si algo falla más abajo se restaura en los catch.
+                        var dest = (LayerTableRecord)tr.GetObject(idDestino, OpenMode.ForRead);
+                        if (dest.IsFrozen) throw new InvalidOperationException("La capa actual es una de las de origen y el destino '" + nombreDestino + "' está congelado: descongelalo antes.");
                         db.Clayer = idDestino;
                         cambioActual = true;
                     }
@@ -120,11 +126,26 @@ namespace AutoCadMcpPlugin.Commands
                         foreach (ObjectId eid in btr)
                         {
                             var ent = tr.GetObject(eid, OpenMode.ForRead) as Entity;
-                            if (ent == null || !porNombre.TryGetValue(ent.Layer, out string origen)) continue;
-                            ent.UpgradeOpen();
-                            ent.Layer = nombreDestino;
-                            movidas++;
-                            movidasPorCapa[origen] = movidasPorCapa[origen].GetValue<int>() + 1;
+                            if (ent == null) continue;
+                            if (porNombre.TryGetValue(ent.Layer, out string origen))
+                            {
+                                var w = (Entity)tr.GetObject(eid, OpenMode.ForWrite, false, true);   // también en capa bloqueada
+                                w.Layer = nombreDestino;
+                                movidas++;
+                                movidasPorCapa[origen] = movidasPorCapa[origen].GetValue<int>() + 1;
+                            }
+                            if (ent is BlockReference br)
+                            {
+                                foreach (ObjectId aid in br.AttributeCollection)
+                                {
+                                    var at = (AttributeReference)tr.GetObject(aid, OpenMode.ForRead);
+                                    if (!porNombre.TryGetValue(at.Layer, out string origenAt)) continue;
+                                    var wa = (AttributeReference)tr.GetObject(aid, OpenMode.ForWrite, false, true);
+                                    wa.Layer = nombreDestino;
+                                    movidas++;
+                                    movidasPorCapa[origenAt] = movidasPorCapa[origenAt].GetValue<int>() + 1;
+                                }
+                            }
                         }
                     }
 
@@ -145,11 +166,13 @@ namespace AutoCadMcpPlugin.Commands
                 catch (AcException ex)
                 {
                     tr.Abort();
+                    if (cambioActual) { try { db.Clayer = clayerPrevio; } catch (SysException) { } }
                     throw new InvalidOperationException("AutoCAD rechazó la fusión (" + ex.ErrorStatus + "): " + ex.Message + ". No se cambió nada.");
                 }
                 catch (SysException)
                 {
                     tr.Abort();
+                    if (cambioActual) { try { db.Clayer = clayerPrevio; } catch (SysException) { } }
                     throw;
                 }
             }
@@ -190,7 +213,19 @@ namespace AutoCadMcpPlugin.Commands
                         foreach (ObjectId eid in btr)
                         {
                             var ent = tr.GetObject(eid, OpenMode.ForRead) as Entity;
-                            if (ent == null || !ent.Layer.Equals(real, StringComparison.OrdinalIgnoreCase)) continue;
+                            if (ent == null) continue;
+                            bool propia = ent.Layer.Equals(real, StringComparison.OrdinalIgnoreCase);
+                            if (ent is BlockReference br)
+                            {
+                                foreach (ObjectId aid in br.AttributeCollection)
+                                {
+                                    var at = (AttributeReference)tr.GetObject(aid, OpenMode.ForRead);
+                                    if (at.Layer.Equals(real, StringComparison.OrdinalIgnoreCase) && !propia)
+                                        throw new InvalidOperationException("El bloque " + br.Handle + " (de otra capa) tiene atributos en '" + real +
+                                            "': pasalos a otra capa con merge_layers o cambiá la capa del atributo antes de borrar. No se borró nada.");
+                                }
+                            }
+                            if (!propia) continue;
                             aBorrar.Add(eid);
                             string t = ent.GetType().Name;
                             porTipo[t] = porTipo.ContainsKey(t) ? porTipo[t] + 1 : 1;
@@ -201,8 +236,8 @@ namespace AutoCadMcpPlugin.Commands
                     {
                         foreach (var eid in aBorrar)
                         {
-                            var w = tr.GetObject(eid, OpenMode.ForWrite);
-                            w.Erase(true);
+                            var w = tr.GetObject(eid, OpenMode.ForWrite, false, true);   // también en capa bloqueada
+                            if (!w.IsErased) w.Erase(true);
                         }
                         var candidatos = new ObjectIdCollection { id };
                         db.Purge(candidatos);
@@ -256,7 +291,7 @@ namespace AutoCadMcpPlugin.Commands
             {
                 try
                 {
-                    var vp = tr.GetObject(HandleHelper.GetObjectId(db, handle), accion ? OpenMode.ForWrite : OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Viewport;
+                    var vp = tr.GetObject(HandleHelper.GetObjectId(db, handle), accion ? OpenMode.ForWrite : OpenMode.ForRead, false, true) as Autodesk.AutoCAD.DatabaseServices.Viewport;
                     if (vp == null) throw new ArgumentException("'" + handle + "' no es un viewport.");
                     numero = vp.Number;
                     if (numero == 1)
@@ -277,7 +312,9 @@ namespace AutoCadMcpPlugin.Commands
                     if (congelar.Count > 0) vp.FreezeLayersInViewport(Ids(congelar).GetEnumerator());
                     if (salvo.Count > 0)
                     {
-                        var mantener = new HashSet<ObjectId>(Ids(salvo).Cast<ObjectId>());
+                        var idsMantener = Ids(salvo);
+                        vp.ThawLayersInViewport(idsMantener.GetEnumerator());       // las que se quedan, visibles aunque estuvieran congeladas
+                        var mantener = new HashSet<ObjectId>(idsMantener.Cast<ObjectId>());
                         var resto = new ObjectIdCollection();
                         foreach (ObjectId id in lt)
                         {
@@ -386,9 +423,21 @@ namespace AutoCadMcpPlugin.Commands
                 throw new InvalidOperationException("Ya hay un estado llamado '" + nombre + "'. Pasá replace=true para reemplazarlo.");
             try
             {
-                if (existia) lsm.DeleteLayerState(nombre);
-                lsm.SaveLayerState(nombre, mascara, ObjectId.Null);
-                if (desc.Length > 0) lsm.SetLayerStateDescription(nombre, desc);
+                // Se guarda primero con un nombre temporal: si falla, el estado viejo sigue intacto.
+                const string temporal = "_MCP_TMP_SAVE";
+                if (lsm.HasLayerState(temporal)) lsm.DeleteLayerState(temporal);
+                lsm.SaveLayerState(temporal, mascara, ObjectId.Null);
+                try
+                {
+                    if (desc.Length > 0) lsm.SetLayerStateDescription(temporal, desc);
+                    if (existia) lsm.DeleteLayerState(nombre);
+                    lsm.RenameLayerState(temporal, nombre);
+                }
+                catch (SysException)
+                {
+                    if (lsm.HasLayerState(temporal)) lsm.DeleteLayerState(temporal);
+                    throw;
+                }
             }
             catch (AcException ex)
             {
@@ -493,6 +542,17 @@ namespace AutoCadMcpPlugin.Commands
                         visibles.Add(((LayerTableRecord)tr.GetObject(lt[n], OpenMode.ForRead)).Name);
                     }
                     lsm.SaveLayerState(EstadoAislar, LayerStateMasks.On | LayerStateMasks.Locked, ObjectId.Null);
+                    // Las aisladas quedan VISIBLES (y desbloqueadas si se aísla con lock), estuvieran como estuvieran.
+                    foreach (var n in visibles)
+                    {
+                        var rv = (LayerTableRecord)tr.GetObject(lt[n], OpenMode.ForRead);
+                        if (rv.IsOff || (modo == "lock" && rv.IsLocked))
+                        {
+                            var wv = (LayerTableRecord)tr.GetObject(lt[n], OpenMode.ForWrite);
+                            wv.IsOff = false;
+                            if (modo == "lock") wv.IsLocked = false;
+                        }
+                    }
                     foreach (ObjectId id in lt)
                     {
                         var r = (LayerTableRecord)tr.GetObject(id, OpenMode.ForRead);

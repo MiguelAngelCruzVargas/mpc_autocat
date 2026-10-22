@@ -150,6 +150,8 @@ namespace AutoCadMcpPlugin.Commands
                 using (Database copia = db.Wblock())
                     copia.SaveAs(path, version);
                 // Se vuelve a leer lo escrito: una copia que no abre, o a la que le faltan cosas, no es un entregable.
+                try
+                {
                 using (var leida = new Database(false, true))
                 {
                     leida.ReadDwgFile(path, FileOpenMode.OpenForReadAndAllShare, true, "");
@@ -180,7 +182,16 @@ namespace AutoCadMcpPlugin.Commands
                         ["layouts"] = lays, ["layoutsOriginal"] = laysOriginal,
                         ["match"] = ents == entsOriginal && lays == laysOriginal
                     };
+                    if (ents != entsOriginal || lays != laysOriginal)
+                        salida["warning"] = "La copia NO coincide con el original (entidades o láminas): no la entregues sin revisarla.";
                 }
+                }
+                catch (System.Exception ex)
+                {
+                    try { File.Delete(path); } catch (System.Exception) { }
+                    throw new InvalidOperationException("La copia se escribió pero no se pudo volver a leer (" + ex.Message + "): se borró el archivo defectuoso.");
+                }
+                salida["note"] = "Es una copia del dibujo completo hecha con WBLOCK *: como PURGE, puede omitir bloques, capas y estilos sin uso.";
             }
             salida["sizeBytes"] = new FileInfo(path).Length;
             if (v != "2018")

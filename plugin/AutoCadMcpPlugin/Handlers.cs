@@ -259,6 +259,32 @@ namespace AutoCadMcpPlugin
                     return LayerOpsCommands.ViewportLayers(doc, pars);
                 case "export_copy":
                     return SaveCommands.ExportCopy(doc, pars);
+                case "bind_xref":
+                    return XrefCommands.Bind(doc, pars);
+                case "unload_xref":
+                    return XrefCommands.Unload(doc, pars);
+                case "get_drawing_properties":
+                    return DrawingPropsCommands.Get(doc, pars);
+                case "set_drawing_properties":
+                    return DrawingPropsCommands.Set(doc, pars);
+                case "explode_entities":
+                    return EditExtraCommands.Explode(doc, pars);
+                case "break_curve":
+                    return EditExtraCommands.Break(doc, pars);
+                case "divide_curve":
+                    return EditExtraCommands.Divide(doc, pars);
+                case "create_boundary":
+                    return EditExtraCommands.Boundary(doc, pars);
+                case "match_properties":
+                    return EditExtraCommands.MatchProperties(doc, pars);
+                case "extrude_solid":
+                    return Solid3dOpsCommands.Extrude(doc, pars);
+                case "revolve_solid":
+                    return Solid3dOpsCommands.Revolve(doc, pars);
+                case "sweep_solid":
+                    return Solid3dOpsCommands.Sweep(doc, pars);
+                case "loft_solid":
+                    return Solid3dOpsCommands.Loft(doc, pars);
                 case "rename_layout":
                     return LayoutManageCommands.Rename(doc, pars);
                 case "copy_layout":

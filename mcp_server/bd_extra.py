@@ -475,3 +475,229 @@ def copy_layout(name: str, new_name: str) -> dict[str, Any]:
     if b.lower() == "model":
         raise BdError("«Model» está reservado para el espacio modelo.")
     return acad.call("copy_layout", {"name": a, "new_name": b})
+
+
+# ------------------------------------------------------------------ xrefs y propiedades del dibujo (plugin 1.18.0)
+
+def _xrefs(name: Optional[str], names: Optional[list[str]]) -> dict[str, Any]:
+    if name is not None and names is not None:
+        raise BdError("Usá 'name' o 'names', no los dos.")
+    pars: dict[str, Any] = {}
+    if name is not None:
+        pars["names"] = [_nombre(name)]
+    if names is not None:
+        pars["names"] = _capas(names, "names")
+    return pars
+
+
+def bind_xref(name: Optional[str] = None, names: Optional[list[str]] = None, insert: bool = True) -> dict[str, Any]:
+    pars = _xrefs(name, names)
+    pars["insert"] = insert is not False
+    return acad.call("bind_xref", pars)
+
+
+def unload_xref(name: Optional[str] = None, names: Optional[list[str]] = None) -> dict[str, Any]:
+    return acad.call("unload_xref", _xrefs(name, names))
+
+
+PROPS_DIBUJO = ("title", "subject", "author", "keywords", "comments", "hyperlink_base")
+
+
+def get_drawing_properties() -> dict[str, Any]:
+    return acad.call("get_drawing_properties", {})
+
+
+def set_drawing_properties(title: Optional[str] = None, subject: Optional[str] = None,
+                           author: Optional[str] = None, keywords: Optional[str] = None,
+                           comments: Optional[str] = None, hyperlink_base: Optional[str] = None,
+                           custom: Optional[dict[str, Optional[str]]] = None) -> dict[str, Any]:
+    pars: dict[str, Any] = {}
+    for k, v in (("title", title), ("subject", subject), ("author", author), ("keywords", keywords),
+                 ("comments", comments), ("hyperlink_base", hyperlink_base)):
+        if v is None:
+            continue
+        if not isinstance(v, str) or len(v) > 1000:
+            raise BdError(f"'{k}' es un texto de hasta 1000 caracteres.")
+        pars[k] = v
+    if custom is not None:
+        if not isinstance(custom, dict) or not custom:
+            raise BdError("'custom' es un objeto {nombre: valor}; un valor null borra la propiedad.")
+        if len(custom) > 100:
+            raise BdError("Máximo 100 propiedades personalizadas por llamada.")
+        limpio: dict[str, Optional[str]] = {}
+        for k, v in custom.items():
+            if not isinstance(k, str) or not k or k != k.strip() or len(k) > 255:
+                raise BdError("El nombre de una propiedad personalizada no puede estar vacío ni tener espacios en los bordes.")
+            if v is not None and (not isinstance(v, str) or len(v) > 1000):
+                raise BdError(f"'{k}': el valor es un texto de hasta 1000 caracteres (o null para borrarla).")
+            limpio[k] = v
+        pars["custom"] = limpio
+    if not pars:
+        raise BdError("No hay nada que cambiar: pasá title, subject, author, keywords, comments, hyperlink_base o custom.")
+    return acad.call("set_drawing_properties", pars)
+
+
+# ------------------------------------------------------------------ edición con la API (plugin 1.18.0)
+
+PROPS_IGUALAR = ("layer", "color", "linetype", "linetype_scale", "lineweight", "transparency")
+
+
+def _num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
+
+
+def _punto2(p: Any, cual: str) -> list[float]:
+    if not isinstance(p, (list, tuple)) or len(p) not in (2, 3) or not all(_num(c) for c in p):
+        raise BdError(f"'{cual}' es un punto [x, y] (o [x, y, z]) con números.")
+    return [float(c) for c in p]
+
+
+def explode_entities(handles: list[str], delete_original: bool = True) -> dict[str, Any]:
+    return acad.call("explode_entities", {"handles": _handles(handles, "handles", maximo=500),
+                                          "delete_original": delete_original is not False})
+
+
+def break_curve(handle: str, points: list[list[float]]) -> dict[str, Any]:
+    if not isinstance(points, (list, tuple)) or not points:
+        raise BdError("'points' es una lista de puntos [x, y] donde cortar.")
+    if len(points) > 200:
+        raise BdError("Máximo 200 puntos de corte.")
+    return acad.call("break_curve", {"handle": _handle(handle),
+                                     "points": [_punto2(p, f"points[{i}]") for i, p in enumerate(points)]})
+
+
+def divide_curve(handle: str, count: Optional[int] = None, distance: Optional[float] = None,
+                 block: Optional[str] = None, align: bool = True, layer: Optional[str] = None) -> dict[str, Any]:
+    if (count is None) == (distance is None):
+        raise BdError("Pasá 'count' (dividir en N partes) o 'distance' (marcar cada tanto), uno de los dos.")
+    pars: dict[str, Any] = {"handle": _handle(handle), "align": align is not False}
+    if count is not None:
+        if isinstance(count, bool) or not isinstance(count, int) or not 2 <= count <= 5000:
+            raise BdError("'count' es un entero de 2 a 5000.")
+        pars["count"] = count
+    if distance is not None:
+        if not _num(distance) or distance <= 0:
+            raise BdError("'distance' tiene que ser un número mayor que cero.")
+        pars["distance"] = float(distance)
+    if block is not None:
+        pars["block"] = _nombre(block, "block")
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+    return acad.call("divide_curve", pars)
+
+
+def create_boundary(point: list[float], islands: bool = True, layer: Optional[str] = None) -> dict[str, Any]:
+    pars: dict[str, Any] = {"point": _punto2(point, "point"), "islands": islands is not False}
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+    return acad.call("create_boundary", pars)
+
+
+def match_properties(source: str, targets: list[str], properties: Optional[list[str]] = None) -> dict[str, Any]:
+    pars: dict[str, Any] = {"source": _handle(source, "source"), "targets": _handles(targets, "targets", maximo=500)}
+    if pars["source"] in pars["targets"]:
+        pars["targets"] = [t for t in pars["targets"] if t != pars["source"]]
+        if not pars["targets"]:
+            raise BdError("'targets' no puede ser solo la entidad de origen.")
+    if properties is not None:
+        if not isinstance(properties, (list, tuple)) or not properties:
+            raise BdError("'properties' es una lista o se omite (todas).")
+        malas = [p for p in properties if not isinstance(p, str) or p.lower() not in PROPS_IGUALAR]
+        if malas:
+            raise BdError(f"Propiedad(es) {malas!r} desconocida(s). Válidas: {', '.join(PROPS_IGUALAR)}.")
+        pars["properties"] = [p.lower() for p in properties]
+    return acad.call("match_properties", pars)
+
+
+# ------------------------------------------------------------------ sólidos desde perfiles dibujados (plugin 1.18.0)
+
+def _punto3(p: Any, cual: str) -> list[float]:
+    if not isinstance(p, (list, tuple)) or len(p) not in (2, 3) or not all(_num(c) for c in p):
+        raise BdError(f"'{cual}' es [x, y] o [x, y, z] con números.")
+    return [float(c) for c in p] + ([0.0] if len(p) == 2 else [])
+
+
+def _vector(p: Any, cual: str) -> list[float]:
+    v = _punto3(p, cual)
+    if all(abs(c) < 1e-12 for c in v):
+        raise BdError(f"'{cual}' no puede ser un vector nulo.")
+    return v
+
+
+def _opt_num(v: Any, cual: str, minimo: Optional[float] = None, maximo: Optional[float] = None) -> float:
+    if not _num(v):
+        raise BdError(f"'{cual}' tiene que ser un número finito.")
+    if minimo is not None and v < minimo:
+        raise BdError(f"'{cual}' no puede ser menor que {minimo}.")
+    if maximo is not None and v > maximo:
+        raise BdError(f"'{cual}' no puede ser mayor que {maximo}.")
+    return float(v)
+
+
+def _capa_opcional(pars: dict[str, Any], layer: Optional[str]) -> None:
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+
+
+def extrude_solid(profile: str, height: Optional[float] = None, direction: Optional[list[float]] = None,
+                  taper_deg: float = 0.0, delete_profile: bool = False, layer: Optional[str] = None) -> dict[str, Any]:
+    if (height is None) == (direction is None):
+        raise BdError("Pasá 'height' (a lo largo de la normal del perfil) o 'direction' [x, y, z], uno de los dos.")
+    pars: dict[str, Any] = {"profile": _handle(profile, "profile"), "taper_deg": _opt_num(taper_deg, "taper_deg", -89.0, 89.0),
+                            "delete_profile": delete_profile is True}
+    if height is not None:
+        h = _opt_num(height, "height")
+        if h == 0:
+            raise BdError("'height' no puede ser 0.")
+        pars["height"] = h
+    else:
+        pars["direction"] = _vector(direction, "direction")
+    _capa_opcional(pars, layer)
+    return acad.call("extrude_solid", pars)
+
+
+def revolve_solid(profile: str, axis_point: list[float], axis_dir: list[float], angle_deg: float = 360.0,
+                  start_angle_deg: float = 0.0, twist_deg: float = 0.0, draft_deg: float = 0.0,
+                  close_to_axis: bool = False, delete_profile: bool = False, layer: Optional[str] = None) -> dict[str, Any]:
+    a = _opt_num(angle_deg, "angle_deg", -360.0, 360.0)
+    if a == 0:
+        raise BdError("'angle_deg' va de -360 a 360 y no puede ser 0.")
+    pars: dict[str, Any] = {
+        "profile": _handle(profile, "profile"), "axis_point": _punto3(axis_point, "axis_point"),
+        "axis_dir": _vector(axis_dir, "axis_dir"), "angle_deg": a,
+        "start_angle_deg": _opt_num(start_angle_deg, "start_angle_deg"), "twist_deg": _opt_num(twist_deg, "twist_deg"),
+        "draft_deg": _opt_num(draft_deg, "draft_deg", -89.0, 89.0), "close_to_axis": close_to_axis is True,
+        "delete_profile": delete_profile is True}
+    _capa_opcional(pars, layer)
+    return acad.call("revolve_solid", pars)
+
+
+def sweep_solid(profile: str, path: str, twist_deg: float = 0.0, scale: float = 1.0, align: bool = True,
+                bank: bool = False, delete_profile: bool = False, delete_path: bool = False,
+                layer: Optional[str] = None) -> dict[str, Any]:
+    p, t = _handle(profile, "profile"), _handle(path, "path")
+    if p == t:
+        raise BdError("El perfil y la trayectoria no pueden ser la misma entidad.")
+    pars: dict[str, Any] = {"profile": p, "path": t, "twist_deg": _opt_num(twist_deg, "twist_deg"),
+                            "scale": _opt_num(scale, "scale"), "align": align is not False, "bank": bank is True,
+                            "delete_profile": delete_profile is True, "delete_path": delete_path is True}
+    if pars["scale"] <= 0:
+        raise BdError("'scale' tiene que ser mayor que cero.")
+    _capa_opcional(pars, layer)
+    return acad.call("sweep_solid", pars)
+
+
+def loft_solid(sections: list[str], guides: Optional[list[str]] = None, path: Optional[str] = None,
+               ruled: bool = False, closed: bool = False, delete_sources: bool = False,
+               layer: Optional[str] = None) -> dict[str, Any]:
+    secs = _handles(sections, "sections", minimo=2, maximo=50)
+    pars: dict[str, Any] = {"sections": secs, "ruled": ruled is True, "closed": closed is True,
+                            "delete_sources": delete_sources is True}
+    if guides is not None:
+        pars["guides"] = _handles(guides, "guides", maximo=50)
+    if path is not None:
+        pars["path"] = _handle(path, "path")
+    if guides and path is not None:
+        raise BdError("Un loft lleva guías O trayectoria, no las dos.")
+    _capa_opcional(pars, layer)
+    return acad.call("loft_solid", pars)

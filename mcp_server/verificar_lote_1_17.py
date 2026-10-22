@@ -11,6 +11,7 @@ Uso:  python verificar_lote_1_17.py            (con AutoCAD abierto y el plugin 
 from __future__ import annotations
 
 import json
+import math
 import sys
 
 import server as s
@@ -294,6 +295,113 @@ def main() -> int:
     rechaza("export_copy sobre el propio dibujo se rechaza", lambda: s.export_copy(base, overwrite=True), "")
     nombre_ok = s.get_drawing_info()
     chk("el dibujo abierto sigue siendo base17.dwg", "base17" in txt(nombre_ok).lower(), nombre_ok)
+
+    # ---------------------------------------------------------------- 1.18.0: edición, primitivas y propiedades del dibujo
+    # explode: una polilínea de 3 segmentos -> 3 líneas
+    pe = s.create_polyline([[300, 0], [310, 0], [310, 10], [300, 10]], closed=False)["handle"]
+    ex = intento("explode_entities", lambda: s.explode_entities([pe]))
+    chk("explode: 3 segmentos y borra el original", ex and bueno(ex) and ex.get("createdCount") == 3 and ex.get("originalsDeleted") is True, ex)
+    chk("el original ya no existe", "error" in txt(s.get_entity(pe)).lower() or not bueno(s.get_entity(pe)))
+    rechaza("explode de un círculo ya borrado/inexistente se rechaza", lambda: s.explode_entities(["FFFFFF"]), "")
+
+    # break: una línea de 10 partida en x=4 y x=7 -> 3 tramos
+    lb = s.create_line(320, 0, 330, 0)["handle"]
+    br = intento("break_curve", lambda: s.break_curve(lb, [[324, 0], [327, 0]]))
+    chk("break_curve da 3 tramos", br and bueno(br) and br.get("pieces") == 3, br)
+    rechaza("break_curve fuera de la curva en los extremos se rechaza", lambda: s.break_curve(s.create_line(340, 0, 350, 0)["handle"], [[340, 0]]), "")
+
+    # divide: 10 m en 5 partes -> 4 puntos; cada 3 m -> 3 puntos
+    ld = s.create_line(360, 0, 370, 0)["handle"]
+    dv = intento("divide_curve count", lambda: s.divide_curve(ld, count=5))
+    chk("divide en 5 partes marca 4 puntos", dv and bueno(dv) and dv.get("marks") == 4, dv)
+    dv = intento("divide_curve distance", lambda: s.divide_curve(ld, distance=3))
+    chk("cada 3 m sobre 10 m marca 3 puntos", dv and bueno(dv) and dv.get("marks") == 3, dv)
+    rechaza("divide con distancia mayor que el largo se rechaza", lambda: s.divide_curve(ld, distance=50), "")
+    rechaza("divide con bloque inexistente se rechaza", lambda: s.divide_curve(ld, count=2, block="NO_EXISTE_17"), "")
+
+    # boundary: un cuarto de 6x4 cerrado con 4 líneas -> polilínea de área 24
+    for a_, b_ in (((400, 0), (406, 0)), ((406, 0), (406, 4)), ((406, 4), (400, 4)), ((400, 4), (400, 0))):
+        s.create_line(a_[0], a_[1], b_[0], b_[1])
+    s.zoom_window(395, -5, 412, 10)
+    bd = intento("create_boundary", lambda: s.create_boundary([403, 2]))
+    chk("create_boundary traza 1 contorno", bd and bueno(bd) and bd.get("loops") == 1, bd)
+    if bd and bueno(bd) and bd.get("created"):
+        ar = intento("area del contorno", lambda: s.calculate_area(bd["created"][0]))
+        chk("el contorno mide 24 m2", ar and abs(float(ar.get("area", 0)) - 24.0) < 1e-6, ar)
+    rechaza("create_boundary fuera de un recinto cerrado se rechaza", lambda: s.create_boundary([600, 600]), "")
+
+    # match_properties
+    s.create_database_object("layer", "MP17", {})
+    src = s.create_line(420, 0, 430, 0, layer="MP17", color_index=3)["handle"]
+    dst = s.create_line(420, 5, 430, 5)["handle"]
+    mp = intento("match_properties", lambda: s.match_properties(src, [dst], ["layer", "color"]))
+    chk("match_properties", mp and bueno(mp) and mp.get("matched") == 1, mp)
+    gd = s.get_entity(dst)
+    chk("el destino pasó a la capa MP17", "MP17" in txt(gd), gd)
+    mp = intento("match_properties sin lista", lambda: s.match_properties(src, [dst]))
+    chk("match_properties con SetPropertiesFrom", mp and bueno(mp), mp)
+
+    # primitivas
+    rc = intento("create_rectangle", lambda: s.create_rectangle(440, 0, 450, 6, corner_radius=1))
+    chk("create_rectangle redondeado", rc and bueno(rc) and rc.get("handle"), rc)
+    if rc and rc.get("handle"):
+        ar = s.calculate_area(rc["handle"])
+        esperado = 10 * 6 - (4 - math.pi) * 1 * 1
+        chk("área del rectángulo redondeado = 60 - (4-pi)", abs(float(ar.get("area", 0)) - esperado) < 1e-4, ar)
+    pg = intento("create_polygon", lambda: s.create_polygon(6, 470, 3, 2))
+    chk("create_polygon hexágono", pg and bueno(pg) and pg.get("handle"), pg)
+    el = intento("create_ellipse", lambda: s.create_ellipse(490, 3, 4, 0, 0.5))
+    chk("create_ellipse", el and bueno(el) and el.get("handle"), el)
+    if el and el.get("handle"):
+        pr = s.get_object_properties([el["handle"]], ["MajorRadius", "MinorRadius"])
+        chk("elipse de radios 4 y 2", "4" in txt(pr) and "2" in txt(pr), pr)
+    xl = intento("create_construction_line", lambda: s.create_construction_line(500, 0, 1, 1))
+    chk("create_construction_line (Xline)", xl and bueno(xl) and xl.get("handle"), xl)
+    xl = intento("rayo", lambda: s.create_construction_line(500, 0, 1, 1, infinite_both_ways=False))
+    chk("create_construction_line (Ray)", xl and bueno(xl) and xl.get("handle"), xl)
+    pt = intento("create_point", lambda: s.create_point(510, 3))
+    chk("create_point", pt and bueno(pt) and pt.get("handle"), pt)
+
+    # propiedades del dibujo
+    sp = intento("set_drawing_properties", lambda: s.set_drawing_properties(
+        title="Prueba 1.18", author="J. D. DIAZ PEREZ", custom={"Obra": "Casa 9x12", "Lámina": "A-01"}))
+    chk("set_drawing_properties devuelve lo escrito", sp and bueno(sp) and sp.get("title") == "Prueba 1.18" and sp.get("custom", {}).get("Obra") == "Casa 9x12", sp)
+    gp = intento("get_drawing_properties", lambda: s.get_drawing_properties())
+    chk("get_drawing_properties lo lee", gp and gp.get("author") == "J. D. DIAZ PEREZ" and gp.get("custom", {}).get("Lámina") == "A-01", gp)
+    sp = intento("borrar una personalizada", lambda: s.set_drawing_properties(custom={"Obra": None}))
+    chk("custom null borra", sp and "Obra" not in sp.get("custom", {}) and sp.get("custom", {}).get("Lámina") == "A-01", sp)
+
+    # xrefs: sin xrefs, bind/unload se rechazan con motivo
+    rechaza("bind_xref sin xrefs se rechaza", lambda: s.bind_xref(), "")
+    rechaza("bind_xref de un nombre inexistente se rechaza", lambda: s.bind_xref("NO_EXISTE_17"), "")
+
+    # ---------------------------------------------------------------- 1.18.0: sólidos desde perfiles dibujados
+    # (en un dibujo descartable: las operaciones de sólidos corren código nativo)
+    c1 = s.create_circle(600, 0, 2)["handle"]
+    ex = intento("extrude_solid", lambda: s.extrude_solid(c1, height=5))
+    chk("extrude_solid de un círculo r=2 por 5 = 62.83", ex and bueno(ex) and abs(float(ex.get("volume", 0)) - math.pi * 4 * 5) < 0.01, ex)
+    pc = s.create_polyline([[620, 0], [630, 0], [630, 4], [620, 4]], closed=True)["handle"]
+    ex = intento("extrude_solid con direccion", lambda: s.extrude_solid(pc, direction=[0, 0, 3], delete_profile=True))
+    chk("extrude_solid de una polilínea 10x4 por 3 = 120 y consume el perfil", ex and bueno(ex) and abs(float(ex.get("volume", 0)) - 120) < 0.01, ex)
+    abierta = s.create_polyline([[640, 0], [650, 0], [650, 4]], closed=False)["handle"]
+    rechaza("extrude_solid de un perfil abierto se rechaza", lambda: s.extrude_solid(abierta, height=3), "")
+    # revolución: rectángulo 2x4 a 3 del eje Y -> cilindro hueco: pi*((5)^2-(3)^2)*4 = 201.06
+    rp = s.create_polyline([[663, 0], [665, 0], [665, 4], [663, 4]], closed=True)["handle"]
+    rv = intento("revolve_solid", lambda: s.revolve_solid(rp, [660, 0, 0], [0, 1, 0], 360))
+    chk("revolve_solid: anillo de volumen pi*(25-9)*4 = 201.06", rv and bueno(rv) and abs(float(rv.get("volume", 0)) - math.pi * 16 * 4) < 0.05, rv)
+    # sweep: círculo r=1 a lo largo de una línea de 10 -> cilindro 31.42
+    # loft: dos círculos paralelos r=1 y r=2 a 5 de altura (tronco de cono: pi*h/3*(R^2+Rr+r^2) = 36.65)
+    l1 = s.create_circle(700, 0, 1)["handle"]
+    l2 = intento("círculo elevado", lambda: s.create_object("Circle", {"Center": [700, 0, 5], "Radius": 2}))
+    if l2 and l2.get("handle"):
+        lf = intento("loft_solid", lambda: s.loft_solid([l1, l2["handle"]]))
+        chk("loft_solid entre r=1 y r=2 a 5 de altura ≈ 36.65", lf and bueno(lf) and abs(float(lf.get("volume", 0)) - math.pi * 5 / 3 * 7) < 0.3, lf)
+    # sweep con una trayectoria vertical (línea de 10 en Z)
+    sw_path = intento("trayectoria", lambda: s.create_object("Line", {"StartPoint": [720, 0, 0], "EndPoint": [720, 0, 10]}))
+    sw_prof = s.create_circle(720, 0, 1)["handle"]
+    if sw_path and sw_path.get("handle"):
+        sw = intento("sweep_solid", lambda: s.sweep_solid(sw_prof, sw_path["handle"]))
+        chk("sweep_solid: cilindro r=1 de 10 = 31.42", sw and bueno(sw) and abs(float(sw.get("volume", 0)) - math.pi * 10) < 0.05, sw)
 
     # ---------------------------------------------------------------- purga (al final: borra cosas)
     s.create_database_object("layer", "SOBRA17", {})

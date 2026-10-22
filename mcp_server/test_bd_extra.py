@@ -226,6 +226,82 @@ def main() -> int:
     for cambio in ("rename_layout", "copy_layout"):
         check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
 
+    # ---- xrefs y propiedades del dibujo (1.18.0)
+    manda("bind_xref uno", lambda: server.bind_xref("ARQ"), "bind_xref", {"names": ["ARQ"], "insert": True})
+    manda("bind_xref varios en modo unir", lambda: server.bind_xref(names=["ARQ", "EST"], insert=False),
+          "bind_xref", {"names": ["ARQ", "EST"], "insert": False})
+    manda("bind_xref todos", lambda: server.bind_xref(), "bind_xref", {"insert": True})
+    rechazada("bind_xref name y names", lambda: server.bind_xref("A", ["B"]))
+    manda("unload_xref", lambda: server.unload_xref("ARQ"), "unload_xref", {"names": ["ARQ"]})
+    manda("get_drawing_properties", lambda: server.get_drawing_properties(), "get_drawing_properties", {})
+    manda("set_drawing_properties", lambda: server.set_drawing_properties(title="Casa 9x12", author="J. D. DIAZ PEREZ", custom={"Obra": "Casa", "Viejo": None}),
+          "set_drawing_properties", {"title": "Casa 9x12", "author": "J. D. DIAZ PEREZ", "custom": {"Obra": "Casa", "Viejo": None}})
+    rechazada("set_drawing_properties sin nada", lambda: server.set_drawing_properties())
+    rechazada("set_drawing_properties custom vacio", lambda: server.set_drawing_properties(custom={}))
+    rechazada("set_drawing_properties titulo enorme", lambda: server.set_drawing_properties(title="x" * 1001))
+    rechazada("set_drawing_properties nombre custom con espacios", lambda: server.set_drawing_properties(custom={" a": "b"}))
+    check("get_drawing_properties es de lectura", session.retry_safe("get_drawing_properties"), True)
+    for cambio in ("bind_xref", "unload_xref", "set_drawing_properties"):
+        check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
+
+    # ---- edición con la API (1.18.0)
+    manda("explode_entities", lambda: server.explode_entities(["a1", "B2", "a1"]),
+          "explode_entities", {"handles": ["A1", "B2"], "delete_original": True})
+    manda("explode_entities conservando", lambda: server.explode_entities(["A1"], False),
+          "explode_entities", {"handles": ["A1"], "delete_original": False})
+    rechazada("explode_entities sin handles", lambda: server.explode_entities([]))
+    rechazada("explode_entities handle invalido", lambda: server.explode_entities(["xx"]))
+    manda("break_curve", lambda: server.break_curve("a1", [[1, 2], [3, 4, 0]]),
+          "break_curve", {"handle": "A1", "points": [[1.0, 2.0], [3.0, 4.0, 0.0]]})
+    rechazada("break_curve sin puntos", lambda: server.break_curve("A1", []))
+    rechazada("break_curve punto mal formado", lambda: server.break_curve("A1", [[1]]))
+    rechazada("break_curve punto NaN", lambda: server.break_curve("A1", [[1, float("nan")]]))
+    manda("divide_curve en partes", lambda: server.divide_curve("A1", count=4),
+          "divide_curve", {"handle": "A1", "align": True, "count": 4})
+    manda("divide_curve con bloque", lambda: server.divide_curve("A1", distance=2.5, block="ARBOL", align=False, layer="VEG"),
+          "divide_curve", {"handle": "A1", "align": False, "distance": 2.5, "block": "ARBOL", "layer": "VEG"})
+    rechazada("divide_curve sin count ni distance", lambda: server.divide_curve("A1"))
+    rechazada("divide_curve con los dos", lambda: server.divide_curve("A1", count=3, distance=2))
+    rechazada("divide_curve count 1", lambda: server.divide_curve("A1", count=1))
+    rechazada("divide_curve distancia 0", lambda: server.divide_curve("A1", distance=0))
+    manda("create_boundary", lambda: server.create_boundary([5, 5], True, "AREAS"),
+          "create_boundary", {"point": [5.0, 5.0], "islands": True, "layer": "AREAS"})
+    rechazada("create_boundary punto invalido", lambda: server.create_boundary("5,5"))
+    manda("match_properties", lambda: server.match_properties("a1", ["b2", "C3", "a1"], ["Layer", "COLOR"]),
+          "match_properties", {"source": "A1", "targets": ["B2", "C3"], "properties": ["layer", "color"]})
+    rechazada("match_properties propiedad desconocida", lambda: server.match_properties("A1", ["B2"], ["magia"]))
+    rechazada("match_properties solo el origen", lambda: server.match_properties("A1", ["A1"]))
+    for cambio in ("explode_entities", "break_curve", "divide_curve", "create_boundary", "match_properties"):
+        check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
+
+    # ---- sólidos desde perfiles (1.18.0)
+    manda("extrude_solid con altura", lambda: server.extrude_solid("a1", height=3.0),
+          "extrude_solid", {"profile": "A1", "taper_deg": 0.0, "delete_profile": False, "height": 3.0})
+    manda("extrude_solid con direccion", lambda: server.extrude_solid("A1", direction=[0, 0, 2.5], taper_deg=5, delete_profile=True, layer="3D"),
+          "extrude_solid", {"profile": "A1", "taper_deg": 5.0, "delete_profile": True, "direction": [0.0, 0.0, 2.5], "layer": "3D"})
+    rechazada("extrude_solid sin altura ni direccion", lambda: server.extrude_solid("A1"))
+    rechazada("extrude_solid con las dos", lambda: server.extrude_solid("A1", height=1, direction=[0, 0, 1]))
+    rechazada("extrude_solid altura 0", lambda: server.extrude_solid("A1", height=0))
+    rechazada("extrude_solid direccion nula", lambda: server.extrude_solid("A1", direction=[0, 0, 0]))
+    rechazada("extrude_solid ahusado imposible", lambda: server.extrude_solid("A1", height=1, taper_deg=90))
+    manda("revolve_solid", lambda: server.revolve_solid("A1", [0, 0], [0, 1, 0], 180),
+          "revolve_solid", {"profile": "A1", "axis_point": [0.0, 0.0, 0.0], "axis_dir": [0.0, 1.0, 0.0], "angle_deg": 180.0,
+                            "start_angle_deg": 0.0, "twist_deg": 0.0, "draft_deg": 0.0, "close_to_axis": False, "delete_profile": False})
+    rechazada("revolve_solid angulo 0", lambda: server.revolve_solid("A1", [0, 0], [0, 1], 0))
+    rechazada("revolve_solid angulo mayor que una vuelta", lambda: server.revolve_solid("A1", [0, 0], [0, 1], 400))
+    rechazada("revolve_solid eje nulo", lambda: server.revolve_solid("A1", [0, 0], [0, 0, 0]))
+    manda("sweep_solid", lambda: server.sweep_solid("a1", "b2", scale=0.5, delete_path=True),
+          "sweep_solid", {"profile": "A1", "path": "B2", "twist_deg": 0.0, "scale": 0.5, "align": True, "bank": False,
+                          "delete_profile": False, "delete_path": True})
+    rechazada("sweep_solid perfil igual a trayectoria", lambda: server.sweep_solid("A1", "a1"))
+    rechazada("sweep_solid escala 0", lambda: server.sweep_solid("A1", "B2", scale=0))
+    manda("loft_solid", lambda: server.loft_solid(["a1", "b2", "C3"], ruled=True),
+          "loft_solid", {"sections": ["A1", "B2", "C3"], "ruled": True, "closed": False, "delete_sources": False})
+    rechazada("loft_solid con una sola seccion", lambda: server.loft_solid(["A1"]))
+    rechazada("loft_solid con guias y trayectoria", lambda: server.loft_solid(["A1", "B2"], guides=["C3"], path="D4"))
+    for cambio in ("extrude_solid", "revolve_solid", "sweep_solid", "loft_solid"):
+        check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
+
     # ---- sesión
     for lectura in ("get_xdata", "get_custom_data", "get_block_attributes", "list_annotation_scales",
                     "list_plot_options", "get_dynamic_block_properties"):
