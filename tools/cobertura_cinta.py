@@ -89,7 +89,7 @@ FAMILIAS = [
     (r"^(CHECKSTANDARDS|STANDARDS)$", "CUBIERTO", "check_office_standard"),
     (r"^(PAGESETUP|PLOTTERMANAGER|EXPORTSETTINGS)$", "CUBIERTO", "configure_layout"),
     (r"^(GC[A-Z]+|DC[A-Z]+|AUTOCONSTRAIN|DELCONSTRAINT|CONSTRAINTBAR|BPARAMETER|BCPARAMETER|BCONSTRUCTION|BTABLE)$", "PENDIENTE",
-     "restricciones paramétricas: por investigar (clases Assoc* de la API)"),
+     "restricciones: faltan SIMETRÍA/SUAVE/PUNTO-CURVA (GCSYMMETRIC, GCSMOOTH), DCCONVERT, AUTOCONSTRAIN y las de bloque (BPARAMETER, BTABLE)"),
     (r"^(MESH[A-Z]*|SURF[A-Z]+|EDGESURF|CONVTONURBS|CV[A-Z]+|OFFSETEDGE|PROJECTGEOMETRY|EDGE)$", "PENDIENTE",
      "superficies y mallas que piden elegir caras, aristas o puntos de control (FullSubentityPath): MESHEXTRUDE/SPLIT/MERGE/CREASE/COLLAPSE/CAP/SPIN, SURFTRIM/BLEND/FILLET/EXTEND..."),
     (r"^(CLIP|XCLIP|IMAGECLIP|PDFCLIP|DGNCLIP|DWFCLIP|ATTACH|PDFIMPORT|ADJUST)$", "PENDIENTE", "recortes y calcos subyacentes (underlays)"),

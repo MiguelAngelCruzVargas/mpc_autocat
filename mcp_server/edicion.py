@@ -139,6 +139,18 @@ def chamfer(first: str, second: str, d1: float, point1: list[float], point2: lis
                       "point1": _punto(point1, "point1"), "point2": _punto(point2, "point2")}, wait_s)
 
 
+def radius_constraint(target: str, point: list[float], value: float, diameter: bool = False,
+                      wait_s: float = _ESPERA_S) -> dict[str, Any]:
+    try:
+        v = float(value)
+    except (TypeError, ValueError) as exc:
+        raise EdicionError(f"'value' tiene que ser un número, no {value!r}.") from exc
+    if v != v or v <= 0 or abs(v) == float("inf"):
+        raise EdicionError("'value' tiene que ser un número mayor que cero.")
+    return _ejecutar({"op": "radius_constraint", "target": _handle(target, "target"), "point": _punto(point, "point"),
+                      "diameter": diameter is True}, wait_s)
+
+
 def join(handles: list[str], wait_s: float = _ESPERA_S) -> dict[str, Any]:
     return _ejecutar({"op": "join", "handles": _handles(handles, "handles", 2)}, wait_s)
 

@@ -525,6 +525,116 @@ def main() -> int:
         chk("convert_mesh a superficie responde", cs and bueno(cs), cs)
     rechaza("convert_mesh a algo inexistente se rechaza", lambda: s.convert_mesh("1", "rueda"), "'to'")
 
+    # ---------------------------------------------------------------- 1.21.0: restricciones paramétricas
+    def lin(h):
+        e = s.get_entity(h)
+        return e["startPoint"], e["endPoint"]
+
+    def vec(h):
+        a, b = lin(h)
+        return (b[0] - a[0], b[1] - a[1])
+
+    def circ(h):
+        e = s.get_entity(h)
+        return e.get("center"), e.get("radius")
+
+    rr = intento("limpiar restricciones previas", lambda: s.remove_constraints(all=True))
+    # horizontal
+    la = s.create_line(0, 2000, 10, 2003)["handle"]
+    hz = intento("add_geometric_constraint horizontal", lambda: s.add_geometric_constraint("horizontal", [la]))
+    chk("horizontal: la línea queda horizontal", hz and bueno(hz) and abs(vec(la)[1]) < 1e-6, hz)
+    # fix + paralela
+    pa1 = s.create_line(0, 2100, 10, 2100)["handle"]
+    pb1 = s.create_line(0, 2105, 8, 2109)["handle"]
+    intento("fix", lambda: s.add_geometric_constraint("fix", [pa1]))
+    pr = intento("parallel", lambda: s.add_geometric_constraint("parallel", [pa1, pb1]))
+    vb = vec(pb1)
+    chk("parallel: B queda paralela a A (fija)", pr and bueno(pr) and abs(vb[1]) < 1e-6 and abs(vec(pa1)[1]) < 1e-9, pr)
+    # perpendicular
+    pa2 = s.create_line(20, 2100, 30, 2100)["handle"]
+    pb2 = s.create_line(20, 2105, 28, 2109)["handle"]
+    intento("fix", lambda: s.add_geometric_constraint("fix", [pa2]))
+    pe = intento("perpendicular", lambda: s.add_geometric_constraint("perpendicular", [pa2, pb2]))
+    v1, v2 = vec(pa2), vec(pb2)
+    chk("perpendicular: producto punto 0", pe and bueno(pe) and abs(v1[0] * v2[0] + v1[1] * v2[1]) < 1e-6, pe)
+    # igual longitud
+    la3 = s.create_line(40, 2100, 50, 2100)["handle"]
+    lb3 = s.create_line(40, 2105, 44, 2105)["handle"]
+    intento("fix", lambda: s.add_geometric_constraint("fix", [la3]))
+    el = intento("equal_length", lambda: s.add_geometric_constraint("equal_length", [la3, lb3]))
+    chk("equal_length: B mide lo mismo que A", el and bueno(el) and abs(s.get_entity(la3)["length"] - s.get_entity(lb3)["length"]) < 1e-6, el)
+    # coincidente entre extremos
+    ca = s.create_line(60, 2100, 70, 2100)["handle"]
+    cb = s.create_line(73, 2104, 79, 2109)["handle"]
+    intento("fix", lambda: s.add_geometric_constraint("fix", [ca]))
+    co = intento("coincident", lambda: s.add_geometric_constraint("coincident", [{"handle": ca, "point": "end"}, {"handle": cb, "point": "start"}]))
+    chk("coincident: el fin de A es el inicio de B", co and bueno(co) and lin(ca)[1][:2] == lin(cb)[0][:2], co)
+    # círculos
+    c1 = s.create_circle(100, 2100, 3)["handle"]
+    c2 = s.create_circle(105, 2102, 5)["handle"]
+    intento("fix", lambda: s.add_geometric_constraint("fix", [c1]))
+    cc = intento("concentric", lambda: s.add_geometric_constraint("concentric", [c1, c2]))
+    chk("concentric: mismo centro", cc and bueno(cc) and circ(c1)[0][:2] == circ(c2)[0][:2], cc)
+    er = intento("equal_radius", lambda: s.add_geometric_constraint("equal_radius", [c1, c2]))
+    chk("equal_radius: mismo radio", er and bueno(er) and abs(circ(c1)[1] - circ(c2)[1]) < 1e-6, er)
+    # tangente línea-círculo
+    tl = s.create_line(120, 2100, 130, 2100)["handle"]
+    tc = s.create_circle(125, 2106, 3)["handle"]
+    intento("fix", lambda: s.add_geometric_constraint("fix", [tl]))
+    tg = intento("tangent", lambda: s.add_geometric_constraint("tangent", [tl, tc]))
+    cen, rad = circ(tc)
+    chk("tangent: distancia del centro a la recta = radio", tg and bueno(tg) and abs(abs(cen[1] - 2100) - rad) < 1e-6, tg)
+    rechaza("coincident sin puntos se rechaza", lambda: s.add_geometric_constraint("coincident", [la, pa1]), "point")
+    # polilínea: un tramo
+    pl = s.create_polyline([[140, 2100], [150, 2103], [155, 2110]], closed=False)["handle"]
+    ph = intento("horizontal sobre un tramo de polilínea", lambda: s.add_geometric_constraint("horizontal", [{"handle": pl, "segment": 0}]))
+    chk("polilínea: el primer tramo queda horizontal", ph and bueno(ph) and abs(s.get_entity(pl)["bbox"][1] - s.get_entity(pl)["bbox"][1]) < 1, ph)
+
+    # dimensionales
+    dl = s.create_line(200, 2100, 210, 2100)["handle"]
+    d1 = intento("distance (largo)", lambda: s.add_dimensional_constraint("distance", [dl], 20, "lg1"))
+    chk("distance: la línea mide 20", d1 and bueno(d1) and abs(s.get_entity(dl)["length"] - 20) < 1e-6, d1)
+    chk("se dibujó la cota", d1 and d1.get("dimension"), d1)
+    sv = intento("set_constraint_value", lambda: s.set_constraint_value("lg1", 25))
+    chk("set_constraint_value: ahora mide 25", sv and bueno(sv) and abs(s.get_entity(dl)["length"] - 25) < 1e-6, sv)
+    li = intento("list_constraints", lambda: s.list_constraints())
+    chk("list_constraints trae la variable lg1", li and "lg1" in txt(li), li)
+    hl = s.create_line(300, 2100, 310, 2106)["handle"]
+    h1 = intento("horizontal (componente X)", lambda: s.add_dimensional_constraint("horizontal", [hl], 12, "ancho1", dimension=False))
+    chk("la componente X es 12", h1 and bueno(h1) and abs(vec(hl)[0] - 12) < 1e-6, h1)
+    vl = s.create_line(400, 2100, 406, 2110)["handle"]
+    v1_ = intento("vertical (componente Y)", lambda: s.add_dimensional_constraint("vertical", [vl], 7, "alto1"))
+    chk("la componente Y es 7", v1_ and bueno(v1_) and abs(abs(vec(vl)[1]) - 7) < 1e-6, v1_)
+    import math as _m
+    aa = s.create_line(500, 2100, 510, 2100)["handle"]
+    ab = s.create_line(500, 2100, 508, 2104)["handle"]
+    intento("fix", lambda: s.add_geometric_constraint("fix", [aa]))
+    an = intento("angle", lambda: s.add_dimensional_constraint("angle", [aa, ab], 60, "ang1"))
+    vA, vB = vec(aa), vec(ab)
+    ang = abs(_m.degrees(_m.atan2(vB[1], vB[0]) - _m.atan2(vA[1], vA[0])))
+    chk("angle: 60 grados entre las líneas", an and bueno(an) and abs(ang - 60) < 1e-4, an)
+    rechaza("nombre de variable repetido se rechaza", lambda: s.add_dimensional_constraint("distance", [dl], 5, "lg1"), "lg1")
+    rechaza("set_constraint_value de una variable inexistente se rechaza", lambda: s.set_constraint_value("noexiste_17", 5), "noexiste_17")
+    # contradicción: otra medida sobre la misma línea
+    x0 = lin(dl)
+    rechaza("una medida que contradice la anterior se rechaza", lambda: s.add_dimensional_constraint("distance", [dl], 33, "lg2"), "")
+    chk("tras el rechazo la línea no cambió", lin(dl) == x0 or abs(s.get_entity(dl)["length"] - 25) < 1e-6, s.get_entity(dl))
+    # radio y diámetro: por el comando nativo
+    rc1 = s.create_circle(600, 2100, 3)["handle"]
+    rd = intento("radius_constraint", lambda: s.radius_constraint(rc1, [604, 2104], 7))
+    chk("radius_constraint: el círculo pasa a radio 7", rd and bueno(rd) and abs(circ(rc1)[1] - 7) < 1e-6, rd)
+    rc2 = s.create_circle(700, 2100, 3)["handle"]
+    rd2 = intento("radius_constraint diámetro", lambda: s.radius_constraint(rc2, [704, 2104], 20, diameter=True))
+    chk("diámetro 20 = radio 10", rd2 and bueno(rd2) and abs(circ(rc2)[1] - 10) < 1e-6, rd2)
+    li2 = intento("list_constraints con radio", lambda: s.list_constraints())
+    chk("las variables de radio y diámetro aparecen", li2 and bueno(li2) and len(li2.get("variables", [])) >= 2, li2)
+    rechaza("radio sobre una línea se rechaza", lambda: s.radius_constraint(la, [0, 0], 5), "círculo")
+    # quitar
+    rm = intento("remove_constraints all", lambda: s.remove_constraints(all=True))
+    chk("remove_constraints all", rm and bueno(rm), rm)
+    li = intento("list tras quitar", lambda: s.list_constraints())
+    chk("ya no quedan variables", li and "lg1" not in txt(li), li)
+
     # ---------------------------------------------------------------- purga (al final: borra cosas)
     s.create_database_object("layer", "SOBRA17", {})
     s.create_database_object("textstyle", "SOBRA17", {"FileName": "arial.ttf"})

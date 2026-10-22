@@ -897,3 +897,96 @@ def create_mesh_from_faces(vertices: list[list[float]], faces: list[list[int]], 
     if layer is not None:
         pars["layer"] = _nombre(layer, "layer")
     return acad.call("create_mesh_from_faces", pars)
+
+
+# ------------------------------------------------------------------ restricciones paramétricas 2D (plugin 1.21.0)
+
+RESTR_GEOMETRICAS = ("horizontal", "vertical", "parallel", "perpendicular", "collinear", "coincident", "concentric",
+                     "tangent", "equal_length", "equal_radius", "fix")
+RESTR_DIMENSIONALES = ("distance", "horizontal", "vertical", "angle")
+PUNTOS_RESTR = ("start", "end", "mid", "center")
+
+
+def _objetivos(targets: Any, minimo: int, maximo: int) -> list[dict[str, Any]]:
+    if not isinstance(targets, (list, tuple)) or len(targets) < minimo:
+        raise BdError(f"'targets' necesita al menos {minimo} objetivo(s): [{{'handle': 'A1', 'point': 'end'}}, ...].")
+    if len(targets) > maximo:
+        raise BdError(f"'targets': máximo {maximo} objetivos.")
+    salida: list[dict[str, Any]] = []
+    for i, t in enumerate(targets):
+        if isinstance(t, str):
+            t = {"handle": t}
+        if not isinstance(t, dict) or "handle" not in t:
+            raise BdError(f"targets[{i}] es un handle o {{'handle': ..., 'point': start|end|mid|center, 'segment': n}}.")
+        extra = set(t) - {"handle", "point", "segment"}
+        if extra:
+            raise BdError(f"targets[{i}]: campo(s) desconocido(s) {sorted(extra)}.")
+        o: dict[str, Any] = {"handle": _handle(t["handle"], f"targets[{i}].handle")}
+        if t.get("point") is not None:
+            if t["point"] not in PUNTOS_RESTR:
+                raise BdError(f"targets[{i}].point es uno de: {', '.join(PUNTOS_RESTR)}.")
+            o["point"] = t["point"]
+        if t.get("segment") is not None:
+            if isinstance(t["segment"], bool) or not isinstance(t["segment"], int) or t["segment"] < 0:
+                raise BdError(f"targets[{i}].segment es un entero desde 0 (el tramo de la polilínea).")
+            o["segment"] = t["segment"]
+        salida.append(o)
+    return salida
+
+
+def add_geometric_constraint(type: str, targets: list[Any]) -> dict[str, Any]:  # noqa: A002
+    if type not in RESTR_GEOMETRICAS:
+        raise BdError(f"'type' es uno de: {', '.join(RESTR_GEOMETRICAS)}.")
+    minimo = 1 if type in ("horizontal", "vertical", "fix") else 2
+    t = _objetivos(targets, minimo, 8)
+    if type == "coincident" and any("point" not in o for o in t):
+        raise BdError("coincident se aplica a PUNTOS: cada objetivo lleva 'point' (start, end, mid o center).")
+    return acad.call("add_geometric_constraint", {"type": type, "targets": t})
+
+
+def add_dimensional_constraint(kind: str, targets: list[Any], value: float, name: Optional[str] = None,
+                               dimension: bool = True, offset: Optional[float] = None) -> dict[str, Any]:
+    if kind not in RESTR_DIMENSIONALES:
+        raise BdError(f"'kind' es uno de: {', '.join(RESTR_DIMENSIONALES)} (radio y diámetro: radius_constraint).")
+    if not _num(value) or value <= 0:
+        raise BdError("'value' tiene que ser un número mayor que cero.")
+    if kind == "angle" and value >= 360:
+        raise BdError("El ángulo va de 0 a 360 grados.")
+    t = _objetivos(targets, 1, 2)
+    if kind == "angle" and len(t) != 2:
+        raise BdError("angle necesita 2 líneas.")
+    if len(t) == 2 and kind != "angle" and any("point" not in o for o in t):
+        raise BdError("Con dos objetivos, cada uno lleva 'point' (start, end, mid o center).")
+    pars: dict[str, Any] = {"kind": kind, "targets": t, "value": float(value), "dimension": dimension is not False}
+    if name is not None:
+        if not isinstance(name, str) or not re.match(r"^[A-Za-z][A-Za-z0-9_]{0,59}$", name):
+            raise BdError("'name' empieza con letra y lleva letras, números o guion bajo (hasta 60).")
+        pars["name"] = name
+    if offset is not None:
+        if not _num(offset) or offset <= 0:
+            raise BdError("'offset' tiene que ser un número mayor que cero.")
+        pars["offset"] = float(offset)
+    return acad.call("add_dimensional_constraint", pars)
+
+
+def set_constraint_value(name: str, value: float) -> dict[str, Any]:
+    if not isinstance(name, str) or not name.strip():
+        raise BdError("'name' es el nombre de una variable (list_constraints las muestra).")
+    if not _num(value) or value <= 0:
+        raise BdError("'value' tiene que ser un número mayor que cero.")
+    return acad.call("set_constraint_value", {"name": name.strip(), "value": float(value)})
+
+
+def list_constraints() -> dict[str, Any]:
+    return acad.call("list_constraints", {})
+
+
+def remove_constraints(handles: Optional[list[str]] = None, all: bool = False) -> dict[str, Any]:  # noqa: A002
+    if (all is True) == bool(handles):
+        raise BdError("Pasá 'handles' o all=True, uno de los dos.")
+    pars: dict[str, Any] = {}
+    if all is True:
+        pars["all"] = True
+    else:
+        pars["handles"] = _handles(handles, "handles", maximo=500)
+    return acad.call("remove_constraints", pars)

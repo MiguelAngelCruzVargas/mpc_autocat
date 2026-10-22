@@ -2,7 +2,7 @@
 
 Generado por `python tools/cobertura_cinta.py` (cinta real de AutoCAD 2027 × `mcp_server/categorias.py`). No se edita a mano: se corrige `categorias.py` o este script.
 
-**360 comandos distintos en la cinta.** 130 con tool propia, 57 alcanzables hoy con las tools genéricas (reflexión), 67 que solo tienen sentido con una persona frente a la pantalla, 24 fuera de alcance (render, geolocalización, nubes de puntos), 81 candidatos a implementar y 1 sin clasificar. De los 269 que tienen sentido automatizar, 187 están cubiertos (69 %).
+**360 comandos distintos en la cinta.** 147 con tool propia, 57 alcanzables hoy con las tools genéricas (reflexión), 67 que solo tienen sentido con una persona frente a la pantalla, 24 fuera de alcance (render, geolocalización, nubes de puntos), 64 candidatos a implementar y 1 sin clasificar. De los 269 que tienen sentido automatizar, 204 están cubiertos (75 %).
 
 Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_method`, `set_object_properties`) · ○ solo interfaz · ▫ fuera de alcance · ✖ pendiente · ? sin clasificar
 
@@ -70,8 +70,8 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 
 ## Paramétrico
 
-- **Geométricas**: ✖ AUTOCONSTRAIN · ✖ GCCOINCIDENT · ✖ GCCOLLINEAR · ✖ GCCONCENTRIC · ✖ GCFIX · ✖ GCPARALLEL · ✖ GCPERPENDICULAR · ✖ GCHORIZONTAL · ✖ GCVERTICAL · ✖ GCTANGENT · ✖ GCSMOOTH · ✖ GCSYMMETRIC · ✖ GCEQUAL · ✖ CONSTRAINTBAR
-- **Por cota**: ✖ DCLINEAR · ✖ DCHORIZONTAL · ✖ DCVERTICAL · ✖ DCALIGNED · ✖ DCRADIUS · ✖ DCDIAMETER · ✖ DCANGULAR · ✖ DCCONVERT · ✖ DCDISPLAY
+- **Geométricas**: ✖ AUTOCONSTRAIN · ✔ GCCOINCIDENT → `add_geometric_constraint` · ✔ GCCOLLINEAR → `add_geometric_constraint` · ✔ GCCONCENTRIC → `add_geometric_constraint` · ✔ GCFIX → `add_geometric_constraint` · ✔ GCPARALLEL → `add_geometric_constraint` · ✔ GCPERPENDICULAR → `add_geometric_constraint` · ✔ GCHORIZONTAL → `add_geometric_constraint` · ✔ GCVERTICAL → `add_geometric_constraint` · ✔ GCTANGENT → `add_geometric_constraint` · ✖ GCSMOOTH · ✖ GCSYMMETRIC · ✔ GCEQUAL → `add_geometric_constraint` · ✖ CONSTRAINTBAR
+- **Por cota**: ✔ DCLINEAR → `add_dimensional_constraint` · ✔ DCHORIZONTAL → `add_dimensional_constraint` · ✔ DCVERTICAL → `add_dimensional_constraint` · ✔ DCALIGNED → `add_dimensional_constraint` · ✔ DCRADIUS → `radius_constraint` · ✔ DCDIAMETER → `radius_constraint` · ✔ DCANGULAR → `add_dimensional_constraint` · ✖ DCCONVERT · ✖ DCDISPLAY
 - **Administrar**: ✖ DELCONSTRAINT
 
 ## Visualizar
@@ -124,7 +124,7 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 ## Editor de bloques
 
 - **Abrir/guardar**: ✔ BEDIT → `define_block` · ○ BSAVE · ○ BTESTBLOCK · ○ BSAVEAS
-- **Geométricas**: ✖ AUTOCONSTRAIN · ✖ GCCOINCIDENT · ✖ GCCOLLINEAR · ✖ GCCONCENTRIC · ✖ GCFIX · ✖ GCPARALLEL · ✖ GCPERPENDICULAR · ✖ GCHORIZONTAL · ✖ GCVERTICAL · ✖ GCTANGENT · ✖ GCSMOOTH · ✖ GCSYMMETRIC · ✖ GCEQUAL · ✖ CONSTRAINTBAR
+- **Geométricas**: ✖ AUTOCONSTRAIN · ✔ GCCOINCIDENT → `add_geometric_constraint` · ✔ GCCOLLINEAR → `add_geometric_constraint` · ✔ GCCONCENTRIC → `add_geometric_constraint` · ✔ GCFIX → `add_geometric_constraint` · ✔ GCPARALLEL → `add_geometric_constraint` · ✔ GCPERPENDICULAR → `add_geometric_constraint` · ✔ GCHORIZONTAL → `add_geometric_constraint` · ✔ GCVERTICAL → `add_geometric_constraint` · ✔ GCTANGENT → `add_geometric_constraint` · ✖ GCSMOOTH · ✖ GCSYMMETRIC · ✔ GCEQUAL → `add_geometric_constraint` · ✖ CONSTRAINTBAR
 - **Por cota**: ✖ BCPARAMETER · ✖ BTABLE
 - **Administrar**: ✖ DELCONSTRAINT · ✖ BCONSTRUCTION
 - **Parámetros de acción**: ✖ BPARAMETER · ○ BACTIONTOOL · ◐ ATTDEF → `create_object` · ○ BACTIONBAR
@@ -238,5 +238,5 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 - **datos de tablas, campos, atributos y traductor de capas**: ATTSYNC, BDETECT, EDITTABLECELL, LAYTRANS, UPDATEFIELD
 - **pendientes sin nota (o sin clasificar)**: AIMLEADEREDITADD, AIMLEADEREDITREMOVE, BLEND, CHAMFEREDGE, DATALINK, DATALINKUPDATE, FIELD, FLATSHOT, SECTIONPLANEJOG, SECTIONPLANETOBLOCK, SOLDRAW, SOLPROF, SOLVIEW, VPCLIP
 - **recortes y calcos subyacentes (underlays)**: ADJUST, CLIP, DGNCLIP, DWFCLIP, IMAGECLIP, PDFCLIP, PDFIMPORT, XCLIP
-- **restricciones paramétricas: por investigar (clases Assoc* de la API)**: AUTOCONSTRAIN, BCONSTRUCTION, BCPARAMETER, BPARAMETER, BTABLE, CONSTRAINTBAR, DCALIGNED, DCANGULAR, DCCONVERT, DCDIAMETER, DCDISPLAY, DCHORIZONTAL, DCLINEAR, DCRADIUS, DCVERTICAL, DELCONSTRAINT, GCCOINCIDENT, GCCOLLINEAR, GCCONCENTRIC, GCEQUAL, GCFIX, GCHORIZONTAL, GCPARALLEL, GCPERPENDICULAR, GCSMOOTH, GCSYMMETRIC, GCTANGENT, GCVERTICAL
+- **restricciones: faltan SIMETRÍA/SUAVE/PUNTO-CURVA (GCSYMMETRIC, GCSMOOTH), DCCONVERT, AUTOCONSTRAIN y las de bloque (BPARAMETER, BTABLE)**: AUTOCONSTRAIN, BCONSTRUCTION, BCPARAMETER, BPARAMETER, BTABLE, CONSTRAINTBAR, DCCONVERT, DCDISPLAY, DELCONSTRAINT, GCSMOOTH, GCSYMMETRIC
 - **superficies y mallas que piden elegir caras, aristas o puntos de control (FullSubentityPath): MESHEXTRUDE/SPLIT/MERGE/CREASE/COLLAPSE/CAP/SPIN, SURFTRIM/BLEND/FILLET/EXTEND...**: CONVTONURBS, CVADD, CVHIDE, CVREBUILD, CVREMOVE, CVSHOW, EDGE, EDGESURF, MESHCAP, MESHCOLLAPSE, MESHCREASE, MESHEXTRUDE, MESHMERGE, MESHSPIN, MESHSPLIT, MESHUNCREASE, OFFSETEDGE, PROJECTGEOMETRY, SURFBLEND, SURFEXTEND, SURFEXTRACTCURVE, SURFFILLET, SURFNETWORK, SURFPATCH, SURFSCULPT, SURFTRIM, SURFUNTRIM

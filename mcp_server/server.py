@@ -5651,7 +5651,7 @@ def delete_database_object(kind: str, name: Optional[str] = None,
     return _prop(prop_mod.delete_database_object, kind, name, handle)
 
 
-_PEND = " (plugin 1.20.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
+_PEND = " (plugin 1.21.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
 
 
 def _con_pend(fn):
@@ -6438,6 +6438,68 @@ def convert_mesh(handle: str, to: str = "solid", smooth: bool = True, optimize: 
     return r
 
 
+@mcp.tool()
+@_con_pend
+def add_geometric_constraint(type: str, targets: list[Any]) -> dict[str, Any]:  # noqa: A002
+    """RESTRICCIÓN GEOMÉTRICA (cinta Paramétrico: GCHORIZONTAL, GCVERTICAL, GCPARALLEL,
+    GCPERPENDICULAR, GCCOLLINEAR, GCCOINCIDENT, GCCONCENTRIC, GCTANGENT, GCEQUAL, GCFIX). El
+    solver de AutoCAD MUEVE la geometría para cumplirla y la mantiene al editar.
+
+    type: horizontal | vertical (1 línea o 2 puntos) · parallel | perpendicular | collinear |
+        tangent | equal_length | concentric | equal_radius (2 entidades) · coincident (2 PUNTOS) ·
+        fix (1 entidad o punto: no se mueve).
+    targets: lista de handles o de {"handle": "A1", "point": "start|end|mid|center",
+        "segment": n}; el punto elige un extremo o el centro; segment, un tramo de polilínea.
+    Valen línea, círculo, arco, elipse y polilínea del espacio activo. El solver decide qué
+    entidad se mueve (no siempre la primera): lo que no deba moverse se fija con `fix` ANTES.
+    Una restricción que contradice las que ya hay se rechaza y no cambia nada. Devuelve las
+    cajas antes y después, los grados de libertad y el estado. Se guarda con el dibujo."""
+    return _bd(bd_mod.add_geometric_constraint, type, targets)
+
+
+@mcp.tool()
+@_con_pend
+def add_dimensional_constraint(kind: str, targets: list[Any], value: float, name: Optional[str] = None,
+                               dimension: bool = True, offset: Optional[float] = None) -> dict[str, Any]:
+    """RESTRICCIÓN DIMENSIONAL (DCALIGNED, DCHORIZONTAL, DCVERTICAL, DCANGULAR): fija una
+    medida con un NOMBRE (variable) que después se cambia con set_constraint_value y el dibujo
+    sigue. Es lo que vuelve paramétrico un plano: cambiás «ancho = 5» a 6 y los muros se
+    corren solos.
+
+    kind: distance (entre dos puntos, o el LARGO de una línea) · horizontal | vertical (la
+        componente en X o en Y) · angle (entre dos líneas, en grados).
+    targets: para distance/horizontal/vertical, UNA línea [{"handle": "A1"}] o DOS puntos
+        [{"handle": "A1", "point": "end"}, {"handle": "B2", "point": "start"}]; para angle, 2 líneas.
+    name: nombre de la variable (por defecto d1, d2... / ang1...). dimension=True dibuja la
+        cota (offset: su separación). Radio y diámetro: pendiente (AutoCAD da
+        eInconsistentConstraint por API: usá radius_constraint)."""
+    return _bd(bd_mod.add_dimensional_constraint, kind, targets, value, name, dimension, offset)
+
+
+@mcp.tool()
+@_con_pend
+def set_constraint_value(name: str, value: float) -> dict[str, Any]:
+    """Cambia el valor de una variable de restricción (nombre que dio add_dimensional_constraint)
+    y re-resuelve: la geometría se acomoda. Devuelve el valor anterior y el estado."""
+    return _bd(bd_mod.set_constraint_value, name, value)
+
+
+@mcp.tool()
+@_con_pend
+def list_constraints() -> dict[str, Any]:
+    """Las variables (nombre y valor) y las restricciones del espacio activo, con las entidades
+    que ligan, los grados de libertad y el estado (WellDefined, UnderConstrained, Inconsistent...)."""
+    return _bd(bd_mod.list_constraints)
+
+
+@mcp.tool()
+@_con_pend
+def remove_constraints(handles: Optional[list[str]] = None, all: bool = False) -> dict[str, Any]:  # noqa: A002
+    """Quita restricciones: de esas entidades (handles) o TODAS las del espacio activo
+    (all=True, con sus variables). La geometría no se borra ni se mueve."""
+    return _bd(bd_mod.remove_constraints, handles, all)
+
+
 def _prop(fn, *args, **kw) -> dict[str, Any]:
     try:
         return fn(*args, **kw)
@@ -6573,6 +6635,29 @@ def chamfer_entities(first: str, second: str, d1: float, point1: list[float], po
     una, del lado que se CONSERVA, cerca de la esquina. CHAMFERA, CHAMFERB y CHAMMODE se
     restauran al terminar."""
     return _edicion(edicion_mod.chamfer, first, second, d1, point1, point2, d2, wait_s)
+
+
+@mcp.tool()
+@_con_nota
+def radius_constraint(target: str, point: list[float], value: float, diameter: bool = False,
+                      wait_s: float = 30.0) -> dict[str, Any]:
+    """RESTRICCIÓN DE RADIO o DIÁMETRO de un círculo o arco (DCRADIUS / DCDIAMETER): fija la medida
+    con una cota paramétrica; el círculo cambia de tamaño hasta cumplirla y la mantiene.
+
+    target: handle del círculo o arco. point: [x, y] donde queda la cota. value: el radio (o el
+    diámetro con diameter=True). Va por el comando NATIVO porque por la API AutoCAD responde
+    eInconsistentConstraint en un círculo suelto. La variable que crea se ve con
+    list_constraints y se cambia con set_constraint_value."""
+    antes = {v["name"] for v in (acad.call("list_constraints", {}).get("variables") or [])}
+    r = _edicion(edicion_mod.radius_constraint, target, point, value, diameter, wait_s)
+    if isinstance(r, dict) and r.get("ok") is False:
+        return r
+    nuevas = [v["name"] for v in (acad.call("list_constraints", {}).get("variables") or []) if v["name"] not in antes]
+    if not nuevas:
+        return dict(r, ok=False, error="AutoCAD no creó la restricción (¿el círculo o el punto no son válidos?). No se cambió nada.")
+    # el comando fija la restricción con el valor ACTUAL; el pedido se aplica con la variable que acaba de nacer
+    fijado = acad.call("set_constraint_value", {"name": nuevas[0], "value": float(value)})
+    return dict(r, variable=nuevas[0], value=float(value), applied=fijado)
 
 
 @mcp.tool()

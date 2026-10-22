@@ -131,6 +131,36 @@ def test_extend_fillet_join_overkill() -> None:
     check("chamfer con la misma entidad se rechaza", r.get("ok"), False)
     r = server.chamfer_entities("a1", "b2", -1, [0, 0], [1, 1])
     check("chamfer con distancia negativa se rechaza", r.get("ok"), False)
+    class PluginRadio(Plugin):
+        def __init__(self, crea=True):
+            super().__init__(0)
+            self.crea, self.listados = crea, 0
+
+        def __call__(self, cmd, params=None):
+            if cmd == "list_constraints":
+                self.llamadas.append((cmd, params or {}))
+                self.listados += 1
+                return {"variables": ([{"name": "rad1", "expression": "3"}] if self.listados > 1 and self.crea else [])}
+            if cmd == "set_constraint_value":
+                self.llamadas.append((cmd, params or {}))
+                return {"name": params["name"], "value": params["value"]}
+            return super().__call__(cmd, params)
+
+    p = PluginRadio()
+    r = con_plugin(p, lambda: server.radius_constraint("a1", [5, 5], 7))
+    check("radius_constraint: manda el comando nativo y luego fija el valor",
+          [c for c, _ in p.llamadas], ["list_constraints", "native_op", "native_status", "list_constraints", "set_constraint_value"])
+    check("radius_constraint: la operación nativa va sin valor", p.llamadas[1][1],
+          {"op": "radius_constraint", "target": "A1", "point": [5.0, 5.0], "diameter": False})
+    check("radius_constraint: set_constraint_value con la variable nueva", p.llamadas[-1][1], {"name": "rad1", "value": 7.0})
+    p = PluginRadio()
+    con_plugin(p, lambda: server.radius_constraint("a1", [5, 5], 14, diameter=True))
+    check("radius_constraint como diametro", p.llamadas[1][1]["diameter"], True)
+    p = PluginRadio(crea=False)
+    r = con_plugin(p, lambda: server.radius_constraint("a1", [5, 5], 7))
+    check("si AutoCAD no creó la restricción, lo dice", (r or {}).get("ok"), False)
+    check("radius_constraint con valor 0 se rechaza", server.radius_constraint("a1", [5, 5], 0).get("ok"), False)
+    check("radius_constraint con valor texto se rechaza", server.radius_constraint("a1", [5, 5], "siete").get("ok"), False)
     p = Plugin(0)
     con_plugin(p, lambda: server.join_entities(["a1", "b2", "c3"]))
     check("join", p.llamadas[0][1], {"op": "join", "handles": ["A1", "B2", "C3"]})

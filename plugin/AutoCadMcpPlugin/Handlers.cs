@@ -279,6 +279,16 @@ namespace AutoCadMcpPlugin
                     return SurfaceCommands.NurbsDesdePuntos(doc, pars);
                 case "create_mesh_from_faces":
                     return SurfaceCommands.MallaDesdeCaras(doc, pars);
+                case "add_geometric_constraint":
+                    return ConstraintCommands.AddGeometric(doc, pars);
+                case "add_dimensional_constraint":
+                    return ConstraintCommands.AddDimensional(doc, pars);
+                case "set_constraint_value":
+                    return ConstraintCommands.SetValue(doc, pars);
+                case "list_constraints":
+                    return ConstraintCommands.List(doc, pars);
+                case "remove_constraints":
+                    return ConstraintCommands.Remove(doc, pars);
                 case "bind_xref":
                     return XrefCommands.Bind(doc, pars);
                 case "unload_xref":

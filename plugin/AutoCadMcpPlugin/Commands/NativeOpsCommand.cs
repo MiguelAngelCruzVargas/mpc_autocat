@@ -93,10 +93,11 @@ namespace AutoCadMcpPlugin.Commands
                 case "extend": PrepararTrimExtend(doc, pars, job, extend: true); break;
                 case "fillet": PrepararFillet(doc, pars, job); break;
                 case "chamfer": PrepararChamfer(doc, pars, job); break;
+                case "radius_constraint": PrepararRadioRestringido(doc, pars, job); break;
                 case "join": PrepararJoin(doc, pars, job); break;
                 case "overkill": PrepararOverkill(doc, pars, job); break;
                 default:
-                    throw new ArgumentException("Operación '" + op + "' desconocida; válidas: trim, extend, fillet, chamfer, join, overkill.");
+                    throw new ArgumentException("Operación '" + op + "' desconocida; válidas: trim, extend, fillet, chamfer, radius_constraint, join, overkill.");
             }
             SnapshotAntes(doc, job);
 
@@ -334,6 +335,30 @@ namespace AutoCadMcpPlugin.Commands
                     if (kv.Item2 != null) { try { Application.SetSystemVariable(kv.Item1, kv.Item2); } catch (SysException) { } }
             };
             job.Tokens = ed => new object[] { "_.CHAMFER", pa, pb };
+        }
+
+        /// <summary>Restricción de RADIO o DIÁMETRO de un círculo o arco por el comando nativo (DCRADIUS / DCDIAMETER): target, point
+        /// (un punto cerca de donde queda la cota), [diameter=false]. Por la API (AddRadiusDiameterConstraint) AutoCAD responde
+        /// eInconsistentConstraint en un círculo suelto, así que se usa el comando, que arma la misma red. El comando fija la restricción con el
+        /// valor ACTUAL; el valor deseado se cambia después con set_constraint_value. La selección es por PUNTO sobre la curva (un ObjectId
+        /// no se acepta en este comando), igual que TRIM o FILLET. Tokens fijos.</summary>
+        private static void PrepararRadioRestringido(Document doc, JsonObject pars, Job job)
+        {
+            var objetivo = Id(doc, pars["target"], "target");
+            var punto = Punto(pars["point"], "point");
+            bool diametro = pars["diameter"]?.GetValue<bool>() ?? false;
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                var e = tr.GetObject(objetivo, OpenMode.ForRead);
+                if (!(e is Circle) && !(e is Arc)) throw new ArgumentException("La restricción de radio o diámetro vale para un círculo o un arco (no " + e.GetType().Name + ").");
+                tr.Commit();
+            }
+            var sobre = SobreCurva(doc, objetivo, punto, out double diag);
+            job.Involved.Add(objetivo);
+            job.ViewCenter = sobre;
+            job.ViewHeight = Math.Max(diag * 2.0, 1e-3);
+            string cmd = diametro ? "_.DCDIAMETER" : "_.DCRADIUS";
+            job.Tokens = ed => new object[] { cmd, sobre, punto, "" };      // «» acepta el texto de la cota por defecto (el valor actual)
         }
 
         private static void PrepararJoin(Document doc, JsonObject pars, Job job)
