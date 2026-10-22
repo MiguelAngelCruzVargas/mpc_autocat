@@ -1357,7 +1357,8 @@ todo el plano de una; ir texto por texto no.
 
 ## Antes de tocar el plugin C#
 **Versiones de AutoCAD:** probado en vivo en **2022** (net48) y **2027** (R26.0, .NET 10); `test_live.py`
-da 71/71 en las dos. 2019-2021 y 2023-2024 comparten el DLL de net48 y 2025-2026 el de .NET 8, pero ESO NO
+da 71/71 en las dos, `test_live_mejoras.py` pasa en la 2027, y las láminas del pórtico de Mixtan
+exportadas por la 2027 salen idénticas píxel a píxel a las de la 2022. 2019-2021 y 2023-2024 comparten el DLL de net48 y 2025-2026 el de .NET 8, pero ESO NO
 SE PROBÓ en vivo. El DLL de .NET 10 se compila contra los DLL de la propia instalación
 (`AcadDir2027`, incluye `acdbmgdbrep.dll`); `tools/install_bundle.ps1` copia los tres. Un AutoCAD en
 castellano usa CENTRO2/OCULTA2: cualquier tool que pida un tipo de línea tiene que pasar por
