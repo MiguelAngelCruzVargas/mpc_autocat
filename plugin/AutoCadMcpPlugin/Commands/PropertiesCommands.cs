@@ -111,6 +111,10 @@ namespace AutoCadMcpPlugin.Commands
             }
         }
 
+        internal static PropertyInfo BuscarPublico(Type t, string nombre) { return Buscar(t, nombre); }
+
+        internal static bool EscribiblePublico(PropertyInfo p) { return Escribible(p); }
+
         private static PropertyInfo Buscar(Type t, string nombre)
         {
             var p = Propiedades(t).FirstOrDefault(x => x.Name.Equals(nombre, StringComparison.OrdinalIgnoreCase));
@@ -562,6 +566,7 @@ namespace AutoCadMcpPlugin.Commands
             string nombre = pars["type"]?.GetValue<string>();
             if (string.IsNullOrWhiteSpace(nombre)) throw new ArgumentException("Falta 'type': la clase de la entidad.");
             var pedidas = pars["properties"] as JsonObject ?? new JsonObject();
+            string contenedor = pars["container"]?.GetValue<string>();
             if (pedidas.Count > MaxPropiedades)
                 throw new ArgumentException("Máximo " + MaxPropiedades + " propiedades por llamada.");
             var t = typeof(Entity).Assembly.GetType("Autodesk.AutoCAD.DatabaseServices." + nombre, false, true);
@@ -593,7 +598,18 @@ namespace AutoCadMcpPlugin.Commands
                         try { ent.SetDatabaseDefaults(); } catch (SysException) { }
                         foreach (var item in plan)
                             item.Item1.SetValue(ent, item.Item2);
-                        var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+                        // Por defecto el espacio activo; con 'container', la definición de ese bloque
+                        // (por nombre o por handle): así se arma un bloque nuevo.
+                        ObjectId destino = db.CurrentSpaceId;
+                        if (!string.IsNullOrWhiteSpace(contenedor))
+                        {
+                            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                            if (bt.Has(contenedor)) destino = bt[contenedor];
+                            else destino = HandleHelper.GetObjectId(db, contenedor);
+                            if (!(tr.GetObject(destino, OpenMode.ForRead) is BlockTableRecord))
+                                throw new ArgumentException("'container' tiene que ser el nombre o el handle de un bloque.");
+                        }
+                        var btr = (BlockTableRecord)tr.GetObject(destino, OpenMode.ForWrite);
                         btr.AppendEntity(ent);
                         tr.AddNewlyCreatedDBObject(ent, true);
                         tr.Commit();

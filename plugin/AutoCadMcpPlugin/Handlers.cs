@@ -196,6 +196,10 @@ namespace AutoCadMcpPlugin
                     return PropertiesCommands.Set(doc, pars);
                 case "list_children":
                     return PropertiesCommands.Children(doc, pars);
+                case "create_database_object":
+                    return DatabaseObjectsCommands.Create(doc, pars);
+                case "delete_database_object":
+                    return DatabaseObjectsCommands.Delete(doc, pars);
                 case "create_object":
                     return PropertiesCommands.Create(doc, pars);
                 case "list_properties":

@@ -90,7 +90,8 @@ def list_properties(entity_type: Optional[str] = None,
     return acad.call("list_properties", {"type": entity_type})
 
 
-def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None,
+                  container: Optional[str] = None) -> dict[str, Any]:
     if not isinstance(entity_type, str) or not re.match(r"^[A-Za-z][A-Za-z0-9_]*$", entity_type):
         raise PropiedadesError(f"'{entity_type}' no es un nombre de clase de entidad.")
     properties = {} if properties is None else properties
@@ -103,7 +104,12 @@ def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None)
             raise PropiedadesError("Los nombres de propiedad tienen que ser texto no vacío.")
         if v is None:
             raise PropiedadesError(f"'{k}': el valor no puede ser null.")
-    return acad.call("create_object", {"type": entity_type, "properties": properties})
+    pars: dict[str, Any] = {"type": entity_type, "properties": properties}
+    if container is not None:
+        if not isinstance(container, str) or not container.strip():
+            raise PropiedadesError("'container' es el nombre o el handle de un bloque.")
+        pars["container"] = container.strip()
+    return acad.call("create_object", pars)
 
 
 _NOMBRES_CORTOS = ("layers", "textstyles", "dimstyles", "linetypes", "blocks", "regapps", "ucs", "views",
@@ -125,3 +131,58 @@ def list_children(target: str = SEUDO_DB, skip: int = 0, take: int = 500) -> dic
     return acad.call("list_children", {"target": SEUDO_DB if t == SEUDO_DB else
                                        (target.lower() if target.lower() in _NOMBRES_CORTOS else target.upper()),
                                        "skip": skip, "take": take})
+
+
+KINDS = ("layer", "textstyle", "dimstyle", "block", "regapp", "ucs")
+_PROHIBIDOS = '<>/\\":;?*|,=`'
+
+
+def _nombre(name: Any) -> str:
+    if not isinstance(name, str) or not name or name != name.strip():
+        raise PropiedadesError("'name' no puede estar vacío ni empezar o terminar con espacios.")
+    if len(name) > 255:
+        raise PropiedadesError("'name' no puede pasar de 255 caracteres.")
+    mal = next((c for c in name if c in _PROHIBIDOS), None)
+    if mal:
+        raise PropiedadesError(f"'name' no puede llevar el carácter {mal!r} (AutoCAD lo reserva).")
+    if name.startswith("*"):
+        raise PropiedadesError("Los nombres que empiezan con * son de AutoCAD (bloques anónimos y espacios).")
+    return name
+
+
+def _kind(kind: Any) -> str:
+    if not isinstance(kind, str) or kind.lower() not in KINDS:
+        raise PropiedadesError(f"'kind' tiene que ser uno de: {', '.join(KINDS)}.")
+    return kind.lower()
+
+
+def create_database_object(kind: str, name: str,
+                           properties: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    properties = {} if properties is None else properties
+    if not isinstance(properties, dict):
+        raise PropiedadesError("'properties' tiene que ser un objeto {nombre: valor}.")
+    if len(properties) > MAX_PROPIEDADES:
+        raise PropiedadesError(f"Máximo {MAX_PROPIEDADES} propiedades por llamada.")
+    for k, v in properties.items():
+        if not isinstance(k, str) or not k.strip():
+            raise PropiedadesError("Los nombres de propiedad tienen que ser texto no vacío.")
+        if k.strip().lower() == "name":
+            raise PropiedadesError("El nombre va en 'name', no en 'properties'.")
+        if v is None:
+            raise PropiedadesError(f"'{k}': el valor no puede ser null.")
+    return acad.call("create_database_object", {"kind": _kind(kind), "name": _nombre(name),
+                                                "properties": properties})
+
+
+def delete_database_object(kind: str, name: Optional[str] = None,
+                           handle: Optional[str] = None) -> dict[str, Any]:
+    if bool(name) == bool(handle):
+        raise PropiedadesError("Pasá 'name' o 'handle', uno de los dos.")
+    pars: dict[str, Any] = {"kind": _kind(kind)}
+    if name:
+        pars["name"] = _nombre(name)
+    else:
+        pars["handle"] = _handles([handle])[0]
+        if pars["handle"] == SEUDO_DB:
+            raise PropiedadesError("'DATABASE' no es un objeto que se pueda borrar.")
+    return acad.call("delete_database_object", pars)

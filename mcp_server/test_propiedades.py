@@ -137,6 +137,37 @@ def main() -> int:
     r, ll = con_plugin(lambda: server.set_object_properties(["DATABASE"], {"Ltscale": 2.0}))
     check("set acepta DATABASE", ll[0][1]["handles"], ["DATABASE"])
 
+    # ---- create/delete_database_object y container
+    r, ll = con_plugin(lambda: server.create_database_object("Layer", "MUROS", {"Color": 7, "IsLocked": False}))
+    check("create layer manda kind en minuscula, nombre y propiedades", ll[0], ("create_database_object",
+          {"kind": "layer", "name": "MUROS", "properties": {"Color": 7, "IsLocked": False}}))
+    r, ll = con_plugin(lambda: server.create_database_object("block", "MI-BLOQUE"))
+    check("create sin propiedades manda objeto vacio", ll[0][1]["properties"], {})
+    for k in ("layer", "textstyle", "dimstyle", "block", "regapp", "ucs"):
+        r, ll = con_plugin(lambda k=k: server.create_database_object(k, "X1"))
+        check(f"create acepta kind {k}", ll[0][1]["kind"], k)
+    rechazada("create con kind desconocido", lambda: server.create_database_object("material", "X"))
+    rechazada("create con nombre vacio", lambda: server.create_database_object("layer", ""))
+    rechazada("create con espacios en los bordes", lambda: server.create_database_object("layer", " MUROS"))
+    rechazada("create con caracter reservado", lambda: server.create_database_object("layer", "MUROS/1"))
+    rechazada("create con dos puntos", lambda: server.create_database_object("layer", "A:B"))
+    rechazada("create con nombre que empieza con *", lambda: server.create_database_object("block", "*Mio"))
+    rechazada("create con nombre larguisimo", lambda: server.create_database_object("layer", "x" * 256))
+    rechazada("create con el nombre en properties", lambda: server.create_database_object("layer", "A", {"Name": "B"}))
+    rechazada("create con valor null", lambda: server.create_database_object("layer", "A", {"Color": None}))
+    rechazada("create con properties que no es objeto", lambda: server.create_database_object("layer", "A", ["Color"]))
+    r, ll = con_plugin(lambda: server.delete_database_object("layer", name="MUROS"))
+    check("delete por nombre", ll[0], ("delete_database_object", {"kind": "layer", "name": "MUROS"}))
+    r, ll = con_plugin(lambda: server.delete_database_object("block", handle="a1"))
+    check("delete por handle", ll[0], ("delete_database_object", {"kind": "block", "handle": "A1"}))
+    rechazada("delete sin nombre ni handle", lambda: server.delete_database_object("layer"))
+    rechazada("delete con nombre y handle", lambda: server.delete_database_object("layer", "A", "A1"))
+    rechazada("delete de DATABASE", lambda: server.delete_database_object("layer", handle="DATABASE"))
+    rechazada("delete con kind desconocido", lambda: server.delete_database_object("layout", "BP-01"))
+    r, ll = con_plugin(lambda: server.create_object("Line", {"StartPoint": [0, 0, 0]}, container="MI-BLOQUE"))
+    check("create_object con container", ll[0][1].get("container"), "MI-BLOQUE")
+    rechazada("create_object con container vacio", lambda: server.create_object("Line", None, container=" "))
+
     # ---- sesión: leer es de lectura; cambiar no se reintenta
     check("get_properties es de lectura", session.retry_safe("get_properties"), True)
     check("list_properties es de lectura", session.retry_safe("list_properties"), True)

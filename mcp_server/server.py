@@ -5550,7 +5550,8 @@ def call_object_method(handle: str, method: str, args: Optional[list[Any]] = Non
 @mcp.tool()
 def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None,
                   init_method: Optional[str] = None,
-                  init_args: Optional[list[Any]] = None) -> dict[str, Any]:
+                  init_args: Optional[list[Any]] = None,
+                  container: Optional[str] = None) -> dict[str, Any]:
     """Crea una entidad de CUALQUIER clase de AutoCAD (Line, Circle, Arc,
     Polyline, DBText, MText, Hatch, Solid3d, SubDMesh, PlaneSurface, Table...)
     en el espacio activo, con sus propiedades, y devuelve su handle: la
@@ -5565,11 +5566,14 @@ def create_object(entity_type: str, properties: Optional[dict[str, Any]] = None,
         init_method='CreateBox', init_args=[10, 5, 3]) levanta una caja; 'CreateSphere'
         [radio], 'CreateTorus', 'CreateWedge', 'CreatePyramid', 'CreateFrustum'. Si el
         método falla la entidad se borra: no queda una entidad vacía.
+    container: nombre o handle de un BLOQUE: la entidad va a su definición en vez del
+        espacio activo. Así se arma un bloque: create_database_object('block', 'MI-BLOQUE')
+        y después create_object('Line', {...}, container='MI-BLOQUE') por cada entidad.
     No se pueden crear de la nada las que necesitan más que propiedades (Viewport, OLE,
     imágenes, referencias de atributos...). Ojo: las primitivas y los métodos de Solid3d
     corren código nativo: probalos en un dibujo descartable."""
     try:
-        r = prop_mod.create_object(entity_type, properties)
+        r = prop_mod.create_object(entity_type, properties, container)
     except prop_mod.PropiedadesError as exc:
         return {"ok": False, "error": str(exc)}
     if init_method:
@@ -5605,6 +5609,41 @@ def list_children(target: str = "DATABASE", skip: int = 0, take: int = 500) -> d
     set_object_properties: las propiedades de la base de datos del dibujo
     (unidades, escalas, variables de cota por defecto...)."""
     return _prop(prop_mod.list_children, target, skip, take)
+
+
+@mcp.tool()
+def create_database_object(kind: str, name: str,
+                           properties: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Crea un objeto del dibujo que NO es una entidad: una capa, un estilo de texto,
+    un estilo de cota, la definición de un bloque, una aplicación registrada o un
+    sistema de coordenadas. Completa a list_children (que los recorre) y a
+    get/set_object_properties (que los configuran).
+
+    kind: layer | textstyle | dimstyle | block | regapp | ucs.
+    name: el nombre (no vacío, sin < > / \\ " : ; ? * | , = ` ni empezar con *).
+    properties: {propiedad: valor} que se fijan al crear —una capa: Color,
+        LineWeight, IsLocked, Description...; un estilo de texto: FileName ('arial.ttf'),
+        TextSize; uno de cota: Dimtxt, Dimscale, Dimasz...; list_object_properties
+        con 'LayerTableRecord', 'TextStyleTableRecord', 'DimStyleTableRecord' o
+        'BlockTableRecord' dice cuáles—. Se valida TODO antes de crear: si algo falla,
+        no se crea nada. Un nombre repetido se rechaza.
+    Devuelve {name, handle, type}. Un bloque nace vacío: sus entidades se agregan con
+    create_object(..., container=nombre) y se inserta con insert_block."""
+    return _prop(prop_mod.create_database_object, kind, name, properties)
+
+
+@mcp.tool()
+def delete_database_object(kind: str, name: Optional[str] = None,
+                           handle: Optional[str] = None) -> dict[str, Any]:
+    """Borra una capa, un estilo de texto o de cota, una definición de bloque, una
+    aplicación registrada o un sistema de coordenadas, por nombre o por handle.
+
+    NO es purgar y no esquiva nada: se rechaza con motivo un objeto del sistema (capa 0
+    y Defpoints, el estilo Standard, *Model_Space, bloques anónimos), el que está como
+    ACTUAL, un bloque que todavía está insertado, y lo que AutoCAD se niegue a borrar
+    porque el dibujo lo usa (una capa con objetos). Un estilo o bloque sin uso se puede
+    limpiar en lote con las tools de purga."""
+    return _prop(prop_mod.delete_database_object, kind, name, handle)
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:
