@@ -402,6 +402,74 @@ def main() -> int:
         sw = intento("sweep_solid", lambda: s.sweep_solid(sw_prof, sw_path["handle"]))
         chk("sweep_solid: cilindro r=1 de 10 = 31.42", sw and bueno(sw) and abs(float(sw.get("volume", 0)) - math.pi * 10) < 0.05, sw)
 
+    # ---------------------------------------------------------------- 1.19.0: stretch, lengthen, align, wipeout, chamfer, calco PDF
+    # stretch: rectángulo 10x5, ventana sobre el borde derecho, +2 en X -> 12x5 = 60
+    rc = s.create_polyline([[800, 0], [810, 0], [810, 5], [800, 5]], closed=True)["handle"]
+    ln = s.create_line(820, 0, 830, 0)["handle"]
+    st = intento("stretch_entities polilínea", lambda: s.stretch_entities([[808, -1], [812, 6]], [2, 0], [rc, ln]))
+    chk("stretch mueve 2 vértices de la polilínea y ninguno de la línea", st and bueno(st) and st.get("verticesMoved") == 2 and st.get("entitiesChanged") == 1, st)
+    st = intento("stretch_entities línea", lambda: s.stretch_entities([[825, -1], [832, 6]], [2, 0], [rc, ln]))
+    chk("stretch mueve solo el extremo derecho de la línea", st and bueno(st) and st.get("verticesMoved") == 1, st)
+    ar = s.calculate_area(rc)
+    chk("el rectángulo ahora mide 12x5 = 60", abs(float(ar.get("area", 0)) - 60.0) < 1e-6, ar)
+    gl = s.get_entity(ln)
+    chk("la línea estirada mide 12 (820 a 832)", abs(float(gl.get("length", 0)) - 12) < 1e-6, gl)
+    rechaza("stretch con ventana sin área se rechaza", lambda: s.stretch_entities([[0, 0], [0, 5]], [1, 0]), "área")
+
+    # lengthen: línea de 10 -> +2 = 12 -> 50 % = 6; total 20
+    ll = s.create_line(840, 0, 850, 0)["handle"]
+    r = intento("lengthen delta", lambda: s.lengthen_curve(ll, "end", delta=2))
+    chk("lengthen +2 da 12", r and bueno(r) and abs(r.get("lengthAfter", 0) - 12) < 1e-6, r)
+    r = intento("lengthen percent", lambda: s.lengthen_curve(ll, "start", percent=50))
+    chk("lengthen 50 % da 6", r and bueno(r) and abs(r.get("lengthAfter", 0) - 6) < 1e-6, r)
+    r = intento("lengthen total", lambda: s.lengthen_curve(ll, "end", total=20))
+    chk("lengthen total 20", r and bueno(r) and abs(r.get("lengthAfter", 0) - 20) < 1e-6, r)
+    rechaza("lengthen a largo negativo se rechaza", lambda: s.lengthen_curve(ll, "end", delta=-100), "")
+    pa_ = s.create_polyline([[860, 0], [870, 0], [870, 10]], closed=False)["handle"]
+    r = intento("lengthen polilínea abierta", lambda: s.lengthen_curve(pa_, "end", delta=5))
+    chk("lengthen polilínea: 20 -> 25", r and bueno(r) and abs(r.get("lengthAfter", 0) - 25) < 1e-6, r)
+
+    # align: línea horizontal de 10 rotada 90 grados y llevada a otro punto
+    al = s.create_line(880, 0, 890, 0)["handle"]
+    r = intento("align_entities", lambda: s.align_entities([al], [880, 0], [880, 20], [890, 0], [880, 30]))
+    chk("align: rotó 90 grados", r and bueno(r) and abs(abs(r.get("rotationDeg", 0)) - 90) < 1e-6, r)
+    pr = s.get_object_properties([al], ["StartPoint", "EndPoint"])
+    chk("la línea quedó vertical de (880,20) a (880,30)", "880" in txt(pr) and "30" in txt(pr), pr)
+    rechaza("align con scale y un solo par se rechaza", lambda: s.align_entities([al], [0, 0], [1, 1], scale=True), "segundo")
+
+    # wipeout
+    wp = intento("create_wipeout", lambda: s.create_wipeout([[900, 0], [910, 0], [910, 5], [900, 5]]))
+    chk("create_wipeout crea la máscara", wp and bueno(wp) and wp.get("handle"), wp)
+    if wp and wp.get("handle"):
+        chk("la entidad es un Wipeout", "Wipeout" in txt(s.get_entity(wp["handle"])), s.get_entity(wp["handle"]))
+    rechaza("wipeout con 2 puntos se rechaza", lambda: s.create_wipeout([[0, 0], [1, 1]]), "3")
+
+    # chamfer (motor nativo): esquina de dos líneas
+    c1 = s.create_line(920, 0, 930, 0)["handle"]
+    c2 = s.create_line(930, 0, 930, 10)["handle"]
+    ch = intento("chamfer_entities", lambda: s.chamfer_entities(c1, c2, 2, [922, 0], [930, 8]))
+    chk("chamfer crea 1 línea nueva", ch and bueno(ch) and len(ch.get("created", [])) == 1, ch)
+    rechaza("chamfer de la misma entidad se rechaza", lambda: s.chamfer_entities(c1, c1, 1, [0, 0], [1, 1]), "misma")
+
+    # calco PDF: un PDF mínimo escrito acá
+    import os as _os, tempfile as _tf
+    _carpeta = _tf.mkdtemp(prefix="mcp19_")
+    _pdf = _os.path.join(_carpeta, "calco.pdf")
+    _objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>"]
+    _cuerpo, _offs = "%PDF-1.4\n", []
+    for _i, _o in enumerate(_objs, 1):
+        _offs.append(len(_cuerpo.encode("latin-1")))
+        _cuerpo += f"{_i} 0 obj\n{_o}\nendobj\n"
+    _xref = len(_cuerpo.encode("latin-1"))
+    _cuerpo += f"xref\n0 {len(_objs) + 1}\n0000000000 65535 f \n" + "".join(f"{_o:010d} 00000 n \n" for _o in _offs)
+    _cuerpo += f"trailer\n<< /Size {len(_objs) + 1} /Root 1 0 R >>\nstartxref\n{_xref}\n%%EOF\n"
+    open(_pdf, "wb").write(_cuerpo.encode("latin-1"))
+    pu = intento("attach_pdf_underlay", lambda: s.attach_pdf_underlay(_pdf, 940, 0, 1, 1.0))
+    chk("attach_pdf_underlay crea la referencia", pu and bueno(pu) and pu.get("handle"), pu)
+    rechaza("pdf inexistente se rechaza", lambda: s.attach_pdf_underlay(_os.path.join(_carpeta, "no_existe.pdf"), 0, 0), "")
+    rechaza("archivo que no es pdf se rechaza", lambda: s.attach_pdf_underlay(_os.path.join(_carpeta, "calco.dwg"), 0, 0), "pdf")
+
     # ---------------------------------------------------------------- purga (al final: borra cosas)
     s.create_database_object("layer", "SOBRA17", {})
     s.create_database_object("textstyle", "SOBRA17", {"FileName": "arial.ttf"})

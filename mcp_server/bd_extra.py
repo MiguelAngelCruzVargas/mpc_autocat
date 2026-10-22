@@ -701,3 +701,80 @@ def loft_solid(sections: list[str], guides: Optional[list[str]] = None, path: Op
         raise BdError("Un loft lleva guías O trayectoria, no las dos.")
     _capa_opcional(pars, layer)
     return acad.call("loft_solid", pars)
+
+
+# ------------------------------------------------------------------ STRETCH, LENGTHEN, ALIGN, WIPEOUT, calco PDF (plugin 1.19.0)
+
+def stretch_entities(window: list[list[float]], delta: list[float], handles: Optional[list[str]] = None) -> dict[str, Any]:
+    if (not isinstance(window, (list, tuple)) or len(window) != 2):
+        raise BdError("'window' es [[x1, y1], [x2, y2]].")
+    w = [_punto2(p, f"window[{i}]") for i, p in enumerate(window)]
+    if w[0][0] == w[1][0] or w[0][1] == w[1][1]:
+        raise BdError("'window' tiene que tener área.")
+    d = _punto2(delta, "delta")
+    if all(abs(c) < 1e-12 for c in d):
+        raise BdError("'delta' no puede ser nulo.")
+    pars: dict[str, Any] = {"window": w, "delta": d}
+    if handles is not None:
+        pars["handles"] = _handles(handles, "handles", maximo=2000)
+    return acad.call("stretch_entities", pars)
+
+
+def lengthen_curve(handle: str, end: str = "end", delta: Optional[float] = None, total: Optional[float] = None,
+                   percent: Optional[float] = None) -> dict[str, Any]:
+    if end not in ("start", "end"):
+        raise BdError("'end' es 'start' o 'end'.")
+    dados = [(k, v) for k, v in (("delta", delta), ("total", total), ("percent", percent)) if v is not None]
+    if len(dados) != 1:
+        raise BdError("Pasá uno solo de 'delta', 'total' o 'percent'.")
+    k, v = dados[0]
+    if not _num(v):
+        raise BdError(f"'{k}' tiene que ser un número finito.")
+    if k == "total" and v <= 0:
+        raise BdError("'total' tiene que ser mayor que cero.")
+    if k == "percent" and v <= 0:
+        raise BdError("'percent' tiene que ser mayor que cero (100 = sin cambio).")
+    return acad.call("lengthen_curve", {"handle": _handle(handle), "end": end, k: float(v)})
+
+
+def align_entities(handles: list[str], from1: list[float], to1: list[float], from2: Optional[list[float]] = None,
+                   to2: Optional[list[float]] = None, scale: bool = False) -> dict[str, Any]:
+    pars: dict[str, Any] = {"handles": _handles(handles, "handles", maximo=2000), "from1": _punto2(from1, "from1"),
+                            "to1": _punto2(to1, "to1"), "scale": scale is True}
+    if (from2 is None) != (to2 is None):
+        raise BdError("El segundo par necesita from2 Y to2.")
+    if from2 is not None:
+        pars["from2"], pars["to2"] = _punto2(from2, "from2"), _punto2(to2, "to2")
+        if pars["from2"][:2] == pars["from1"][:2] or pars["to2"][:2] == pars["to1"][:2]:
+            raise BdError("Los dos puntos de un par no pueden coincidir.")
+    elif scale:
+        raise BdError("scale=True necesita el segundo par de puntos (from2/to2).")
+    return acad.call("align_entities", pars)
+
+
+def create_wipeout(points: list[list[float]], layer: Optional[str] = None) -> dict[str, Any]:
+    if not isinstance(points, (list, tuple)) or len(points) < 3:
+        raise BdError("'points' necesita al menos 3 puntos [x, y].")
+    if len(points) > 500:
+        raise BdError("Máximo 500 puntos.")
+    pars: dict[str, Any] = {"points": [_punto2(p, f"points[{i}]")[:2] for i, p in enumerate(points)]}
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+    return acad.call("create_wipeout", pars)
+
+
+def attach_pdf_underlay(path: str, x: float, y: float, page: int = 1, scale: float = 1.0, rotation_deg: float = 0.0,
+                        z: float = 0.0, layer: Optional[str] = None) -> dict[str, Any]:
+    if not isinstance(path, str) or not path.strip().lower().endswith(".pdf"):
+        raise BdError("'path' es la ruta de un archivo .pdf.")
+    if not (_num(x) and _num(y) and _num(z) and _num(rotation_deg)):
+        raise BdError("x, y, z y rotation_deg tienen que ser números finitos.")
+    if not _num(scale) or scale <= 0:
+        raise BdError("'scale' tiene que ser mayor que cero.")
+    if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+        raise BdError("'page' es un entero desde 1.")
+    pars: dict[str, Any] = {"path": path.strip(), "x": float(x), "y": float(y), "z": float(z), "page": page,
+                            "scale": float(scale), "rotation_deg": float(rotation_deg)}
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+    return acad.call("attach_pdf_underlay", pars)

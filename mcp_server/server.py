@@ -5650,7 +5650,7 @@ def delete_database_object(kind: str, name: Optional[str] = None,
     return _prop(prop_mod.delete_database_object, kind, name, handle)
 
 
-_PEND = " (plugin 1.18.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
+_PEND = " (plugin 1.19.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
 
 
 def _con_pend(fn):
@@ -6280,6 +6280,59 @@ def list_tool_categories(category: Optional[str] = None, workflow: Optional[str]
             "nota": "category=<clave> lista las tools; workflow=<flujo> da los pasos en orden; query=<texto> busca."}
 
 
+@mcp.tool()
+@_con_pend
+def stretch_entities(window: list[list[float]], delta: list[float], handles: Optional[list[str]] = None) -> dict[str, Any]:
+    """STRETCH con ventana de captura: mueve los VÉRTICES de líneas y polilíneas que caen dentro de
+    window [[x1,y1],[x2,y2]] por delta [dx, dy], y los círculos, textos, bloques y puntos
+    cuyo punto de inserción o centro cae dentro. Lo que cruza la ventana sin ser movible
+    (arcos, achurados...) sale en 'skipped'. Es como se corrige un plano: alargar un cuarto
+    moviendo su muro y todo lo que cuelga de él, sin redibujar. handles opcional: limita a
+    esas entidades. Todo o nada."""
+    return _bd(bd_mod.stretch_entities, window, delta, handles)
+
+
+@mcp.tool()
+@_con_pend
+def lengthen_curve(handle: str, end: str = "end", delta: Optional[float] = None, total: Optional[float] = None,
+                   percent: Optional[float] = None) -> dict[str, Any]:
+    """LENGTHEN: alarga o acorta una línea, un arco o una polilínea ABIERTA (con el tramo del
+    extremo recto) por un extremo ('start' o 'end'). Pasá UNO de: delta (largo a sumar, negativo
+    acorta), total (largo final) o percent (porcentaje del largo actual). Devuelve el largo
+    antes y después."""
+    return _bd(bd_mod.lengthen_curve, handle, end, delta, total, percent)
+
+
+@mcp.tool()
+@_con_pend
+def align_entities(handles: list[str], from1: list[float], to1: list[float], from2: Optional[list[float]] = None,
+                   to2: Optional[list[float]] = None, scale: bool = False) -> dict[str, Any]:
+    """ALIGN: con un par de puntos (from1 -> to1) traslada; con dos pares rota para que el
+    segmento from1-from2 caiga sobre to1-to2, y con scale=True también lo escala. Es como se
+    acomoda un detalle o un plano importado sobre un punto y una dirección conocidos."""
+    return _bd(bd_mod.align_entities, handles, from1, to1, from2, to2, scale)
+
+
+@mcp.tool()
+@_con_pend
+def create_wipeout(points: list[list[float]], layer: Optional[str] = None) -> dict[str, Any]:
+    """Máscara (WIPEOUT): un polígono que OCULTA lo que queda debajo. Sirve para que un rótulo
+    o una cota se lea sobre un achurado o un montón de líneas. points: 3 o más puntos [x, y] del
+    contorno. layer: capa EXISTENTE. Se imprime como fondo del color del papel."""
+    return _bd(bd_mod.create_wipeout, points, layer)
+
+
+@mcp.tool()
+@_con_pend
+def attach_pdf_underlay(path: str, x: float, y: float, page: int = 1, scale: float = 1.0,
+                        rotation_deg: float = 0.0, z: float = 0.0, layer: Optional[str] = None) -> dict[str, Any]:
+    """Calco PDF (PDFATTACH): un PDF —el plano que mandó el cliente— como fondo del dibujo, para
+    trazar encima. path: .pdf existente; x, y: dónde va su esquina inferior izquierda; page: la
+    página; scale: factor sobre el tamaño del PDF (hay que calibrarlo midiendo una cota
+    conocida; el resultado trae 'width' y 'height'). No importa el PDF a geometría: es un fondo."""
+    return _bd(bd_mod.attach_pdf_underlay, path, x, y, page, scale, rotation_deg, z, layer)
+
+
 def _prop(fn, *args, **kw) -> dict[str, Any]:
     try:
         return fn(*args, **kw)
@@ -6402,6 +6455,19 @@ def fillet_entities(first: str, second: str, radius: float, point1: list[float],
     FILLETRAD se restaura al terminar.
     """
     return _edicion(edicion_mod.fillet, first, second, radius, point1, point2, wait_s)
+
+
+@mcp.tool()
+@_con_nota
+def chamfer_entities(first: str, second: str, d1: float, point1: list[float], point2: list[float],
+                     d2: Optional[float] = None, wait_s: float = 30.0) -> dict[str, Any]:
+    """CHAMFER de AutoCAD: achaflana la esquina de dos entidades con distancias d1 (sobre la
+    primera) y d2 (sobre la segunda; por defecto igual a d1). d1=0 deja la esquina viva.
+
+    first / second: handles (líneas o polilíneas). point1 / point2: [x, y] de un punto de CADA
+    una, del lado que se CONSERVA, cerca de la esquina. CHAMFERA, CHAMFERB y CHAMMODE se
+    restauran al terminar."""
+    return _edicion(edicion_mod.chamfer, first, second, d1, point1, point2, d2, wait_s)
 
 
 @mcp.tool()

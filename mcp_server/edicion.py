@@ -121,6 +121,24 @@ def fillet(first: str, second: str, radius: float, point1: list[float],
                       "point1": _punto(point1, "point1"), "point2": _punto(point2, "point2")}, wait_s)
 
 
+def chamfer(first: str, second: str, d1: float, point1: list[float], point2: list[float],
+            d2: Optional[float] = None, wait_s: float = _ESPERA_S) -> dict[str, Any]:
+    ds = []
+    for nombre, v in (("d1", d1), ("d2", d1 if d2 is None else d2)):
+        try:
+            x = float(v)
+        except (TypeError, ValueError) as exc:
+            raise EdicionError(f"'{nombre}' tiene que ser un número, no {v!r}.") from exc
+        if x != x or x < 0 or abs(x) == float("inf"):
+            raise EdicionError(f"'{nombre}' tiene que ser un número >= 0 (0 = esquina viva).")
+        ds.append(x)
+    a, b = _handle(first, "first"), _handle(second, "second")
+    if a == b:
+        raise EdicionError("'first' y 'second' son la misma entidad.")
+    return _ejecutar({"op": "chamfer", "first": a, "second": b, "d1": ds[0], "d2": ds[1],
+                      "point1": _punto(point1, "point1"), "point2": _punto(point2, "point2")}, wait_s)
+
+
 def join(handles: list[str], wait_s: float = _ESPERA_S) -> dict[str, Any]:
     return _ejecutar({"op": "join", "handles": _handles(handles, "handles", 2)}, wait_s)
 

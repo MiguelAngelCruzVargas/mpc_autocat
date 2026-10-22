@@ -302,6 +302,37 @@ def main() -> int:
     for cambio in ("extrude_solid", "revolve_solid", "sweep_solid", "loft_solid"):
         check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
 
+    # ---- stretch, lengthen, align, wipeout, calco pdf (1.19.0)
+    manda("stretch_entities", lambda: server.stretch_entities([[0, 0], [5, 5]], [2, 0]),
+          "stretch_entities", {"window": [[0.0, 0.0], [5.0, 5.0]], "delta": [2.0, 0.0]})
+    manda("stretch_entities con handles", lambda: server.stretch_entities([[0, 0], [5, 5]], [0, 1], ["a1"]),
+          "stretch_entities", {"window": [[0.0, 0.0], [5.0, 5.0]], "delta": [0.0, 1.0], "handles": ["A1"]})
+    rechazada("stretch ventana sin area", lambda: server.stretch_entities([[0, 0], [0, 5]], [1, 0]))
+    rechazada("stretch delta nulo", lambda: server.stretch_entities([[0, 0], [5, 5]], [0, 0]))
+    manda("lengthen_curve delta", lambda: server.lengthen_curve("a1", "start", delta=-0.5),
+          "lengthen_curve", {"handle": "A1", "end": "start", "delta": -0.5})
+    rechazada("lengthen sin modo", lambda: server.lengthen_curve("A1"))
+    rechazada("lengthen con dos modos", lambda: server.lengthen_curve("A1", delta=1, total=5))
+    rechazada("lengthen total 0", lambda: server.lengthen_curve("A1", total=0))
+    rechazada("lengthen extremo invalido", lambda: server.lengthen_curve("A1", "medio", delta=1))
+    manda("align_entities un par", lambda: server.align_entities(["a1"], [0, 0], [5, 5]),
+          "align_entities", {"handles": ["A1"], "from1": [0.0, 0.0], "to1": [5.0, 5.0], "scale": False})
+    manda("align_entities dos pares con escala", lambda: server.align_entities(["A1"], [0, 0], [1, 1], [1, 0], [2, 1], True),
+          "align_entities", {"handles": ["A1"], "from1": [0.0, 0.0], "to1": [1.0, 1.0], "scale": True, "from2": [1.0, 0.0], "to2": [2.0, 1.0]})
+    rechazada("align scale sin segundo par", lambda: server.align_entities(["A1"], [0, 0], [1, 1], scale=True))
+    rechazada("align segundo par incompleto", lambda: server.align_entities(["A1"], [0, 0], [1, 1], from2=[1, 0]))
+    rechazada("align puntos de un par iguales", lambda: server.align_entities(["A1"], [0, 0], [1, 1], [0, 0], [2, 2]))
+    manda("create_wipeout", lambda: server.create_wipeout([[0, 0], [4, 0], [4, 2]], "MASCARA"),
+          "create_wipeout", {"points": [[0.0, 0.0], [4.0, 0.0], [4.0, 2.0]], "layer": "MASCARA"})
+    rechazada("wipeout con dos puntos", lambda: server.create_wipeout([[0, 0], [1, 1]]))
+    manda("attach_pdf_underlay", lambda: server.attach_pdf_underlay("C:/planos/cliente.pdf", 0, 0, 2, 0.5),
+          "attach_pdf_underlay", {"path": "C:/planos/cliente.pdf", "x": 0.0, "y": 0.0, "z": 0.0, "page": 2, "scale": 0.5, "rotation_deg": 0.0})
+    rechazada("pdf que no es pdf", lambda: server.attach_pdf_underlay("C:/planos/cliente.dwg", 0, 0))
+    rechazada("pdf escala 0", lambda: server.attach_pdf_underlay("C:/planos/cliente.pdf", 0, 0, scale=0))
+    rechazada("pdf pagina 0", lambda: server.attach_pdf_underlay("C:/planos/cliente.pdf", 0, 0, page=0))
+    for cambio in ("stretch_entities", "lengthen_curve", "align_entities", "create_wipeout", "attach_pdf_underlay"):
+        check(f"{cambio} NO se reintenta", session.retry_safe(cambio), False)
+
     # ---- sesión
     for lectura in ("get_xdata", "get_custom_data", "get_block_attributes", "list_annotation_scales",
                     "list_plot_options", "get_dynamic_block_properties"):

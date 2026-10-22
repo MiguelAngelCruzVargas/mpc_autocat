@@ -120,6 +120,18 @@ def test_extend_fillet_join_overkill() -> None:
     con_plugin(p, lambda: server.fillet_entities("a1", "b2", 0, [0, 0], [1, 1]))
     check("fillet con radio 0 es válido", p.llamadas[0][1]["radius"], 0.0)
     p = Plugin(0)
+    con_plugin(p, lambda: server.chamfer_entities("a1", "b2", 0.5, [0, 0], [1, 1]))
+    check("chamfer: d2 por defecto igual a d1", p.llamadas[0][1],
+          {"op": "chamfer", "first": "A1", "second": "B2", "d1": 0.5, "d2": 0.5,
+           "point1": [0.0, 0.0], "point2": [1.0, 1.0]})
+    p = Plugin(0)
+    con_plugin(p, lambda: server.chamfer_entities("a1", "b2", 0.5, [0, 0], [1, 1], d2=0.2))
+    check("chamfer con d2 distinto", (p.llamadas[0][1]["d1"], p.llamadas[0][1]["d2"]), (0.5, 0.2))
+    r = server.chamfer_entities("a1", "a1", 0.5, [0, 0], [1, 1])
+    check("chamfer con la misma entidad se rechaza", r.get("ok"), False)
+    r = server.chamfer_entities("a1", "b2", -1, [0, 0], [1, 1])
+    check("chamfer con distancia negativa se rechaza", r.get("ok"), False)
+    p = Plugin(0)
     con_plugin(p, lambda: server.join_entities(["a1", "b2", "c3"]))
     check("join", p.llamadas[0][1], {"op": "join", "handles": ["A1", "B2", "C3"]})
     p = Plugin(0)

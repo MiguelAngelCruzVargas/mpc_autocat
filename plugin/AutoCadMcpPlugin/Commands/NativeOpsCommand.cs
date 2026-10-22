@@ -92,10 +92,11 @@ namespace AutoCadMcpPlugin.Commands
                 case "trim": PrepararTrimExtend(doc, pars, job, extend: false); break;
                 case "extend": PrepararTrimExtend(doc, pars, job, extend: true); break;
                 case "fillet": PrepararFillet(doc, pars, job); break;
+                case "chamfer": PrepararChamfer(doc, pars, job); break;
                 case "join": PrepararJoin(doc, pars, job); break;
                 case "overkill": PrepararOverkill(doc, pars, job); break;
                 default:
-                    throw new ArgumentException("Operación '" + op + "' desconocida; válidas: trim, extend, fillet, join, overkill.");
+                    throw new ArgumentException("Operación '" + op + "' desconocida; válidas: trim, extend, fillet, chamfer, join, overkill.");
             }
             SnapshotAntes(doc, job);
 
@@ -300,6 +301,39 @@ namespace AutoCadMcpPlugin.Commands
                 }
             };
             job.Tokens = ed => new object[] { "_.FILLET", pa, pb };
+        }
+
+        /// <summary>CHAMFER por distancias: first, second, d1, [d2=d1], point1, point2. Las distancias van por CHAMFERA/CHAMFERB
+        /// con CHAMMODE=0 (modo distancia) y se restauran al terminar, igual que FILLETRAD en el empalme.</summary>
+        private static void PrepararChamfer(Document doc, JsonObject pars, Job job)
+        {
+            var a = Id(doc, pars["first"], "first");
+            var b = Id(doc, pars["second"], "second");
+            if (a == b) throw new ArgumentException("first y second son la misma entidad.");
+            if (pars["d1"] == null) throw new ArgumentException("Falta 'd1' (distancia del chaflán sobre la primera; 0 = esquina viva).");
+            double d1 = pars["d1"].GetValue<double>();
+            double d2 = pars["d2"] != null ? pars["d2"].GetValue<double>() : d1;
+            if (double.IsNaN(d1) || double.IsInfinity(d1) || d1 < 0 || double.IsNaN(d2) || double.IsInfinity(d2) || d2 < 0)
+                throw new ArgumentException("'d1' y 'd2' tienen que ser números >= 0.");
+            var pa = SobreCurva(doc, a, Punto(pars["point1"], "point1"), out double da);
+            var pb = SobreCurva(doc, b, Punto(pars["point2"], "point2"), out double db_);
+            job.Involved.Add(a); job.Involved.Add(b);
+            job.ViewCenter = new Point3d((pa.X + pb.X) / 2, (pa.Y + pb.Y) / 2, 0);
+            job.ViewHeight = Math.Max(1.5 * (pa.DistanceTo(pb) + 2 * Math.Max(d1, d2)), 1e-3);
+            object antA = null, antB = null, antModo = null;
+            job.Before = ed =>
+            {
+                antA = SysVarObj("CHAMFERA"); antB = SysVarObj("CHAMFERB"); antModo = SysVarObj("CHAMMODE");
+                Application.SetSystemVariable("CHAMMODE", 0);
+                Application.SetSystemVariable("CHAMFERA", d1);
+                Application.SetSystemVariable("CHAMFERB", d2);
+            };
+            job.After = ed =>
+            {
+                foreach (var kv in new[] { Tuple.Create("CHAMFERA", antA), Tuple.Create("CHAMFERB", antB), Tuple.Create("CHAMMODE", antModo) })
+                    if (kv.Item2 != null) { try { Application.SetSystemVariable(kv.Item1, kv.Item2); } catch (SysException) { } }
+            };
+            job.Tokens = ed => new object[] { "_.CHAMFER", pa, pb };
         }
 
         private static void PrepararJoin(Document doc, JsonObject pars, Job job)

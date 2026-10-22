@@ -261,6 +261,16 @@ namespace AutoCadMcpPlugin
                     return LayerOpsCommands.ViewportLayers(doc, pars);
                 case "export_copy":
                     return SaveCommands.ExportCopy(doc, pars);
+                case "stretch_entities":
+                    return EditExtra2Commands.Stretch(doc, pars);
+                case "lengthen_curve":
+                    return EditExtra2Commands.Lengthen(doc, pars);
+                case "align_entities":
+                    return EditExtra2Commands.Align(doc, pars);
+                case "create_wipeout":
+                    return EditExtra2Commands.Wipeout(doc, pars);
+                case "attach_pdf_underlay":
+                    return UnderlayCommands.AttachPdf(doc, pars);
                 case "bind_xref":
                     return XrefCommands.Bind(doc, pars);
                 case "unload_xref":
