@@ -1372,8 +1372,13 @@ sesión con el ID de Autodesk: esa ventana bloquea el socket hasta que la person
 (`acmcp.dll`, carga bajo demanda, sin comandos registrados en su manifiesto). Dentro del DLL hay comandos
 `MCPHTTPSTART`, `MCPHTTPSTOP` y `MCPCONFIG` y un servidor HTTP en `http://localhost:<puerto>/mcp` (apagado por
 omisión, `EnableHttpServer`), pero en una prueba real los tres salieron "desconocido" aun después de
-`NETLOAD`, y ningún puerto nuevo se abrió. Autodesk lo da como vista previa técnica; no hay documentación
-pública de cómo habilitar el HTTP. No insistir sin documentación oficial: no es parte de lo que este repo necesita.
+`NETLOAD`, y ningún puerto nuevo se abrió. Autodesk lo da como vista previa técnica y no documenta cómo
+habilitar el HTTP. Leyendo el DLL (a pedido del usuario, en su máquina; nada se copia al repo) el motivo es
+este: los comandos llevan una condición que los oculta salvo que exista la variable de entorno
+`ACMCP_TOOLS_CONFIG_FILE` (ruta absoluta a un JSON `{"toolsConfiguration": {"enableHttpServer": true}}`),
+y esa misma variable es la única fuente de la configuración. Con ella puesta ANTES de abrir AutoCAD, al
+cargar `acmcp.dll` el servidor HTTP queda en `http://localhost:<5001-5050>/mcp` (sin autenticación; CORS solo
+para dominios de Autodesk). Sin verificar en vivo todavía; no es parte de lo que este repo necesita.
 
 
 `python mcp_server/test_contract.py` chequea que cada tool tenga su `case` en
