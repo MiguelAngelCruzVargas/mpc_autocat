@@ -2,7 +2,7 @@
 
 Generado por `python tools/cobertura_cinta.py` (cinta real de AutoCAD 2027 × `mcp_server/categorias.py`). No se edita a mano: se corrige `categorias.py` o este script.
 
-**360 comandos distintos en la cinta.** 118 con tool propia, 63 alcanzables hoy con las tools genéricas (reflexión), 67 que solo tienen sentido con una persona frente a la pantalla, 24 fuera de alcance (render, geolocalización, nubes de puntos), 87 candidatos a implementar y 1 sin clasificar. De los 269 que tienen sentido automatizar, 181 están cubiertos (67 %).
+**360 comandos distintos en la cinta.** 130 con tool propia, 57 alcanzables hoy con las tools genéricas (reflexión), 67 que solo tienen sentido con una persona frente a la pantalla, 24 fuera de alcance (render, geolocalización, nubes de puntos), 81 candidatos a implementar y 1 sin clasificar. De los 269 que tienen sentido automatizar, 187 están cubiertos (69 %).
 
 Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_method`, `set_object_properties`) · ○ solo interfaz · ▫ fuera de alcance · ✖ pendiente · ? sin clasificar
 
@@ -28,13 +28,13 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 - **Utilidades**: ✔ MEASUREGEOM → `calculate_area` · ✔ QSELECT → `query_entities` · ✔ AI_SELALL → `select_entities` · ◐ ID → `get_object_properties` · ◐ PTYPE → `set_system_variable`
 - **Portapapeles**: ○ PASTECLIP · ○ PASTEBLOCK · ○ PASTEASHYPERLINK · ○ PASTEORIG · ○ PASTESPEC · ○ CUTCLIP · ○ CUTBASE · ○ COPYCLIP · ○ COPYBASE
 - **Modelado**: ◐ BOX → `create_object` · ◐ CYLINDER → `create_object` · ◐ CONE → `create_object` · ◐ SPHERE → `create_object` · ◐ PYRAMID → `create_object` · ◐ WEDGE → `create_object` · ◐ TORUS → `create_object` · ✔ EXTRUDE → `extrude_profile, extrude_solid` · ✔ LOFT → `loft_solid` · ✔ REVOLVE → `revolve_solid` · ✔ SWEEP → `sweep_solid` · ◐ POLYSOLID → `create_object` · ◐ PRESSPULL → `call_object_method` · ✖ SOLVIEW · ✖ SOLDRAW · ✖ SOLPROF
-- **Malla**: ◐ MESHSMOOTH → `call_object_method` · ◐ MESHSMOOTHMORE → `call_object_method` · ◐ MESHSMOOTHLESS → `call_object_method` · ◐ MESHREFINE → `call_object_method`
-- **Editar sólidos**: ✔ UNION → `solid_boolean, union_regions` · ◐ INTERFERE → `call_object_method` · ✔ SUBTRACT → `solid_boolean` · ◐ SLICE → `call_object_method` · ✔ INTERSECT → `solid_boolean` · ◐ THICKEN → `call_object_method` · ◐ XEDGES → `call_object_method` · ◐ IMPRINT → `call_object_method` · ◐ SOLIDEDIT → `call_object_method` · ◐ CONVTOSOLID → `call_object_method` · ◐ CONVTOSURFACE → `call_object_method`
+- **Malla**: ✔ MESHSMOOTH → `mesh_smooth` · ✔ MESHSMOOTHMORE → `mesh_smooth` · ✔ MESHSMOOTHLESS → `mesh_smooth` · ✔ MESHREFINE → `mesh_smooth`
+- **Editar sólidos**: ✔ UNION → `solid_boolean, union_regions` · ◐ INTERFERE → `call_object_method` · ✔ SUBTRACT → `solid_boolean` · ◐ SLICE → `call_object_method` · ✔ INTERSECT → `solid_boolean` · ◐ THICKEN → `call_object_method` · ◐ XEDGES → `call_object_method` · ◐ IMPRINT → `call_object_method` · ◐ SOLIDEDIT → `call_object_method` · ✔ CONVTOSOLID → `convert_mesh` · ✔ CONVTOSURFACE → `convert_mesh`
 - **Sección**: ◐ SECTIONPLANE → `create_object` · ○ LIVESECTION · ✖ SECTIONPLANEJOG · ✖ SECTIONPLANETOBLOCK · ✖ FLATSHOT · ◐ XEDGES → `call_object_method`
 - **Coordenadas**: ◐ UCSICON → `set_system_variable` · ✔ UCS → `create_database_object`
 - **Vista**: ○ -VPORTS · ○ AI_EMPTYPRINC
-- **Crear**: ◐ BOX → `create_object` · ◐ CYLINDER → `create_object` · ◐ CONE → `create_object` · ◐ SPHERE → `create_object` · ◐ PYRAMID → `create_object` · ◐ WEDGE → `create_object` · ◐ TORUS → `create_object` · ◐ POLYSOLID → `create_object` · ✔ EXTRUDE → `extrude_profile, extrude_solid` · ✔ REVOLVE → `revolve_solid` · ✔ LOFT → `loft_solid` · ✔ SWEEP → `sweep_solid` · ✖ SURFNETWORK · ✖ PLANESURF · ✖ SURFBLEND · ✖ SURFPATCH · ✖ SURFOFFSET · ✖ SURFSCULPT · ✖ MESH · ✖ EDGE · ✖ EDGESURF · ✖ RULESURF · ✖ TABSURF
-- **Editar**: ◐ PRESSPULL → `call_object_method` · ✔ UNION → `solid_boolean, union_regions` · ✔ SUBTRACT → `solid_boolean` · ✔ INTERSECT → `solid_boolean` · ✔ FILLETEDGE → `fillet_solid_edges` · ✖ CHAMFEREDGE · ◐ XEDGES → `call_object_method` · ◐ SLICE → `call_object_method` · ◐ THICKEN → `call_object_method` · ◐ SOLIDEDIT → `call_object_method` · ◐ INTERFERE → `call_object_method` · ✖ SURFFILLET · ✖ SURFTRIM · ✖ SURFUNTRIM · ✖ SURFEXTEND · ◐ MESHSMOOTH → `call_object_method` · ◐ MESHSMOOTHMORE → `call_object_method` · ◐ MESHSMOOTHLESS → `call_object_method` · ◐ MESHREFINE → `call_object_method` · ✖ MESHCREASE · ✖ MESHUNCREASE
+- **Crear**: ◐ BOX → `create_object` · ◐ CYLINDER → `create_object` · ◐ CONE → `create_object` · ◐ SPHERE → `create_object` · ◐ PYRAMID → `create_object` · ◐ WEDGE → `create_object` · ◐ TORUS → `create_object` · ◐ POLYSOLID → `create_object` · ✔ EXTRUDE → `extrude_profile, extrude_solid` · ✔ REVOLVE → `revolve_solid` · ✔ LOFT → `loft_solid` · ✔ SWEEP → `sweep_solid` · ✖ SURFNETWORK · ✔ PLANESURF → `create_surface` · ✖ SURFBLEND · ✖ SURFPATCH · ✔ SURFOFFSET → `offset_surface` · ✖ SURFSCULPT · ✔ MESH → `create_mesh` · ✖ EDGE · ✖ EDGESURF · ✔ RULESURF → `create_surface` · ✔ TABSURF → `create_surface`
+- **Editar**: ◐ PRESSPULL → `call_object_method` · ✔ UNION → `solid_boolean, union_regions` · ✔ SUBTRACT → `solid_boolean` · ✔ INTERSECT → `solid_boolean` · ✔ FILLETEDGE → `fillet_solid_edges` · ✖ CHAMFEREDGE · ◐ XEDGES → `call_object_method` · ◐ SLICE → `call_object_method` · ◐ THICKEN → `call_object_method` · ◐ SOLIDEDIT → `call_object_method` · ◐ INTERFERE → `call_object_method` · ✖ SURFFILLET · ✖ SURFTRIM · ✖ SURFUNTRIM · ✖ SURFEXTEND · ✔ MESHSMOOTH → `mesh_smooth` · ✔ MESHSMOOTHMORE → `mesh_smooth` · ✔ MESHSMOOTHLESS → `mesh_smooth` · ✔ MESHREFINE → `mesh_smooth` · ✖ MESHCREASE · ✖ MESHUNCREASE
 
 ## Inserción
 
@@ -56,12 +56,12 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 
 ## Malla
 
-- **Primitivas**: ✖ MESH · ✖ REVSURF · ✖ EDGESURF · ✖ RULESURF · ✖ TABSURF
-- **Malla**: ◐ MESHSMOOTH → `call_object_method` · ◐ MESHSMOOTHMORE → `call_object_method` · ◐ MESHSMOOTHLESS → `call_object_method` · ◐ MESHREFINE → `call_object_method` · ✖ MESHCREASE · ✖ MESHUNCREASE
+- **Primitivas**: ✔ MESH → `create_mesh` · ✔ REVSURF → `create_surface` · ✖ EDGESURF · ✔ RULESURF → `create_surface` · ✔ TABSURF → `create_surface`
+- **Malla**: ✔ MESHSMOOTH → `mesh_smooth` · ✔ MESHSMOOTHMORE → `mesh_smooth` · ✔ MESHSMOOTHLESS → `mesh_smooth` · ✔ MESHREFINE → `mesh_smooth` · ✖ MESHCREASE · ✖ MESHUNCREASE
 - **Editar malla**: ✖ MESHEXTRUDE · ✖ MESHSPLIT · ✖ MESHMERGE · ✖ MESHCAP · ✖ MESHCOLLAPSE · ✖ MESHSPIN
-- **Convertir malla**: ◐ CONVTOSOLID → `call_object_method` · ◐ CONVTOSURFACE → `call_object_method`
+- **Convertir malla**: ✔ CONVTOSOLID → `convert_mesh` · ✔ CONVTOSURFACE → `convert_mesh`
 - **Sección**: ◐ SECTIONPLANE → `create_object` · ○ LIVESECTION · ✖ SECTIONPLANEJOG · ✖ SECTIONPLANETOBLOCK · ✖ FLATSHOT · ◐ XEDGES → `call_object_method`
-- **Suavizar**: ◐ MESHSMOOTHMORE → `call_object_method` · ◐ MESHSMOOTHLESS → `call_object_method` · ◐ MESHREFINE → `call_object_method`
+- **Suavizar**: ✔ MESHSMOOTHMORE → `mesh_smooth` · ✔ MESHSMOOTHLESS → `mesh_smooth` · ✔ MESHREFINE → `mesh_smooth`
 
 ## Salida
 
@@ -97,7 +97,7 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 
 ## Superficie
 
-- **Crear**: ✖ SURFNETWORK · ✔ LOFT → `loft_solid` · ✔ SWEEP → `sweep_solid` · ✖ PLANESURF · ✔ EXTRUDE → `extrude_profile, extrude_solid` · ✔ REVOLVE → `revolve_solid` · ✖ SURFBLEND · ✖ SURFPATCH · ✖ SURFOFFSET
+- **Crear**: ✖ SURFNETWORK · ✔ LOFT → `loft_solid` · ✔ SWEEP → `sweep_solid` · ✔ PLANESURF → `create_surface` · ✔ EXTRUDE → `extrude_profile, extrude_solid` · ✔ REVOLVE → `revolve_solid` · ✖ SURFBLEND · ✖ SURFPATCH · ✔ SURFOFFSET → `offset_surface`
 - **Editar**: ✖ SURFFILLET · ✖ SURFTRIM · ✖ SURFUNTRIM · ✖ SURFEXTEND · ✖ SURFSCULPT · ✔ SELECT → `select_entities` · ✖ OFFSETEDGE
 - **Vértices de control**: ○ 3DEDITBAR · ✖ CONVTONURBS · ✖ CVSHOW · ✖ CVHIDE · ✖ CVREBUILD · ✖ CVADD · ✖ CVREMOVE
 - **Curvas**: ✔ SPLINE → `create_spline` · ○ SKETCH · ✖ SURFEXTRACTCURVE · ◐ 3DPOLY → `create_object` · ✔ PLINE → `create_polyline` · ✔ LINE → `create_line` · ✖ BLEND · ✔ ARC → `create_arc` · ✔ CIRCLE → `create_circle` · ✔ ELLIPSE → `create_ellipse` · ✔ POINT → `create_point` · ✔ DIVIDE → `divide_curve` · ✔ MEASURE → `divide_curve` · ✔ RECTANG → `create_rectangle` · ✔ POLYGON → `create_polygon` · ✔ EXTEND → `extend_entity` · ✔ JOIN → `join_entities` · ✔ BREAK → `break_curve` · ✔ BREAKATPOINT → `break_curve`
@@ -106,10 +106,10 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 
 ## Herramientas 3D
 
-- **Modelado**: ◐ BOX → `create_object` · ◐ CYLINDER → `create_object` · ◐ CONE → `create_object` · ◐ SPHERE → `create_object` · ◐ PYRAMID → `create_object` · ◐ WEDGE → `create_object` · ◐ TORUS → `create_object` · ◐ POLYSOLID → `create_object` · ✖ MESH · ✖ EDGE · ✖ EDGESURF · ✖ RULESURF · ✖ TABSURF
+- **Modelado**: ◐ BOX → `create_object` · ◐ CYLINDER → `create_object` · ◐ CONE → `create_object` · ◐ SPHERE → `create_object` · ◐ PYRAMID → `create_object` · ◐ WEDGE → `create_object` · ◐ TORUS → `create_object` · ◐ POLYSOLID → `create_object` · ✔ MESH → `create_mesh` · ✖ EDGE · ✖ EDGESURF · ✔ RULESURF → `create_surface` · ✔ TABSURF → `create_surface`
 - **Editar sólidos**: ◐ PRESSPULL → `call_object_method` · ✖ OFFSETEDGE · ✔ FILLETEDGE → `fillet_solid_edges` · ✖ CHAMFEREDGE · ◐ SLICE → `call_object_method` · ◐ INTERFERE → `call_object_method` · ◐ SOLIDEDIT → `call_object_method` · ✔ UNION → `solid_boolean, union_regions` · ✔ SUBTRACT → `solid_boolean` · ✔ INTERSECT → `solid_boolean` · ◐ XEDGES → `call_object_method` · ◐ IMPRINT → `call_object_method`
-- **Superficies**: ✖ SURFBLEND · ✖ SURFPATCH · ✖ SURFNETWORK · ✖ SURFOFFSET · ✖ SURFEXTEND · ✖ SURFFILLET · ✖ SURFTRIM · ✖ SURFUNTRIM · ✖ PLANESURF · ◐ THICKEN → `call_object_method` · ✖ SURFSCULPT · ✖ PROJECTGEOMETRY · ▫ ANALYSISOPTIONS · ▫ ANALYSISZEBRA · ▫ ANALYSISCURVATURE · ▫ ANALYSISDRAFT
-- **Malla**: ◐ MESHSMOOTH → `call_object_method` · ◐ MESHSMOOTHMORE → `call_object_method` · ◐ MESHSMOOTHLESS → `call_object_method` · ◐ MESHREFINE → `call_object_method` · ✖ MESHEXTRUDE · ✖ MESHMERGE · ✖ MESHCAP
+- **Superficies**: ✖ SURFBLEND · ✖ SURFPATCH · ✖ SURFNETWORK · ✔ SURFOFFSET → `offset_surface` · ✖ SURFEXTEND · ✖ SURFFILLET · ✖ SURFTRIM · ✖ SURFUNTRIM · ✔ PLANESURF → `create_surface` · ◐ THICKEN → `call_object_method` · ✖ SURFSCULPT · ✖ PROJECTGEOMETRY · ▫ ANALYSISOPTIONS · ▫ ANALYSISZEBRA · ▫ ANALYSISCURVATURE · ▫ ANALYSISDRAFT
+- **Malla**: ✔ MESHSMOOTH → `mesh_smooth` · ✔ MESHSMOOTHMORE → `mesh_smooth` · ✔ MESHSMOOTHLESS → `mesh_smooth` · ✔ MESHREFINE → `mesh_smooth` · ✖ MESHEXTRUDE · ✖ MESHMERGE · ✖ MESHCAP
 - **Sección**: ◐ SECTIONPLANE → `create_object` · ○ LIVESECTION · ✖ SECTIONPLANEJOG · ✖ SECTIONPLANETOBLOCK · ✖ FLATSHOT · ◐ XEDGES → `call_object_method`
 - **Coordenadas**: ✔ UCS → `create_database_object`
 
@@ -162,7 +162,7 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 ## Subobjeto de malla
 
 - **Aplanar**: ✖ MESHCREASE · ✖ MESHUNCREASE
-- **Editar cara**: ✖ MESHSPLIT · ✖ MESHEXTRUDE · ✖ MESHMERGE · ◐ MESHREFINE → `call_object_method`
+- **Editar cara**: ✖ MESHSPLIT · ✖ MESHEXTRUDE · ✖ MESHMERGE · ✔ MESHREFINE → `mesh_smooth`
 
 ## Calco subyacente de PDF
 
@@ -239,4 +239,4 @@ Leyenda: ✔ tool propia · ◐ por reflexión (`create_object`, `call_object_me
 - **pendientes sin nota (o sin clasificar)**: AIMLEADEREDITADD, AIMLEADEREDITREMOVE, BLEND, CHAMFEREDGE, DATALINK, DATALINKUPDATE, FIELD, FLATSHOT, SECTIONPLANEJOG, SECTIONPLANETOBLOCK, SOLDRAW, SOLPROF, SOLVIEW, VPCLIP
 - **recortes y calcos subyacentes (underlays)**: ADJUST, CLIP, DGNCLIP, DWFCLIP, IMAGECLIP, PDFCLIP, PDFIMPORT, XCLIP
 - **restricciones paramétricas: por investigar (clases Assoc* de la API)**: AUTOCONSTRAIN, BCONSTRUCTION, BCPARAMETER, BPARAMETER, BTABLE, CONSTRAINTBAR, DCALIGNED, DCANGULAR, DCCONVERT, DCDIAMETER, DCDISPLAY, DCHORIZONTAL, DCLINEAR, DCRADIUS, DCVERTICAL, DELCONSTRAINT, GCCOINCIDENT, GCCOLLINEAR, GCCONCENTRIC, GCEQUAL, GCFIX, GCHORIZONTAL, GCPARALLEL, GCPERPENDICULAR, GCSMOOTH, GCSYMMETRIC, GCTANGENT, GCVERTICAL
-- **superficies y mallas: por reflexión sobre SubDMesh/Surface (sin verificar)**: CONVTONURBS, CVADD, CVHIDE, CVREBUILD, CVREMOVE, CVSHOW, EDGE, EDGESURF, MESH, MESHCAP, MESHCOLLAPSE, MESHCREASE, MESHEXTRUDE, MESHMERGE, MESHSPIN, MESHSPLIT, MESHUNCREASE, OFFSETEDGE, PLANESURF, PROJECTGEOMETRY, REVSURF, RULESURF, SURFBLEND, SURFEXTEND, SURFEXTRACTCURVE, SURFFILLET, SURFNETWORK, SURFOFFSET, SURFPATCH, SURFSCULPT, SURFTRIM, SURFUNTRIM, TABSURF
+- **superficies y mallas que piden elegir caras, aristas o puntos de control (FullSubentityPath): MESHEXTRUDE/SPLIT/MERGE/CREASE/COLLAPSE/CAP/SPIN, SURFTRIM/BLEND/FILLET/EXTEND...**: CONVTONURBS, CVADD, CVHIDE, CVREBUILD, CVREMOVE, CVSHOW, EDGE, EDGESURF, MESHCAP, MESHCOLLAPSE, MESHCREASE, MESHEXTRUDE, MESHMERGE, MESHSPIN, MESHSPLIT, MESHUNCREASE, OFFSETEDGE, PROJECTGEOMETRY, SURFBLEND, SURFEXTEND, SURFEXTRACTCURVE, SURFFILLET, SURFNETWORK, SURFPATCH, SURFSCULPT, SURFTRIM, SURFUNTRIM

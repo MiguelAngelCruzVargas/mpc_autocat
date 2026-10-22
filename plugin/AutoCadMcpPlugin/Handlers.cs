@@ -271,6 +271,14 @@ namespace AutoCadMcpPlugin
                     return EditExtra2Commands.Wipeout(doc, pars);
                 case "attach_pdf_underlay":
                     return UnderlayCommands.AttachPdf(doc, pars);
+                case "create_surface":
+                    return SurfaceCommands.Create(doc, pars);
+                case "offset_surface":
+                    return SurfaceCommands.Offset(doc, pars);
+                case "create_nurb_surface":
+                    return SurfaceCommands.NurbsDesdePuntos(doc, pars);
+                case "create_mesh_from_faces":
+                    return SurfaceCommands.MallaDesdeCaras(doc, pars);
                 case "bind_xref":
                     return XrefCommands.Bind(doc, pars);
                 case "unload_xref":

@@ -1,7 +1,7 @@
 # Pruebas pendientes
 
 ## Hecho (22/10/2026)
-Plugin 1.19.0 (incluye 1.17.0 y 1.18.0) verificado en vivo en **AutoCAD 2022 y 2027**: `verificar_lote_1_17.py` 155/155, y las baterías de
+Plugin 1.20.0 (incluye 1.17.0 a 1.19.0) verificado en vivo en **AutoCAD 2022 y 2027**: `verificar_lote_1_17.py` 174/174, y las baterías de
 siempre (`verificar_version` 31, `prueba_crear_objetos` 38, `prueba_navegacion` 26, `prueba_primitivas_3d` 16) en las dos.
 Las pruebas encontraron dos CIERRES de AutoCAD (`RefreshLists` sobre un layout en lectura, y una `Ellipse` nula) y un orden inválido en `configure_layout` (centrado antes del tipo de área, ventana sin área), todo corregido.
 

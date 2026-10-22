@@ -187,6 +187,13 @@ _r("modelado3d", "fillet_solid_edges", "FILLETEDGE")
 _r("modelado3d", "extrude_profile", "EXTRUDE")
 _r("modelado3d", "set_3d_view", "3DORBIT")
 _r("modelado3d", "iso_project")
+_r("modelado3d", "create_surface", "PLANESURF RULESURF REVSURF TABSURF")
+_r("modelado3d", "offset_surface", "SURFOFFSET")
+_r("modelado3d", "create_nurb_surface")
+_r("modelado3d", "create_mesh_from_faces")
+_r("modelado3d", "create_mesh", "MESH")
+_r("modelado3d", "mesh_smooth", "MESHSMOOTHMORE MESHSMOOTHLESS MESHREFINE MESHSMOOTH")
+_r("modelado3d", "convert_mesh", "CONVTOSOLID CONVTOSURFACE")
 
 # ---- láminas e impresión
 _r("layouts", "create_layout", "LAYOUT")

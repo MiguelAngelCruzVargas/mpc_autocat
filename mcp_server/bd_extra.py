@@ -778,3 +778,122 @@ def attach_pdf_underlay(path: str, x: float, y: float, page: int = 1, scale: flo
     if layer is not None:
         pars["layer"] = _nombre(layer, "layer")
     return acad.call("attach_pdf_underlay", pars)
+
+
+# ------------------------------------------------------------------ superficies y mallas (plugin 1.20.0)
+
+SUPERFICIES = ("plane", "extrude", "revolve", "sweep", "loft")
+
+
+def create_surface(kind: str, profile: Optional[str] = None, height: Optional[float] = None,
+                   direction: Optional[list[float]] = None, taper_deg: float = 0.0,
+                   axis_point: Optional[list[float]] = None, axis_dir: Optional[list[float]] = None,
+                   angle_deg: float = 360.0, start_angle_deg: float = 0.0, path: Optional[str] = None,
+                   twist_deg: float = 0.0, scale: float = 1.0, sections: Optional[list[str]] = None,
+                   guides: Optional[list[str]] = None, ruled: bool = False, closed: bool = False,
+                   delete_sources: bool = False, layer: Optional[str] = None) -> dict[str, Any]:
+    if kind not in SUPERFICIES:
+        raise BdError(f"'kind' es uno de: {', '.join(SUPERFICIES)}.")
+    pars: dict[str, Any] = {"kind": kind, "delete_sources": delete_sources is True}
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+    if kind in ("plane", "extrude", "revolve", "sweep"):
+        if profile is None:
+            raise BdError(f"{kind} necesita 'profile' (el handle del perfil).")
+        pars["profile"] = _handle(profile, "profile")
+    if kind == "extrude":
+        if (height is None) == (direction is None):
+            raise BdError("extrude necesita 'height' o 'direction' [x,y,z], uno de los dos.")
+        if height is not None:
+            if _opt_num(height, "height") == 0:
+                raise BdError("'height' no puede ser 0.")
+            pars["height"] = float(height)
+        else:
+            pars["direction"] = _vector(direction, "direction")
+        pars["taper_deg"] = _opt_num(taper_deg, "taper_deg", -89.0, 89.0)
+    elif kind == "revolve":
+        if axis_point is None or axis_dir is None:
+            raise BdError("revolve necesita 'axis_point' y 'axis_dir'.")
+        a = _opt_num(angle_deg, "angle_deg", -360.0, 360.0)
+        if a == 0:
+            raise BdError("'angle_deg' va de -360 a 360 y no puede ser 0.")
+        pars.update({"axis_point": _punto3(axis_point, "axis_point"), "axis_dir": _vector(axis_dir, "axis_dir"),
+                     "angle_deg": a, "start_angle_deg": _opt_num(start_angle_deg, "start_angle_deg")})
+    elif kind == "sweep":
+        if path is None:
+            raise BdError("sweep necesita 'path' (el handle de la trayectoria).")
+        pars["path"] = _handle(path, "path")
+        if pars["path"] == pars["profile"]:
+            raise BdError("El perfil y la trayectoria no pueden ser la misma entidad.")
+        if _opt_num(scale, "scale") <= 0:
+            raise BdError("'scale' tiene que ser mayor que cero.")
+        pars.update({"twist_deg": _opt_num(twist_deg, "twist_deg"), "scale": float(scale)})
+    elif kind == "loft":
+        pars["sections"] = _handles(sections, "sections", minimo=2, maximo=50)
+        pars.update({"ruled": ruled is True, "closed": closed is True})
+        if guides is not None:
+            pars["guides"] = _handles(guides, "guides", maximo=50)
+        if path is not None:
+            pars["path"] = _handle(path, "path")
+        if guides and path is not None:
+            raise BdError("Un loft lleva guías O trayectoria, no las dos.")
+    return acad.call("create_surface", pars)
+
+
+def offset_surface(handle: str, distance: float, layer: Optional[str] = None) -> dict[str, Any]:
+    d = _opt_num(distance, "distance")
+    if d == 0:
+        raise BdError("'distance' no puede ser 0.")
+    pars: dict[str, Any] = {"handle": _handle(handle), "distance": d}
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+    return acad.call("offset_surface", pars)
+
+
+def create_nurb_surface(points: list[list[list[float]]], degree: int = 3, layer: Optional[str] = None) -> dict[str, Any]:
+    if not isinstance(points, (list, tuple)) or len(points) < 2:
+        raise BdError("'points' es una lista de al menos 2 filas de puntos.")
+    ancho = len(points[0]) if isinstance(points[0], (list, tuple)) else 0
+    if ancho < 2:
+        raise BdError("Cada fila necesita al menos 2 puntos.")
+    if len(points) * ancho > 40000:
+        raise BdError("Máximo 40000 puntos de control.")
+    filas = []
+    for j, fila in enumerate(points):
+        if not isinstance(fila, (list, tuple)) or len(fila) != ancho:
+            raise BdError(f"La fila {j} no tiene {ancho} puntos: tienen que ser todas iguales.")
+        filas.append([_punto3(p, f"points[{j}][{i}]") for i, p in enumerate(fila)])
+    if isinstance(degree, bool) or not isinstance(degree, int) or degree < 1:
+        raise BdError("'degree' es un entero desde 1.")
+    pars: dict[str, Any] = {"points": filas, "degree": degree}
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+    return acad.call("create_nurb_surface", pars)
+
+
+def create_mesh_from_faces(vertices: list[list[float]], faces: list[list[int]], smooth: int = 0,
+                           layer: Optional[str] = None) -> dict[str, Any]:
+    if not isinstance(vertices, (list, tuple)) or len(vertices) < 3:
+        raise BdError("'vertices' necesita al menos 3 puntos.")
+    if not isinstance(faces, (list, tuple)) or not faces:
+        raise BdError("'faces' necesita al menos una cara.")
+    if len(vertices) > 100000 or len(faces) > 100000:
+        raise BdError("Máximo 100000 vértices y 100000 caras.")
+    vs = [_punto3(v, f"vertices[{i}]") for i, v in enumerate(vertices)]
+    fs = []
+    for c, cara in enumerate(faces):
+        if not isinstance(cara, (list, tuple)) or len(cara) < 3:
+            raise BdError(f"La cara {c} necesita al menos 3 índices.")
+        if any(isinstance(i, bool) or not isinstance(i, int) for i in cara):
+            raise BdError(f"La cara {c} tiene índices que no son enteros.")
+        if any(i < 0 or i >= len(vs) for i in cara):
+            raise BdError(f"La cara {c} usa un vértice que no existe (hay {len(vs)}).")
+        if len(set(cara)) != len(cara):
+            raise BdError(f"La cara {c} repite un vértice.")
+        fs.append(list(cara))
+    if isinstance(smooth, bool) or not isinstance(smooth, int) or not 0 <= smooth <= 4:
+        raise BdError("'smooth' es un entero de 0 a 4.")
+    pars: dict[str, Any] = {"vertices": vs, "faces": fs, "smooth": smooth}
+    if layer is not None:
+        pars["layer"] = _nombre(layer, "layer")
+    return acad.call("create_mesh_from_faces", pars)

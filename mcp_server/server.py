@@ -24,6 +24,7 @@ import metodos as met_mod
 import bd_extra as bd_mod
 import ojos as ojos_mod
 import categorias as categorias_mod
+import mallas as mesh_mod
 import primitivas as prim_mod
 import electrical as elec_mod
 import engine as engine_mod
@@ -5650,7 +5651,7 @@ def delete_database_object(kind: str, name: Optional[str] = None,
     return _prop(prop_mod.delete_database_object, kind, name, handle)
 
 
-_PEND = " (plugin 1.19.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
+_PEND = " (plugin 1.20.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
 
 
 def _con_pend(fn):
@@ -6331,6 +6332,110 @@ def attach_pdf_underlay(path: str, x: float, y: float, page: int = 1, scale: flo
     página; scale: factor sobre el tamaño del PDF (hay que calibrarlo midiendo una cota
     conocida; el resultado trae 'width' y 'height'). No importa el PDF a geometría: es un fondo."""
     return _bd(bd_mod.attach_pdf_underlay, path, x, y, page, scale, rotation_deg, z, layer)
+
+
+@mcp.tool()
+@_con_pend
+def create_surface(kind: str, profile: Optional[str] = None, height: Optional[float] = None,
+                   direction: Optional[list[float]] = None, taper_deg: float = 0.0,
+                   axis_point: Optional[list[float]] = None, axis_dir: Optional[list[float]] = None,
+                   angle_deg: float = 360.0, start_angle_deg: float = 0.0, path: Optional[str] = None,
+                   twist_deg: float = 0.0, scale: float = 1.0, sections: Optional[list[str]] = None,
+                   guides: Optional[list[str]] = None, ruled: bool = False, closed: bool = False,
+                   delete_sources: bool = False, layer: Optional[str] = None) -> dict[str, Any]:
+    """SUPERFICIE (no sólido) desde geometría ya dibujada. kind:
+    - plane (PLANESURF): profile = curva cerrada o región;
+    - extrude (EXTRUDE): profile (puede estar ABIERTO: una pared curva, una cubierta) + height o
+      direction [x,y,z], taper_deg;
+    - revolve (REVOLVE/REVSURF): profile + axis_point + axis_dir, angle_deg;
+    - sweep (SWEEP): profile + path, twist_deg, scale;
+    - loft (LOFT/RULESURF): sections (2+ perfiles EN ORDEN), ruled=True para tramos rectos
+      (RULESURF), closed, guides o path.
+    delete_sources consume los perfiles. Una superficie se mide con calculate_area y se
+    convierte con call_object_method('ConvertToRegion') o se engrosa a sólido. Para un perfil
+    CERRADO que debe ser sólido usá extrude_solid/revolve_solid/sweep_solid/loft_solid."""
+    return _bd(bd_mod.create_surface, kind, profile, height, direction, taper_deg, axis_point, axis_dir, angle_deg,
+               start_angle_deg, path, twist_deg, scale, sections, guides, ruled, closed, delete_sources, layer)
+
+
+@mcp.tool()
+@_con_pend
+def offset_surface(handle: str, distance: float, layer: Optional[str] = None) -> dict[str, Any]:
+    """SURFOFFSET: otra superficie paralela a la dada, a `distance` (el signo elige el lado)."""
+    return _bd(bd_mod.offset_surface, handle, distance, layer)
+
+
+@mcp.tool()
+@_con_pend
+def create_nurb_surface(points: list[list[list[float]]], degree: int = 3, layer: Optional[str] = None) -> dict[str, Any]:
+    """Superficie NURBS desde una CUADRÍCULA de puntos de control: `points` es una lista de
+    filas, todas con la misma cantidad de puntos [x, y, z]. Sirve para un terreno modelado desde
+    cotas, una cubierta curva o una lona. degree 3 por defecto (baja solo si hay pocos puntos:
+    se necesita degree+1 por lado). La superficie sigue a los puntos de control, no pasa por
+    todos: más puntos y degree bajo se pegan más."""
+    return _bd(bd_mod.create_nurb_surface, points, degree, layer)
+
+
+@mcp.tool()
+@_con_pend
+def create_mesh_from_faces(vertices: list[list[float]], faces: list[list[int]], smooth: int = 0,
+                           layer: Optional[str] = None) -> dict[str, Any]:
+    """Malla de subdivisión desde vértices y caras: vertices [[x,y,z],...]; faces [[i,j,k,...],...]
+    con índices desde 0 (3 o más por cara). Un TIN de terreno, un casco, una pieza modelada punto
+    a punto. smooth 0-4 es el nivel de suavizado. Se mide con call_object_method
+    ('ComputeVolume' / 'ComputeSurfaceArea') y se convierte con convert_mesh."""
+    return _bd(bd_mod.create_mesh_from_faces, vertices, faces, smooth, layer)
+
+
+@mcp.tool()
+@_con_pend
+def create_mesh(shape: str, x: float = 0.0, y: float = 0.0, z: float = 0.0, size: Optional[list[float]] = None,
+                divisions: int = 4, smooth: int = 0, layer: Optional[str] = None) -> dict[str, Any]:
+    """Malla primitiva (MESH) centrada en (x, y, z). shape y size: box [largo, ancho, alto] ·
+    sphere [radio] · cylinder [radio, alto] · cone [radio_base, alto] · pyramid [radio, alto]
+    (4 lados) · torus [radio_mayor, radio_tubo] · wedge [largo, ancho, alto]. divisions: cuántas
+    subdivisiones por eje (más = más caras). smooth 0-4. Después: mesh_smooth, convert_mesh."""
+    try:
+        spec = mesh_mod.mesh_primitiva(shape, size, divisions, smooth)
+    except mesh_mod.MallaError as exc:
+        return {"ok": False, "error": str(exc)}
+    r = create_object("SubDMesh", {"Layer": layer} if layer else None, spec["metodo"], spec["args"])
+    if not isinstance(r, dict) or r.get("ok") is False or not (x or y or z):
+        return r
+    mover = [[1, 0, 0, float(x)], [0, 1, 0, float(y)], [0, 0, 1, float(z)], [0, 0, 0, 1]]
+    call_object_method(r["handle"], "TransformBy", [mover])
+    return dict(r, at=[x, y, z])
+
+
+@mcp.tool()
+@_con_pend
+def mesh_smooth(handle: str, mode: str = "up") -> dict[str, Any]:
+    """Suaviza o afina una malla: mode up (MESHSMOOTHMORE: sube un nivel de suavizado), down
+    (MESHSMOOTHLESS: baja uno) o refine (MESHREFINE: divide las caras sin cambiar la forma).
+    Devuelve las caras antes y después."""
+    if mode not in mesh_mod.MODOS_SUAVIZADO:
+        return {"ok": False, "error": f"'mode' es uno de: {', '.join(mesh_mod.MODOS_SUAVIZADO)}."}
+    antes = get_object_properties([handle], ["NumberOfFaces", "SmoothLevel"])
+    r = call_object_method(handle, mesh_mod.MODOS_SUAVIZADO[mode], [])
+    despues = get_object_properties([handle], ["NumberOfFaces", "SmoothLevel"])
+    return {"mode": mode, "before": antes, "after": despues, "call": r}
+
+
+@mcp.tool()
+@_con_pend
+def convert_mesh(handle: str, to: str = "solid", smooth: bool = True, optimize: bool = False,
+                 delete_mesh: bool = False) -> dict[str, Any]:
+    """CONVTOSOLID / CONVTOSURFACE: convierte una malla en sólido (to='solid', solo si es
+    estanca: Watertight) o en superficie (to='surface'). smooth=True conserva el suavizado;
+    optimize une caras coplanares. delete_mesh borra la malla original. Devuelve el handle
+    de lo creado."""
+    if to not in ("solid", "surface"):
+        return {"ok": False, "error": "'to' es 'solid' o 'surface'."}
+    r = call_object_method(handle, "ConvertToSolid" if to == "solid" else "ConvertToSurface", [bool(smooth), bool(optimize)],
+                           add_results_to_space=True)
+    if delete_mesh and isinstance(r, dict) and r.get("ok") is not False:
+        delete_entity(handle)
+    return r
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:

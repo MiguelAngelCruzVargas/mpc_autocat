@@ -470,6 +470,61 @@ def main() -> int:
     rechaza("pdf inexistente se rechaza", lambda: s.attach_pdf_underlay(_os.path.join(_carpeta, "no_existe.pdf"), 0, 0), "")
     rechaza("archivo que no es pdf se rechaza", lambda: s.attach_pdf_underlay(_os.path.join(_carpeta, "calco.dwg"), 0, 0), "pdf")
 
+    # ---------------------------------------------------------------- 1.20.0: superficies y mallas
+    def tipo(h):
+        try:
+            return s.get_entity(h).get("type", "")
+        except Exception as e:  # noqa: BLE001
+            return "ERR " + str(e)[:80]
+
+    cr = s.create_polyline([[1000, 0], [1010, 0], [1010, 6], [1000, 6]], closed=True)["handle"]
+    sp = intento("create_surface plane", lambda: s.create_surface("plane", cr))
+    chk("plane: superficie plana creada", sp and bueno(sp) and "Surface" in str(sp.get("type")), sp)
+    abierto = s.create_polyline([[1020, 0], [1025, 3], [1030, 0]], closed=False)["handle"]
+    se = intento("create_surface extrude (perfil abierto)", lambda: s.create_surface("extrude", abierto, height=4))
+    chk("extrude de un perfil ABIERTO da una superficie", se and bueno(se) and "Surface" in str(se.get("type")), se)
+    rp2 = s.create_polyline([[1043, 0], [1043, 5], [1045, 5]], closed=False)["handle"]
+    sr = intento("create_surface revolve", lambda: s.create_surface("revolve", rp2, axis_point=[1040, 0, 0], axis_dir=[0, 1, 0]))
+    chk("revolve de un perfil abierto da una superficie", sr and bueno(sr) and "Surface" in str(sr.get("type")), sr)
+    sw_c = s.create_polyline([[1060, 0], [1060, 2]], closed=False)["handle"]
+    sw_p = intento("trayectoria", lambda: s.create_object("Line", {"StartPoint": [1060, 0, 0], "EndPoint": [1070, 0, 0]}))
+    if sw_p and sw_p.get("handle"):
+        ss = intento("create_surface sweep", lambda: s.create_surface("sweep", sw_c, path=sw_p["handle"]))
+        chk("sweep de un perfil abierto da una superficie", ss and bueno(ss) and "Surface" in str(ss.get("type")), ss)
+    l1 = s.create_circle(1080, 0, 1)["handle"]
+    l2 = intento("círculo elevado", lambda: s.create_object("Circle", {"Center": [1080, 0, 5], "Radius": 2}))
+    if l2 and l2.get("handle"):
+        sl = intento("create_surface loft reglado", lambda: s.create_surface("loft", sections=[l1, l2["handle"]], ruled=True))
+        chk("loft reglado entre dos círculos da una superficie", sl and bueno(sl) and "Surface" in str(sl.get("type")), sl)
+    if sp and sp.get("handle"):
+        so = intento("offset_surface", lambda: s.offset_surface(sp["handle"], 2))
+        chk("offset_surface crea otra superficie", so and bueno(so) and so.get("handle") and so["handle"] != sp["handle"], so)
+    rechaza("plane con perfil abierto se rechaza", lambda: s.create_surface("plane", abierto), "CERRADO")
+    rechaza("kind inexistente se rechaza", lambda: s.create_surface("pizza"), "kind")
+    grilla = [[[1100 + 2 * i, 2 * j, (i * j) % 3] for i in range(5)] for j in range(5)]
+    sn = intento("create_nurb_surface", lambda: s.create_nurb_surface(grilla))
+    chk("create_nurb_surface desde 5x5 puntos", sn and bueno(sn) and sn.get("handle"), sn)
+    rechaza("nurbs con filas desiguales se rechaza", lambda: s.create_nurb_surface([[[0, 0, 0], [1, 0, 0]], [[0, 1, 0]]]), "fila")
+    mf = intento("create_mesh_from_faces", lambda: s.create_mesh_from_faces([[1200, 0, 0], [1210, 0, 0], [1200, 10, 0], [1210, 10, 3]],
+                                                                            [[0, 1, 3], [0, 3, 2]]))
+    chk("malla desde caras: 4 vértices y 2 caras", mf and bueno(mf) and mf.get("vertices") == 4 and mf.get("faces") == 2, mf)
+    rechaza("malla con índice inexistente se rechaza", lambda: s.create_mesh_from_faces([[0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 9]]), "no existe")
+    ms = intento("create_mesh sphere", lambda: s.create_mesh("sphere", 1300, 0, 0, [2], 8))
+    chk("create_mesh esfera", ms and bueno(ms) and ms.get("handle"), ms)
+    if ms and ms.get("handle"):
+        vol = intento("ComputeVolume de la malla", lambda: s.call_object_method(ms["handle"], "ComputeVolume"))
+        chk("la esfera de radio 2 con 16x8 divisiones mide entre 26 y 34 (33.5 ideal)", vol and 26 < float(vol.get("result", 0)) < 34, vol)
+        sm = intento("mesh_smooth up", lambda: s.mesh_smooth(ms["handle"], "up"))
+        chk("mesh_smooth responde", sm and bueno(sm), sm)
+        cv = intento("convert_mesh a sólido", lambda: s.convert_mesh(ms["handle"], "solid"))
+        chk("convert_mesh a sólido responde", cv and bueno(cv), cv)
+    mb = intento("create_mesh box", lambda: s.create_mesh("box", 1400, 0, 0, [4, 3, 2], 2))
+    chk("create_mesh caja", mb and bueno(mb) and mb.get("handle"), mb)
+    if mb and mb.get("handle"):
+        cs = intento("convert_mesh a superficie", lambda: s.convert_mesh(mb["handle"], "surface"))
+        chk("convert_mesh a superficie responde", cs and bueno(cs), cs)
+    rechaza("convert_mesh a algo inexistente se rechaza", lambda: s.convert_mesh("1", "rueda"), "'to'")
+
     # ---------------------------------------------------------------- purga (al final: borra cosas)
     s.create_database_object("layer", "SOBRA17", {})
     s.create_database_object("textstyle", "SOBRA17", {"FileName": "arial.ttf"})
