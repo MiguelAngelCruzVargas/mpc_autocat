@@ -323,7 +323,7 @@ a las condiciones baratas**. Si quedan más de `hydrate_limit` (500) el resultad
 `notices`/`partial`: se acota (entity_type, layer, bboxArea) en vez de subir el tope a ciegas. Un campo que
 falta no cumple ninguna comparación. Es de solo lectura y no necesita plugin nuevo (usa `list_entities` y el
 comando `batch` con `get_entity`). Diseño tomado del servidor MCP nativo de la 2027 (consulta por tipo y
-filtro con agregaciones), escrito desde cero. `mcp_server/test_consulta.py` lo prueba sin AutoCAD; **probado en vivo** en la 2027 sobre el pórtico (2484 entidades): el conteo total coincide con `get_drawing_info` y `list_entities`, la suma de largos de 84 polilíneas de PORT-CONCRETO (394.390938) coincide al decimal con sumar `get_entity` una por una, y 401 polilíneas se leen en detalle en 0.4 s (el comando `batch` cuesta mucho menos de lo que se temía). Falta la 2022.
+filtro con agregaciones), escrito desde cero. `mcp_server/test_consulta.py` lo prueba sin AutoCAD; **probado en vivo** en la 2027 sobre el pórtico (2484 entidades): el conteo total coincide con `get_drawing_info` y `list_entities`, la suma de largos de 84 polilíneas de PORT-CONCRETO (394.390938) coincide al decimal con sumar `get_entity` una por una, y 401 polilíneas se leen en detalle en 0.4 s (el comando `batch` cuesta mucho menos de lo que se temía). Verificado también en la 2022 (`verificar_version.py`).
 
 ## 3.ter Variables de sistema y estado del editor (plugin 1.10.0)
 
@@ -339,7 +339,7 @@ cuando un comando se cuelga o falla sin motivo, casi siempre es un comando a med
 Esto sale de leer el servidor MCP nativo de la 2027 (ver `Desktop\Autodesk_descompilado`), que antes de ejecutar
 rechaza en milisegundos si hay un comando en curso, el editor de bloques o una edición en sitio abierta. Las
 guardas de ESTADO todavía no se aplican a las demás tools del plugin: están como lectura (`get_editor_state`),
-no como rechazo automático. **Probadas en vivo en la 2027** (plugin 1.10.0, sobre el DWG del pórtico): `set_system_variable` cambia y restaura LTSCALE, y rechaza SECURELOAD (protegida), ACADVER (solo lectura), un valor que no es número y una variable inexistente; `get_editor_state` y `get_system_variables` responden (las inexistentes salen en `errors`). Falta la 2022.
+no como rechazo automático. **Probadas en vivo en la 2027** (plugin 1.10.0, sobre el DWG del pórtico): `set_system_variable` cambia y restaura LTSCALE, y rechaza SECURELOAD (protegida), ACADVER (solo lectura), un valor que no es número y una variable inexistente; `get_editor_state` y `get_system_variables` responden (las inexistentes salen en `errors`). Verificado también en la 2022 (`verificar_version.py`).
 
 **Ejecutar cualquier comando nativo de AutoCAD (`run_command`) NO está conectado.** Hay un diseño escrito (un
 comando registrado `MCPRUNJOB` que corre `Editor.Command` con los tokens, tras la contraseña de run_code y una
@@ -365,7 +365,7 @@ encuadra un instante alrededor porque el cursor de selección mide en píxeles; 
 Corren en un comando registrado (`MCPNATIVEOP`) porque `Editor.Command` no anda desde el evento Idle: la tool
 espera el resultado (`wait_s`, 30 s) y, si tarda más, queda en curso: `native_status`, **no repetir**.
 
-Plugin nuevo (1.10.0): hay que reinstalar el bundle. **Probadas en vivo en la 2027** sobre líneas de prueba en un dibujo nuevo: TRIM recortó una línea de 10 a 5 contra un borde, EXTEND alargó de 3 a 6, FILLET radio 0 cerró la esquina y radio 2 creó el arco de centro (68,42), JOIN unió dos líneas en una (la otra se borró) y OVERKILL borró la línea duplicada y dejó las otras; FILLETRAD se restauró. Falta la 2022; los tests offline (`test_edicion.py`) cubren solo las validaciones y el puente.
+Plugin nuevo (1.10.0): hay que reinstalar el bundle. **Probadas en vivo en la 2027** sobre líneas de prueba en un dibujo nuevo: TRIM recortó una línea de 10 a 5 contra un borde, EXTEND alargó de 3 a 6, FILLET radio 0 cerró la esquina y radio 2 creó el arco de centro (68,42), JOIN unió dos líneas en una (la otra se borró) y OVERKILL borró la línea duplicada y dejó las otras; FILLETRAD se restauró. Verificado también en la 2022; los tests offline (`test_edicion.py`) cubren solo las validaciones y el puente.
 
 ## 3.quinquies Propiedades de CUALQUIER objeto: `get_object_properties`, `set_object_properties`, `list_object_properties` (plugin 1.11.0)
 
@@ -391,7 +391,7 @@ Verificado en vivo (2027) sobre línea, círculo, arco, polilínea, texto, MText
 espesor de línea por nombre, escala de tipo de línea, radio (el área se recalculó), texto, altura, rotación, cierre de polilínea y escala de
 patrón; rechazó con motivo una propiedad de solo lectura, una inexistente, un tipo equivocado, una enumeración inválida y una capa que no
 existe, sin tocar nada; la llamada con una propiedad buena y una mala no cambió ninguna. `undo` la revierte si no hay lecturas entre medio
-(misma limitación que arriba). Falta la 2022 y probar propiedades de 3D sobre objetos reales.
+(misma limitación que arriba). Verificado también en la 2022 (ver `verificar_version.py` abajo).
 
 ## 3.sexies Métodos de cualquier objeto: `list_object_methods`, `call_object_method` (plugin 1.12.1)
 
@@ -422,8 +422,14 @@ argumento de tipo equivocado y un handle inexistente.
 
 **3D real, verificado en vivo (2027, plugin 1.13.2).** `Solid3d`: `MassProperties` se lee como objeto (volumen 500 de una caja 10×10×5, centroide, extensiones, momentos de inercia, radios de giro: el volumen REAL del modelo para cuantificar), `CheckInterference`, `TransformBy` con una matriz 4×4 (`[[1,0,0,10],[0,1,0,0],[0,0,1,0],[0,0,0,1]]` movió el centroide a 15,5,2.5), `OffsetBody` (volumen 1008 = 12×12×7), `Slice` con un plano `{"point":[..],"normal":[..]}` (la mitad negativa vuelve como sólido nuevo con `add_results_to_space`), `BooleanOperation` con `BoolUnite` (1500), `BoolSubtract` (500) y `BoolIntersect` (500); `Region`: área y perímetro como propiedades, `Explode` (8 líneas) y `BooleanOperation` entre regiones (150 − solape 50 = 100); malla `SubDMesh`: vértices/caras/aristas como propiedades, `ComputeVolume`, `ComputeSurfaceArea`, `GetVertexAt`, `SubdDivideUp` y `ConvertToSolid`. Tipos nuevos soportados: matriz 4×4 (16 números o 4 filas) y plano; las estructuras de solo lectura con campos simples (`Solid3dMassProperties`) se leen como `{campo: valor}`.
 
-**Una llamada mal armada puede TUMBAR AutoCAD, no solo fallar.** Pasó en vivo: `BooleanOperation` con el segundo sólido abierto en LECTURA (lo consume, necesita escritura) cerró AutoCAD sin excepción. Desde 1.13.2 los objetos que van como argumento se abren en escritura si el método escribe; pero cualquier método nativo puede tener una precondición que esta capa no conoce. **Probar un método nuevo en un dibujo descartable y con el trabajo guardado**, no sobre un plano en curso. Falta la 2022; los parámetros de tipo `Surface`/`Plane` en `Slice` con superficie, `Extrude` desde región y las primitivas (`CreateBox`...) sin probar. `IntersectWith` con `ExtendBoth` entre una línea y una polilínea
+**Una llamada mal armada puede TUMBAR AutoCAD, no solo fallar.** Pasó en vivo: `BooleanOperation` con el segundo sólido abierto en LECTURA (lo consume, necesita escritura) cerró AutoCAD sin excepción. Desde 1.13.2 los objetos que van como argumento se abren en escritura si el método escribe; pero cualquier método nativo puede tener una precondición que esta capa no conoce. **Probar un método nuevo en un dibujo descartable y con el trabajo guardado**, no sobre un plano en curso. Los parámetros de tipo `Surface`/`Plane` en `Slice` con superficie, `Extrude` desde región y las primitivas (`CreateBox`...) sin probar. `IntersectWith` con `ExtendBoth` entre una línea y una polilínea
 devolvió 0 puntos: sin investigar.
+
+## 3.septies Verificar una versión de AutoCAD en vivo: `mcp_server/verificar_version.py`
+
+Corre 31 comprobaciones sobre el AutoCAD abierto (consulta y agregados, variables de sistema, propiedades y métodos 2D, las cinco operaciones nativas con su `undo` verificado, y 3D: volumen real de sólidos, matriz, desfase, booleanas, corte, regiones y malla). Trabaja en un dibujo NUEVO descartable y lo cierra: **no usarlo con un plano en curso.** Resultado (plugin 1.13.2): **31/31 en AutoCAD 2022 y 31/31 en AutoCAD 2027.** Para otra versión (2019-2021, 2023-2026): abrirla con el bundle instalado (`tools/install_bundle.ps1`) y correr el script; es lo que falta para poder decir «probado» y no solo «compila» (`tools/matriz_api.py`).
+
+Dos cosas que descubrió esto: (1) con el AutoCAD recién arrancado las operaciones nativas (`trim_entity`, `join_entities`...) pueden tardar minutos en ejecutarse —en la 2027 tardó 139 s— porque corren por la cola de comandos y AutoCAD todavía está cargando: esperar a que termine de arrancar antes de editar, y si pasa de `wait_s` no repetir (`native_status`); (2) `run_code` rechaza un dibujo sin guardar salvo `force=True`.
 
 ## 4. Muros: una planta entera es `create_wall_network`
 
