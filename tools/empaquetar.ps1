@@ -12,7 +12,7 @@
   Salida: dist\AutoCAD-IA-<version>\ y dist\AutoCAD-IA-<version>.zip
 #>
 [CmdletBinding()]
-param([switch]$SinCompilar)
+param([switch]$SinCompilar, [string]$ServidorLicencias = '')
 
 $ErrorActionPreference = 'Stop'
 $raiz = Split-Path -Parent $PSScriptRoot
@@ -26,11 +26,12 @@ $salida = Join-Path $dist $nombre
 
 if (-not $SinCompilar) {
     Write-Output 'Compilando el plugin (Release)...'
-    & dotnet build $proyecto -c Release --nologo
+    & dotnet build $proyecto -c Release -p:Licencia=true --nologo   # Licencia=true: el plugin EXIGE licencia valida
     if ($LASTEXITCODE -ne 0) { throw 'Falló la compilación.' }
 }
 $net48 = Join-Path $proyecto 'bin\Release\net48'
 $net8 = Join-Path $proyecto 'bin\Release\net8.0-windows'
+$net10 = Join-Path $proyecto 'bin\Release\net10.0-windows'
 foreach ($d in @($net48, $net8)) {
     if (-not (Test-Path (Join-Path $d 'AutoCadMcpPlugin.dll'))) { throw "Falta el DLL en $d" }
 }
@@ -44,6 +45,14 @@ New-Item -ItemType Directory -Force -Path (Join-Path $bundle 'Contents\net48'), 
 Copy-Item (Join-Path $raiz 'plugin\bundle\PackageContents.xml') $bundle
 Copy-Item (Join-Path $net48 '*.dll') (Join-Path $bundle 'Contents\net48')
 Copy-Item (Join-Path $net8 '*.dll') (Join-Path $bundle 'Contents\net8')
+if (Test-Path (Join-Path $net10 'AutoCadMcpPlugin.dll')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $bundle 'Contents\net10') | Out-Null
+    Copy-Item (Join-Path $net10 '*.dll') (Join-Path $bundle 'Contents\net10')
+    $deps10 = Join-Path $net10 'AutoCadMcpPlugin.deps.json'
+    if (Test-Path $deps10) { Copy-Item $deps10 (Join-Path $bundle 'Contents\net10') }
+} else {
+    Write-Warning 'No hay DLL de net10: el paquete no servira para AutoCAD 2027 (compilar con AutoCAD 2027 instalado).'
+}
 $deps = Join-Path $net8 'AutoCadMcpPlugin.deps.json'
 if (Test-Path $deps) { Copy-Item $deps (Join-Path $bundle 'Contents\net8') }
 
@@ -57,6 +66,14 @@ function Copiar-Carpeta($origen, $destino, $excluir) {
 }
 $basura = @('.venv', '__pycache__', '.pytest_cache', 'entregables', '.git')
 Copiar-Carpeta (Join-Path $raiz 'mcp_server') (Join-Path $salida 'mcp_server') $basura
+# Marca del paquete vendido: licencia.py solo bloquea (con mensajes claros) si este archivo existe. En el repo de desarrollo no esta.
+# Direccion del servidor de licencias dentro del paquete (sin ella el cliente no puede activar).
+if (-not $ServidorLicencias) { Write-Warning 'Sin -ServidorLicencias el paquete NO podra activar licencias. Uso: empaquetar.ps1 -ServidorLicencias https://tu-servidor.onrender.com' }
+else {
+    $lic = Join-Path $salida 'mcp_server\licencia.py'
+    (Get-Content $lic -Raw -Encoding UTF8).Replace('https://licencias.CAMBIAR-AL-PUBLICAR.invalid', $ServidorLicencias.TrimEnd('/')) | Set-Content $lic -Encoding UTF8
+}
+Set-Content -Path (Join-Path $salida 'mcp_server\LICENCIA_OBLIGATORIA') -Value 'Este paquete exige licencia. No borrar.' -Encoding ASCII
 Get-ChildItem (Join-Path $salida 'mcp_server\*') -Include 'test_*.py', 'smoke_test.py', 'run_tests.py', 'preview*.py' -File | Remove-Item -Force
 Copiar-Carpeta (Join-Path $raiz 'agent') (Join-Path $salida 'agent') ($basura + 'test_agent.py')
 New-Item -ItemType Directory -Force -Path (Join-Path $salida 'tools') | Out-Null

@@ -22,6 +22,7 @@ import edicion as edicion_mod
 import propiedades as prop_mod
 import metodos as met_mod
 import bd_extra as bd_mod
+import licencia as licencia_mod
 import ojos as ojos_mod
 import categorias as categorias_mod
 import mallas as mesh_mod
@@ -5475,6 +5476,32 @@ def export_block(name: str, path: str,
     return acad.call("export_block", {
         "name": name, "path": path, "overwrite": overwrite,
     })
+
+
+@mcp.tool()
+def license_status() -> dict[str, Any]:
+    """Estado de la licencia de AutoCAD IA en este equipo: plan (perpetua, anual, mensual, prueba), si vale, hasta
+    cuando y que hacer si no. No necesita AutoCAD ni internet."""
+    return licencia_mod.estado()
+
+
+@mcp.tool()
+def activate_license(key: str) -> dict[str, Any]:
+    """Activa una licencia con la clave comprada (AIA-XXXXX-XXXXX-XXXXX-XXXXX). Necesita internet: el servidor ata la
+    clave a este equipo (maximo 2 por defecto) y entrega el archivo de licencia firmado."""
+    try:
+        return licencia_mod.activate(key)
+    except licencia_mod.LicenciaError as exc:
+        return {"valida": False, "error": str(exc)}
+
+
+@mcp.tool()
+def start_trial() -> dict[str, Any]:
+    """Empieza la prueba gratis de 7 dias (una sola vez por equipo). Necesita internet."""
+    try:
+        return licencia_mod.start_trial()
+    except licencia_mod.LicenciaError as exc:
+        return {"valida": False, "error": str(exc)}
 
 
 @mcp.tool()

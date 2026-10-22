@@ -12,6 +12,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+import licencia
 import ojos
 import session
 
@@ -221,6 +222,11 @@ def _do_call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any
     """Una llamada al plugin, sin reintentos. Abre una conexión nueva por
     llamada: más simple que mantener una persistente, y evita manejar
     reconexión cuando AutoCAD se cierra/abre entre una llamada y otra."""
+    if licencia.OBLIGATORIA:
+        try:
+            licencia.exigir(cmd)
+        except licencia.LicenciaError as exc:
+            raise AutoCadError("LICENCIA: " + str(exc)) from exc
     params = dict(params or {})
     if VER_DIBUJAR[0]:
         params["_live"] = True          # el plugin repinta tras cada comando

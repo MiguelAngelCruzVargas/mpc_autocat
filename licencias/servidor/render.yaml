@@ -1,0 +1,25 @@
+# Despliegue en Render (https://render.com): "New > Blueprint" apuntando a este repositorio.
+# Los secretos NO van aca: se cargan en el panel (Environment) despues de crear el servicio.
+#   LICENCIA_CLAVE_PRIVADA = contenido completo del archivo licencias/secreto/privada.pem
+#   LICENCIA_ADMIN_TOKEN   = una cadena larga y aleatoria (python -c "import secrets;print(secrets.token_urlsafe(32))")
+# El disco persistente es OBLIGATORIO: sin el, cada reinicio borra las licencias vendidas (SQLite vive ahi).
+services:
+  - type: web
+    name: autocad-ia-licencias
+    runtime: python
+    plan: starter            # el plan gratis duerme y no tiene disco persistente: no sirve para cobrar licencias
+    rootDir: licencias/servidor
+    buildCommand: pip install -r requirements.txt
+    startCommand: python servidor.py
+    healthCheckPath: /salud
+    envVars:
+      - key: LICENCIA_DB
+        value: /data/licencias.db
+      - key: LICENCIA_CLAVE_PRIVADA
+        sync: false
+      - key: LICENCIA_ADMIN_TOKEN
+        sync: false
+    disk:
+      name: licencias
+      mountPath: /data
+      sizeGB: 1

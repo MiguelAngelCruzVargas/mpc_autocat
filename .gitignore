@@ -46,3 +46,8 @@ tools/__pycache__/
 # de conceptos, CSV): son de cada proyecto, no del repo.
 /entregables/
 dist/
+
+# Licencias: la clave PRIVADA que firma los tokens no se versiona jamas
+licencias/secreto/
+licencias/*.db
+*.pem

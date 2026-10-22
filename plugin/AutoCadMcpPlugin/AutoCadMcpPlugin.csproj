@@ -12,6 +12,11 @@
     <RootNamespace>AutoCadMcpPlugin</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
+  <!-- dotnet build -p:Licencia=true  ->  el plugin EXIGE una licencia valida (lo que arma tools/empaquetar.ps1).
+       Sin la propiedad (desarrollo) solo informa el estado y no bloquea nada. -->
+  <PropertyGroup Condition="'$(Licencia)' == 'true'">
+    <DefineConstants>$(DefineConstants);LICENCIA</DefineConstants>
+  </PropertyGroup>
 
   <!-- Roslyn, para run_code: compila en memoria el código de la IA y da el
        modelo semántico que usa el filtro de seguridad. 4.8 todavía apunta a

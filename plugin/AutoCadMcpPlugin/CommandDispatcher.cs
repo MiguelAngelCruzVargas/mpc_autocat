@@ -25,6 +25,10 @@ namespace AutoCadMcpPlugin
                 if (string.IsNullOrEmpty(cmd))
                     throw new ArgumentException("Falta 'cmd' en el request.");
 
+                // Licencia: license_status siempre responde; el resto se exige solo en el build vendido (constante LICENCIA).
+                if (cmd == "license_status") return BuildResponse(id, true, LicenciaGuard.Estado(), null);
+                LicenciaGuard.Exigir(cmd);
+
                 JsonObject result = RunOnDocumentThread(cmd, pars);
                 return BuildResponse(id, true, result, null);
             }

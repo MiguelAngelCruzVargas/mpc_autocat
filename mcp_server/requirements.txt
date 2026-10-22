@@ -8,6 +8,8 @@
 mcp>=1.2.0,<2.0.0
 # Catalogo de conceptos en .xlsx con formulas (export_concept_catalog).
 openpyxl>=3.1,<4
+# Licencias: verifica la firma ECDSA del archivo de licencia (licencia.py).
+cryptography>=42
 
 # Para correr la bateria: `python run_tests.py`. No hace falta pytest --
 # los tests son scripts sueltos con su propio main().
