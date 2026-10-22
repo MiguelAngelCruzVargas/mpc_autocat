@@ -323,8 +323,7 @@ a las condiciones baratas**. Si quedan más de `hydrate_limit` (500) el resultad
 `notices`/`partial`: se acota (entity_type, layer, bboxArea) en vez de subir el tope a ciegas. Un campo que
 falta no cumple ninguna comparación. Es de solo lectura y no necesita plugin nuevo (usa `list_entities` y el
 comando `batch` con `get_entity`). Diseño tomado del servidor MCP nativo de la 2027 (consulta por tipo y
-filtro con agregaciones), escrito desde cero. `mcp_server/test_consulta.py` lo prueba sin AutoCAD; **falta
-probarlo en vivo** en un dibujo grande (tiempo del lote de detalle).
+filtro con agregaciones), escrito desde cero. `mcp_server/test_consulta.py` lo prueba sin AutoCAD; **probado en vivo** en la 2027 sobre el pórtico (2484 entidades): el conteo total coincide con `get_drawing_info` y `list_entities`, la suma de largos de 84 polilíneas de PORT-CONCRETO (394.390938) coincide al decimal con sumar `get_entity` una por una, y 401 polilíneas se leen en detalle en 0.4 s (el comando `batch` cuesta mucho menos de lo que se temía). Falta la 2022.
 
 ## 3.ter Variables de sistema y estado del editor (plugin 1.10.0)
 
@@ -340,7 +339,7 @@ cuando un comando se cuelga o falla sin motivo, casi siempre es un comando a med
 Esto sale de leer el servidor MCP nativo de la 2027 (ver `Desktop\Autodesk_descompilado`), que antes de ejecutar
 rechaza en milisegundos si hay un comando en curso, el editor de bloques o una edición en sitio abierta. Las
 guardas de ESTADO todavía no se aplican a las demás tools del plugin: están como lectura (`get_editor_state`),
-no como rechazo automático. **Falta probarlas en vivo** (2022 y 2027) y reinstalar el bundle: es plugin nuevo.
+no como rechazo automático. **Probadas en vivo en la 2027** (plugin 1.10.0, sobre el DWG del pórtico): `set_system_variable` cambia y restaura LTSCALE, y rechaza SECURELOAD (protegida), ACADVER (solo lectura), un valor que no es número y una variable inexistente; `get_editor_state` y `get_system_variables` responden (las inexistentes salen en `errors`). Falta la 2022.
 
 **Ejecutar cualquier comando nativo de AutoCAD (`run_command`) NO está conectado.** Hay un diseño escrito (un
 comando registrado `MCPRUNJOB` que corre `Editor.Command` con los tokens, tras la contraseña de run_code y una
