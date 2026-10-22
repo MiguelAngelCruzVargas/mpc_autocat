@@ -1,7 +1,7 @@
 # Pruebas pendientes
 
 ## Hecho (22/10/2026)
-Plugin 1.21.0 (incluye 1.17.0 a 1.20.0) verificado en vivo en **AutoCAD 2022 y 2027**: `verificar_lote_1_17.py` 201/201, y las baterías de
+Plugin 1.22.0 (caras y aristas): `verificar_lote_1_17.py` 236/236 en **AutoCAD 2022**; en la **2027** pasan las 37 comprobaciones nuevas, pero en esa corrida un `chamfer` nativo quedó «queued» tras el arranque en frío y bloqueó los checks de `chamfer_entities` y `radius_constraint` (233/239; ya habían pasado en 1.21.0): repetir `verificar_lote_1_17.py` en una 2027 ya calentada. Plugin 1.21.0 (incluye 1.17.0 a 1.20.0) verificado en vivo en **AutoCAD 2022 y 2027**: `verificar_lote_1_17.py` 201/201, y las baterías de
 siempre (`verificar_version` 31, `prueba_crear_objetos` 38, `prueba_navegacion` 26, `prueba_primitivas_3d` 16) en las dos.
 Las pruebas encontraron dos CIERRES de AutoCAD (`RefreshLists` sobre un layout en lectura, y una `Ellipse` nula) y un orden inválido en `configure_layout` (centrado antes del tipo de área, ventana sin área), todo corregido.
 

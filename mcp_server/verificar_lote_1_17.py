@@ -658,8 +658,117 @@ def main() -> int:
     chk("USADA17 (con una línea) sobrevive a la purga", "USADA17" in txt(ly), ly)
     rechaza("kind inválido se rechaza", lambda: s.purge_database_objects(["pizza"]), "")
 
+    # ---------------------------------------------------------------- 1.22.0: caras y aristas
+    def caja_solida(x, y=0):
+        h = s.create_object("Solid3d", init_method="CreateBox", init_args=[10, 10, 10])["handle"]
+        s.move_entities([h], x, y, 0)
+        return h
+
+    def zmax(r):
+        return r["extentsAfter"]["max"][2]
+
+    sb = caja_solida(5000)
+    ls = intento("list_subentities caras de un sólido", lambda: s.list_subentities(sb, "faces"))
+    chk("un cubo tiene 6 caras y 12 aristas", ls and bueno(ls) and ls.get("totalFaces") == 6 and ls.get("totalEdges") == 12, ls)
+    tapa = intento("tapa por normal", lambda: s.list_subentities(sb, "faces", {"normal": [0, 0, 1]}))
+    chk("la tapa es UNA cara de área 100 a z=5", tapa and bueno(tapa) and tapa["total"] == 1 and abs(tapa["items"][0]["area"] - 100) < 1e-6
+        and abs(tapa["items"][0]["z"] - 5) < 1e-6, tapa)
+    ar = intento("aristas de la tapa", lambda: s.list_subentities(sb, "edges", {"on_face": {"normal": [0, 0, 1]}}))
+    chk("la tapa tiene 4 aristas rectas de largo 10", ar and bueno(ar) and ar["total"] == 4
+        and all(i["kind"] == "line" and abs(i["length"] - 10) < 1e-6 for i in ar["items"]), ar)
+    chk("selector por z (arista horizontal a z=-5): 4", s.list_subentities(sb, "edges", {"z": -5})["total"] == 4)
+    chk("aristas verticales: 4", s.list_subentities(sb, "edges", {"vertical": True})["total"] == 4)
+    rechaza("selector sin filtro se rechaza", lambda: s.list_subentities(sb, "faces", {}), "vacío")
+    rechaza("normal que no existe da error claro", lambda: s.list_subentities(sb, "faces", {"normal": [1, 1, 1], "tol_deg": 1}), "Ninguna cara")
+    sec = intento("dry_run de extrude", lambda: s.edit_solid_faces(sb, "extrude", {"normal": [0, 0, 1]}, height=3, dry_run=True))
+    chk("dry_run no cambia nada", sec and sec.get("dry_run") and s.list_subentities(sb, "faces", {"normal": [0, 0, 1]})["items"][0]["z"] == 5, sec)
+    ex = intento("extrude de la tapa", lambda: s.edit_solid_faces(sb, "extrude", {"normal": [0, 0, 1]}, height=3))
+    chk("extrude sube la tapa a z=8 y el volumen a 1300", ex and bueno(ex) and abs(zmax(ex) - 8) < 1e-6 and abs(ex.get("volume", 0) - 1300) < 1e-3, ex)
+    of = intento("offset de la cara +x", lambda: s.edit_solid_faces(sb, "offset", {"normal": [1, 0, 0]}, distance=1))
+    chk("offset engorda 1 hacia +x (volumen 1430)", of and bueno(of) and abs(of.get("volume", 0) - 1430) < 1e-3, of)
+    tp = intento("taper de la cara -x", lambda: s.edit_solid_faces(sb, "taper", {"normal": [-1, 0, 0]}, base_point=[4995, 0, -5],
+                                                                  direction=[0, 0, 1], angle_deg=5))
+    chk("taper cambia el volumen", tp and bueno(tp) and abs(tp.get("volume", 0) - 1430) > 1.0, tp)
+    rechaza("extrude con altura 0 se rechaza", lambda: s.edit_solid_faces(sb, "extrude", {"all": True}, height=0), "height")
+
+    c2 = caja_solida(5030)
+    ch = intento("chamfer de la tapa", lambda: s.chamfer_solid_edges(c2, {"on_face": {"normal": [0, 0, 1]}}, {"normal": [0, 0, 1]}, 1.0))
+    chk("chaflán: 4 aristas, 10 caras, volumen 981.33", ch and bueno(ch) and ch["edges"] == 4 and ch["facesAfter"] == 10
+        and abs(ch.get("volume", 0) - 981.3333333) < 1e-3, ch)
+    rechaza("chaflán con aristas que no tocan la base se rechaza", lambda: s.chamfer_solid_edges(c2, {"z": -5}, {"normal": [0, 0, 1]}, 1.0),
+            "no pertenecen")
+    c3 = caja_solida(5060)
+    sh = intento("shell abierto arriba", lambda: s.edit_solid_faces(c3, "shell", {"normal": [0, 0, 1]}, thickness=1))
+    chk("shell: pared de 1 hacia ADENTRO (volumen 424, caja intacta)", sh and bueno(sh) and abs(sh.get("volume", 0) - 424) < 1e-3
+        and sh["extentsAfter"] == sh["extentsBefore"], sh)
+
+    # mallas
+    mh = s.create_mesh("box", 5100, 0, 0, [10, 10, 10], 1)["handle"]
+    lm = intento("list_subentities de una malla", lambda: s.list_subentities(mh, "faces"))
+    chk("malla caja: 6 caras, 12 aristas, 8 vértices", lm and bueno(lm) and lm["totalFaces"] == 6 and lm["totalEdges"] == 12 and lm["totalVertices"] == 8, lm)
+    me = intento("extrude de una cara de malla", lambda: s.edit_mesh_faces(mh, "extrude", {"normal": [0, 0, 1]}, length=3))
+    chk("mesh extrude: 6 → 10 caras", me and bueno(me) and me["facesBefore"] == 6 and me["facesAfter"] == 10, me)
+    sp = intento("split de la tapa", lambda: s.edit_mesh_faces(mh, "split", face=0, edge_a=0, edge_b=2))
+    chk("mesh split: una cara más", sp and bueno(sp) and sp["facesAfter"] == sp["facesBefore"] + 1, sp)
+    cr = intento("crease de una arista", lambda: s.edit_mesh_faces(mh, "crease", edges={"indices": [1]}, level=1))
+    chk("mesh crease responde", cr and bueno(cr), cr)
+    mg = intento("merge de caras no vecinas", lambda: s.edit_mesh_faces(mh, "merge", faces={"indices": [1, 2]}))
+    chk("merge de no vecinas avisa y no cambia", mg and bueno(mg) and "warning" in mg and mg["facesAfter"] == mg["facesBefore"], mg)
+    co = intento("collapse de una arista", lambda: s.edit_mesh_faces(mh, "collapse", edge=0))
+    chk("mesh collapse: un vértice menos", co and bueno(co) and co["verticesAfter"] == co["verticesBefore"] - 1, co)
+    rechaza("spin de una arista entre cuadriláteros se rechaza", lambda: s.edit_mesh_faces(mh, "spin", edge=1), "TRIÁNGULOS")
+    rechaza("split con aristas ajenas a la cara se rechaza", lambda: s.edit_mesh_faces(mh, "split", face=1, edge_a=0, edge_b=2), "bordes")
+    # cap: tubo abierto
+    tubo = intento("tubo abierto", lambda: s.create_mesh_from_faces(
+        [[5200, 0, 0], [5210, 0, 0], [5210, 10, 0], [5200, 10, 0], [5200, 0, 8], [5210, 0, 8], [5210, 10, 8], [5200, 10, 8]],
+        [[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]))
+    if tubo and tubo.get("handle"):
+        bordes = intento("aristas del borde abierto", lambda: s.list_subentities(tubo["handle"], "edges", {"z": 8}))
+        chk("el tubo tiene 4 aristas arriba", bordes and bueno(bordes) and bordes["total"] == 4, bordes)
+        cp = intento("cap del tubo", lambda: s.edit_mesh_faces(tubo["handle"], "cap", edges={"z": 8}))
+        chk("mesh cap: una cara más", cp and bueno(cp) and cp["facesAfter"] == cp["facesBefore"] + 1, cp)
+    # spin: dos triángulos que forman un cuadrado
+    tri = intento("dos triángulos", lambda: s.create_mesh_from_faces(
+        [[5300, 0, 0], [5310, 0, 0], [5310, 10, 0], [5300, 10, 0]], [[0, 1, 2], [0, 2, 3]]))
+    if tri and tri.get("handle"):
+        ed = s.list_subentities(tri["handle"], "edges")
+        diag = [i for i in ed["items"] if len(i["faces"]) == 2]
+        chk("la diagonal es la única arista compartida", len(diag) == 1, ed)
+        if diag:
+            rs = intento("spin de la diagonal", lambda: s.edit_mesh_faces(tri["handle"], "spin", edge=diag[0]["index"]))
+            chk("mesh spin responde", rs and bueno(rs), rs)
+            ed2 = s.list_subentities(tri["handle"], "edges")
+            d2 = [i for i in ed2["items"] if len(i["faces"]) == 2][0]
+            chk("spin cambió la diagonal a la otra", sorted([d2["p1"][:2], d2["p2"][:2]]) != sorted([diag[0]["p1"][:2], diag[0]["p2"][:2]]), ed2)
+
+    # superficies
+    la = s.create_line(5400, 0, 5420, 0)["handle"]
+    lb = s.create_line(5410, -10, 5410, 10)["handle"]
+    sa = s.create_surface("extrude", la, height=10)["handle"]
+    sbb = s.create_surface("extrude", lb, height=10)["handle"]
+    tr_ = intento("trim_surface", lambda: s.trim_surface(sa, [5415, 0, 5], tools=[sbb]))
+    chk("trim recorta la superficie de 20 a 10 de largo", tr_ and bueno(tr_) and abs(tr_["extentsAfter"]["max"][0] - 5410) < 1e-6
+        and abs(tr_["extentsAfter"]["min"][0] - 5400) < 1e-6, tr_)
+    ae = intento("aristas de una superficie", lambda: s.list_subentities(sa, "edges"))
+    chk("la superficie recortada tiene 4 aristas", ae and bueno(ae) and ae["total"] == 4, ae)
+    if ae and bueno(ae):
+        lado = [i for i in ae["items"] if abs(i["p1"][0] - 5410) < 1e-6 and abs(i["p2"][0] - 5410) < 1e-6]
+        chk("hay una arista vertical sobre el corte", len(lado) == 1, ae)
+        if lado:
+            xt = intento("extend_surface", lambda: s.extend_surface(sa, {"indices": [lado[0]["index"]]}, 3))
+            chk("extend alarga 3 hacia +x", xt and bueno(xt) and abs(xt["extentsAfter"]["max"][0] - 5413) < 1e-6, xt)
+    w1 = s.create_line(5500, 0, 5520, 0)["handle"]
+    w2 = s.create_line(5500, 0, 5500, 20)["handle"]
+    s1 = s.create_surface("extrude", w1, height=10)["handle"]
+    s2 = s.create_surface("extrude", w2, height=10)["handle"]
+    fs = intento("fillet_surfaces", lambda: s.fillet_surfaces(s1, [5510, 0, 5], s2, [5500, 10, 5], 2))
+    chk("empalme de radio 2: superficie nueva de 2×2×10", fs and bueno(fs) and fs.get("handle")
+        and abs(fs["extents"]["max"][0] - fs["extents"]["min"][0] - 2) < 1e-6, fs)
+    rechaza("trim con una herramienta que no es superficie", lambda: s.trim_surface(sa, [5400, 0, 5], tools=[la]), "superficie")
+    rechaza("fillet con radio 0 se rechaza", lambda: s.fillet_surfaces(s1, [5510, 0, 5], s2, [5500, 10, 5], 0), "radius")
+
     n = sum(1 for _, ok in R if ok)
-    print(f"\nRESULTADO LOTE 1.17.0: {n}/{len(R)} verificaciones OK  (AutoCAD {s.ping().get('pluginVersion')})")
+    print(f"\nRESULTADO LOTE 1.17.0-1.22.0: {n}/{len(R)} verificaciones OK  (AutoCAD {s.ping().get('pluginVersion')})")
     fallan = [x for x, ok in R if not ok]
     if fallan:
         print("FALLAN:")

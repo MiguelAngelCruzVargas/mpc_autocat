@@ -5651,7 +5651,7 @@ def delete_database_object(kind: str, name: Optional[str] = None,
     return _prop(prop_mod.delete_database_object, kind, name, handle)
 
 
-_PEND = " (plugin 1.21.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
+_PEND = " (plugin 1.22.0: verificado en vivo en AutoCAD 2022 y 2027; compila en 2019-2027)"
 
 
 def _con_pend(fn):
@@ -6498,6 +6498,114 @@ def remove_constraints(handles: Optional[list[str]] = None, all: bool = False) -
     """Quita restricciones: de esas entidades (handles) o TODAS las del espacio activo
     (all=True, con sus variables). La geometría no se borra ni se mueve."""
     return _bd(bd_mod.remove_constraints, handles, all)
+
+
+@mcp.tool()
+@_con_pend
+def list_subentities(handle: str, kind: str = "faces", select: Optional[dict[str, Any]] = None,
+                     limit: int = 200) -> dict[str, Any]:
+    """CARAS, ARISTAS y VÉRTICES de un sólido, superficie, región o malla, con lo que hace falta para
+    elegirlos: índice, tipo (plane/cylinder/cone/sphere/torus/nurbs; line/arc/circle/ellipse/spline),
+    normal, centro, área, largo, extremos y, de cada arista, las caras que toca. Es lo que se mira ANTES de
+    editar caras o aristas: los índices que da son los que piden edit_solid_faces, chamfer_solid_edges,
+    edit_mesh_faces y extend_surface (solo valen mientras el objeto no se edite: se vuelven a pedir).
+
+    kind: faces | edges | vertices (vértices solo en mallas). select: selector que filtra lo que se lista.
+    Selector de CARAS (todas las claves se combinan con Y): indices [..], normal [x,y,z] + tol_deg (5), z
+    (cara horizontal a esa altura) + z_tol, kind, min_area, max_area, all. Selector de ARISTAS: indices, z
+    (arista horizontal a esa altura), vertical, horizontal, kind, min_length, max_length, on_face (un
+    selector de caras: las aristas que pertenecen a esas caras), all. Un selector vacío o con una clave
+    inexistente se rechaza. Ej.: la tapa de un sólido es {"normal": [0,0,1]}; sus aristas, {"on_face": {"normal": [0,0,1]}}."""
+    return _bd(bd_mod.list_subentities, handle, kind, select, limit)
+
+
+@mcp.tool()
+@_con_pend
+def edit_solid_faces(handle: str, op: str, faces: Optional[dict[str, Any]] = None, height: Optional[float] = None,
+                     distance: Optional[float] = None, taper_deg: float = 0.0,
+                     base_point: Optional[list[float]] = None, direction: Optional[list[float]] = None,
+                     angle_deg: Optional[float] = None, thickness: Optional[float] = None,
+                     dry_run: bool = False) -> dict[str, Any]:
+    """Edita CARAS de un sólido 3D (SOLIDEDIT): op =
+    - extrude: empuja las caras `height` (positiva hacia afuera), con `taper_deg` de inclinación;
+    - offset: engorda (+) o adelgaza (-) las caras `distance`;
+    - taper: inclina las caras `angle_deg` alrededor de `base_point` y la dirección `direction`;
+    - remove: quita caras (agujeros, redondeos, chaflanes) y deja el sólido cerrado;
+    - shell: vacía el sólido con pared de `thickness`; `faces` (opcional) son las caras que quedan abiertas.
+    `faces` es un selector de caras (ver list_subentities): {"normal":[0,0,1]} = las tapas, {"indices":[3]}...
+    dry_run=True solo dice qué caras tocaría. Si AutoCAD lo rechaza no cambia nada y dice por qué."""
+    return _bd(bd_mod.edit_solid_faces, handle, op, faces, height, distance, taper_deg, base_point, direction,
+               angle_deg, thickness, dry_run)
+
+
+@mcp.tool()
+@_con_pend
+def chamfer_solid_edges(handle: str, edges: dict[str, Any], base_face: dict[str, Any], distance: float,
+                        distance2: Optional[float] = None, dry_run: bool = False) -> dict[str, Any]:
+    """CHAFLÁN en aristas de un sólido (CHAMFEREDGE). `base_face` es un selector que da UNA cara: la que
+    contiene a las aristas y sobre la que se mide `distance`; `distance2` (igual por defecto) es la medida
+    sobre la otra cara. `edges` es un selector de aristas que tienen que ser bordes de esa cara base:
+    {"on_face": {"normal":[0,0,1]}} son todas las de la tapa. dry_run=True muestra qué aristas tomaría.
+    El redondeo de aristas es fillet_solid_edges."""
+    return _bd(bd_mod.chamfer_solid_edges, handle, edges, base_face, distance, distance2, dry_run)
+
+
+@mcp.tool()
+@_con_pend
+def edit_mesh_faces(handle: str, op: str, faces: Optional[dict[str, Any]] = None,
+                    edges: Optional[dict[str, Any]] = None, length: Optional[float] = None,
+                    direction: Optional[list[float]] = None, taper_deg: float = 0.0, connected: bool = False,
+                    face: Optional[int] = None, edge: Optional[int] = None, edge_a: Optional[int] = None,
+                    edge_b: Optional[int] = None, t_a: float = 0.5, t_b: float = 0.5,
+                    level: Optional[float] = None, whole_mesh: bool = False) -> dict[str, Any]:
+    """Edita CARAS y ARISTAS de una malla (SubDMesh) con las operaciones de MESHEXTRUDE, MESHMERGE,
+    MESHSPLIT, MESHCREASE, MESHCOLLAPSE, MESHCAP y MESHSPIN. op =
+    - extrude: `faces` (selector), `length` (positiva hacia afuera); cada grupo de caras sale por su normal
+      salvo que pases `direction`; `taper_deg`; `connected=True` extruye las caras vecinas como una sola;
+    - merge: `faces` (2 o más, vecinas y coplanares) en una sola; si no se fusionan lo avisa en `warning`;
+    - split: divide la cara `face` uniendo un punto de `edge_a` con uno de `edge_b` (índices de dos aristas
+      de ESA cara; `t_a`/`t_b` = posición sobre cada una, 0.5 = punto medio);
+    - crease: `level` >= 0 (arista filosa al suavizar) sobre `faces` y/o `edges`, o `whole_mesh=True`;
+    - collapse: `face` o `edge` (índice): funde sus vértices en uno;
+    - cap: `edges` (selector del borde abierto, aristas con una sola cara) tapa el agujero;
+    - spin: `edge` = la arista compartida por DOS triángulos: la gira a la otra diagonal del cuadrilátero.
+    Los índices y la normal de cada cara salen de list_subentities."""
+    return _bd(bd_mod.edit_mesh_faces, handle, op, faces, edges, length, direction, taper_deg, connected, face,
+               edge, edge_a, edge_b, t_a, t_b, level, whole_mesh)
+
+
+@mcp.tool()
+@_con_pend
+def trim_surface(blank: str, pick_point: list[float], tools: Optional[list[str]] = None,
+                 curves: Optional[list[str]] = None, project_dir: Optional[list[float]] = None,
+                 auto_extend: bool = False) -> dict[str, Any]:
+    """RECORTA una superficie (SURFTRIM). `blank` es la superficie a recortar, `pick_point` [x,y,z] un punto
+    sobre la parte que SE QUITA y el corte lo dan `tools` (otras superficies) y/o `curves` (curvas que se
+    proyectan sobre la superficie en la dirección `project_dir`, por defecto [0,0,1]). auto_extend=True
+    prolonga las herramientas hasta cortar del todo. Devuelve las extensiones antes y después."""
+    return _bd(bd_mod.trim_surface, blank, pick_point, tools, curves, project_dir, auto_extend)
+
+
+@mcp.tool()
+@_con_pend
+def extend_surface(handle: str, edges: dict[str, Any], distance: float, mode: str = "extend",
+                   associative: bool = False) -> dict[str, Any]:
+    """EXTIENDE los bordes de una superficie `distance` (SURFEXTEND). `edges` es un selector de aristas del
+    borde (list_subentities con kind='edges' las da con su largo y extremos). mode: extend (sigue la forma de
+    la superficie) o stretch (la estira en recto)."""
+    return _bd(bd_mod.extend_surface, handle, edges, distance, mode, associative)
+
+
+@mcp.tool()
+@_con_pend
+def fillet_surfaces(surface1: str, pick1: list[float], surface2: str, pick2: list[float], radius: float,
+                    trim: str = "both", direction: Optional[list[float]] = None,
+                    associative: bool = False) -> dict[str, Any]:
+    """EMPALME redondeado entre dos superficies (SURFFILLET): crea una superficie nueva de `radius`. pick1 y
+    pick2 [x,y,z] son puntos sobre cada superficie del lado donde va el empalme. trim: both (recorta las dos
+    contra el empalme), none, first o second. direction = dirección de la vista con que se proyectan los
+    puntos (por defecto [0,0,1])."""
+    return _bd(bd_mod.fillet_surfaces, surface1, pick1, surface2, pick2, radius, trim, direction, associative)
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:

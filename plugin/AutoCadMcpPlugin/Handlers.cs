@@ -289,6 +289,20 @@ namespace AutoCadMcpPlugin
                     return ConstraintCommands.List(doc, pars);
                 case "remove_constraints":
                     return ConstraintCommands.Remove(doc, pars);
+                case "list_subentities":
+                    return SubentityCommands.List(doc, pars);
+                case "edit_solid_faces":
+                    return SubentityCommands.EditSolidFaces(doc, pars);
+                case "chamfer_solid_edges":
+                    return SubentityCommands.ChamferSolidEdges(doc, pars);
+                case "edit_mesh_faces":
+                    return SubentityCommands.EditMeshFaces(doc, pars);
+                case "trim_surface":
+                    return SubentityCommands.TrimSurface(doc, pars);
+                case "extend_surface":
+                    return SubentityCommands.ExtendSurface(doc, pars);
+                case "fillet_surfaces":
+                    return SubentityCommands.FilletSurfaces(doc, pars);
                 case "bind_xref":
                     return XrefCommands.Bind(doc, pars);
                 case "unload_xref":

@@ -990,3 +990,294 @@ def remove_constraints(handles: Optional[list[str]] = None, all: bool = False) -
     else:
         pars["handles"] = _handles(handles, "handles", maximo=500)
     return acad.call("remove_constraints", pars)
+
+
+# ------------------------------------------------------------------ caras y aristas (plugin 1.22.0)
+
+CLAVES_CARA = ("indices", "normal", "tol_deg", "z", "z_tol", "kind", "min_area", "max_area", "all")
+CLAVES_ARISTA = ("indices", "z", "z_tol", "vertical", "horizontal", "kind", "min_length", "max_length", "on_face", "all")
+TIPOS_CARA = ("plane", "cylinder", "cone", "sphere", "torus", "nurbs")
+TIPOS_ARISTA = ("line", "arc", "circle", "ellipse", "spline")
+_FILTROS_CARA = ("indices", "normal", "z", "kind", "min_area", "max_area")
+_FILTROS_ARISTA = ("indices", "z", "vertical", "horizontal", "kind", "min_length", "max_length", "on_face")
+
+
+def _indices(v: Any, cual: str) -> list[int]:
+    if not isinstance(v, (list, tuple)) or not v or len(v) > 5000:
+        raise BdError(f"'{cual}.indices' es una lista de enteros >= 0 (1 a 5000).")
+    for i in v:
+        if isinstance(i, bool) or not isinstance(i, int) or i < 0:
+            raise BdError(f"'{cual}.indices' es una lista de enteros >= 0, no {i!r}.")
+    return list(v)
+
+
+def _selector_caras(sel: Any, cual: str = "faces") -> dict[str, Any]:
+    """Selector de caras por geometría. Sin ninguna clave de filtro hace falta {'all': True}."""
+    if not isinstance(sel, dict):
+        raise BdError(f"'{cual}' es un selector de caras, p.ej. {{'normal': [0, 0, 1]}}, {{'indices': [0, 3]}} o {{'all': True}}.")
+    extra = set(sel) - set(CLAVES_CARA)
+    if extra:
+        raise BdError(f"'{cual}': clave(s) desconocida(s) {sorted(extra)}. Válidas: {', '.join(CLAVES_CARA)}.")
+    if not any(k in sel for k in _FILTROS_CARA) and sel.get("all") is not True:
+        raise BdError(f"'{cual}' está vacío: poné un filtro ({', '.join(_FILTROS_CARA)}) o {{'all': True}}.")
+    o: dict[str, Any] = {}
+    if "indices" in sel:
+        o["indices"] = _indices(sel["indices"], cual)
+    if "normal" in sel:
+        o["normal"] = _vector(sel["normal"], f"{cual}.normal")
+    if "tol_deg" in sel:
+        o["tol_deg"] = _opt_num(sel["tol_deg"], f"{cual}.tol_deg", 0.0, 90.0)
+    if "z" in sel:
+        o["z"] = _opt_num(sel["z"], f"{cual}.z")
+    if "z_tol" in sel:
+        o["z_tol"] = _opt_num(sel["z_tol"], f"{cual}.z_tol", 0.0)
+    if "kind" in sel:
+        if sel["kind"] not in TIPOS_CARA:
+            raise BdError(f"'{cual}.kind' es uno de: {', '.join(TIPOS_CARA)}.")
+        o["kind"] = sel["kind"]
+    for k in ("min_area", "max_area"):
+        if k in sel:
+            o[k] = _opt_num(sel[k], f"{cual}.{k}", 0.0)
+    if "all" in sel:
+        o["all"] = sel["all"] is True
+    return o
+
+
+def _selector_aristas(sel: Any, cual: str = "edges") -> dict[str, Any]:
+    if not isinstance(sel, dict):
+        raise BdError(f"'{cual}' es un selector de aristas, p.ej. {{'z': 0}}, {{'indices': [2, 5]}}, {{'on_face': {{'normal': [0, 0, 1]}}}} o {{'all': True}}.")
+    extra = set(sel) - set(CLAVES_ARISTA)
+    if extra:
+        raise BdError(f"'{cual}': clave(s) desconocida(s) {sorted(extra)}. Válidas: {', '.join(CLAVES_ARISTA)}.")
+    if not any(k in sel for k in _FILTROS_ARISTA) and sel.get("all") is not True:
+        raise BdError(f"'{cual}' está vacío: poné un filtro ({', '.join(_FILTROS_ARISTA)}) o {{'all': True}}.")
+    o: dict[str, Any] = {}
+    if "indices" in sel:
+        o["indices"] = _indices(sel["indices"], cual)
+    if "z" in sel:
+        o["z"] = _opt_num(sel["z"], f"{cual}.z")
+    if "z_tol" in sel:
+        o["z_tol"] = _opt_num(sel["z_tol"], f"{cual}.z_tol", 0.0)
+    for k in ("vertical", "horizontal"):
+        if k in sel:
+            if not isinstance(sel[k], bool):
+                raise BdError(f"'{cual}.{k}' es true o false.")
+            o[k] = sel[k]
+    if o.get("vertical") and o.get("horizontal"):
+        raise BdError(f"'{cual}': una arista no puede ser vertical y horizontal a la vez.")
+    if "kind" in sel:
+        if sel["kind"] not in TIPOS_ARISTA:
+            raise BdError(f"'{cual}.kind' es uno de: {', '.join(TIPOS_ARISTA)}.")
+        o["kind"] = sel["kind"]
+    for k in ("min_length", "max_length"):
+        if k in sel:
+            o[k] = _opt_num(sel[k], f"{cual}.{k}", 0.0)
+    if "on_face" in sel:
+        o["on_face"] = _selector_caras(sel["on_face"], f"{cual}.on_face")
+    if "all" in sel:
+        o["all"] = sel["all"] is True
+    return o
+
+
+def list_subentities(handle: str, kind: str = "faces", select: Optional[dict[str, Any]] = None, limit: int = 200) -> dict[str, Any]:
+    if kind not in ("faces", "edges", "vertices"):
+        raise BdError("'kind' es faces, edges o vertices (esta última solo en mallas).")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 5000:
+        raise BdError("'limit' es un entero de 1 a 5000.")
+    pars: dict[str, Any] = {"handle": _handle(handle), "kind": kind, "limit": limit}
+    if select is not None:
+        if kind == "vertices":
+            raise BdError("Los vértices no se filtran con 'select': se listan todos (usá 'limit').")
+        pars["select"] = _selector_caras(select, "select") if kind == "faces" else _selector_aristas(select, "select")
+    return acad.call("list_subentities", pars)
+
+
+SOLIDO_OPS = ("extrude", "offset", "remove", "taper", "shell")
+
+
+def edit_solid_faces(handle: str, op: str, faces: Optional[dict[str, Any]] = None, height: Optional[float] = None,
+                     distance: Optional[float] = None, taper_deg: float = 0.0, base_point: Optional[list[float]] = None,
+                     direction: Optional[list[float]] = None, angle_deg: Optional[float] = None,
+                     thickness: Optional[float] = None, dry_run: bool = False) -> dict[str, Any]:
+    if op not in SOLIDO_OPS:
+        raise BdError(f"'op' es uno de: {', '.join(SOLIDO_OPS)}.")
+    pars: dict[str, Any] = {"handle": _handle(handle), "op": op}
+    if op == "shell":
+        if faces is not None:
+            pars["faces"] = _selector_caras(faces)
+        if thickness is None:
+            raise BdError("shell necesita 'thickness' (el espesor de la pared).")
+        t = _opt_num(thickness, "thickness", 0.0)
+        if t == 0:
+            raise BdError("'thickness' tiene que ser mayor que cero.")
+        pars["thickness"] = t
+    else:
+        if faces is None:
+            raise BdError(f"{op} necesita 'faces' (un selector de caras).")
+        pars["faces"] = _selector_caras(faces)
+    if op == "extrude":
+        if height is None:
+            raise BdError("extrude necesita 'height' (positiva hacia afuera de la cara).")
+        h = _opt_num(height, "height")
+        if h == 0:
+            raise BdError("'height' no puede ser 0.")
+        pars["height"] = h
+        pars["taper_deg"] = _opt_num(taper_deg, "taper_deg", -89.0, 89.0)
+    elif op == "offset":
+        if distance is None:
+            raise BdError("offset necesita 'distance' (positiva engorda hacia afuera).")
+        d = _opt_num(distance, "distance")
+        if d == 0:
+            raise BdError("'distance' no puede ser 0.")
+        pars["distance"] = d
+    elif op == "taper":
+        if base_point is None or direction is None or angle_deg is None:
+            raise BdError("taper necesita 'base_point', 'direction' y 'angle_deg'.")
+        pars["base_point"] = _punto3(base_point, "base_point")
+        pars["direction"] = _vector(direction, "direction")
+        pars["angle_deg"] = _opt_num(angle_deg, "angle_deg", -89.0, 89.0)
+    if dry_run is True:
+        pars["dry_run"] = True
+    return acad.call("edit_solid_faces", pars)
+
+
+def chamfer_solid_edges(handle: str, edges: dict[str, Any], base_face: dict[str, Any], distance: float,
+                        distance2: Optional[float] = None, dry_run: bool = False) -> dict[str, Any]:
+    pars: dict[str, Any] = {"handle": _handle(handle), "edges": _selector_aristas(edges),
+                            "base_face": _selector_caras(base_face, "base_face"),
+                            "distance": _opt_num(distance, "distance", 0.0)}
+    if pars["distance"] == 0:
+        raise BdError("'distance' tiene que ser mayor que cero.")
+    if distance2 is not None:
+        pars["distance2"] = _opt_num(distance2, "distance2", 0.0)
+        if pars["distance2"] == 0:
+            raise BdError("'distance2' tiene que ser mayor que cero.")
+    if dry_run is True:
+        pars["dry_run"] = True
+    return acad.call("chamfer_solid_edges", pars)
+
+
+MALLA_OPS = ("extrude", "merge", "split", "crease", "collapse", "cap", "spin")
+
+
+def _indice(v: Any, cual: str) -> int:
+    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        raise BdError(f"'{cual}' es un entero >= 0 (el índice que da list_subentities).")
+    return v
+
+
+def edit_mesh_faces(handle: str, op: str, faces: Optional[dict[str, Any]] = None, edges: Optional[dict[str, Any]] = None,
+                    length: Optional[float] = None, direction: Optional[list[float]] = None, taper_deg: float = 0.0,
+                    connected: bool = False, face: Optional[int] = None, edge: Optional[int] = None,
+                    edge_a: Optional[int] = None, edge_b: Optional[int] = None, t_a: float = 0.5, t_b: float = 0.5,
+                    level: Optional[float] = None, whole_mesh: bool = False) -> dict[str, Any]:
+    if op not in MALLA_OPS:
+        raise BdError(f"'op' es uno de: {', '.join(MALLA_OPS)}.")
+    pars: dict[str, Any] = {"handle": _handle(handle), "op": op}
+    if op == "extrude":
+        if faces is None or length is None:
+            raise BdError("extrude necesita 'faces' (selector) y 'length'.")
+        pars["faces"] = _selector_caras(faces)
+        pars["length"] = _opt_num(length, "length")
+        if pars["length"] == 0:
+            raise BdError("'length' no puede ser 0.")
+        pars["taper_deg"] = _opt_num(taper_deg, "taper_deg", -89.0, 89.0)
+        if direction is not None:
+            pars["direction"] = _vector(direction, "direction")
+        if connected is True:
+            pars["connected"] = True
+    elif op == "merge":
+        if faces is None:
+            raise BdError("merge necesita 'faces' (un selector de 2 o más caras vecinas y coplanares).")
+        pars["faces"] = _selector_caras(faces)
+    elif op == "split":
+        if face is None or edge_a is None or edge_b is None:
+            raise BdError("split necesita 'face', 'edge_a' y 'edge_b' (índices; las dos aristas tienen que ser bordes de esa cara).")
+        pars["face"] = _indice(face, "face")
+        pars["edge_a"] = _indice(edge_a, "edge_a")
+        pars["edge_b"] = _indice(edge_b, "edge_b")
+        if pars["edge_a"] == pars["edge_b"]:
+            raise BdError("'edge_a' y 'edge_b' tienen que ser aristas distintas.")
+        pars["t_a"] = _opt_num(t_a, "t_a", 0.0, 1.0)
+        pars["t_b"] = _opt_num(t_b, "t_b", 0.0, 1.0)
+        if not (0 < pars["t_a"] < 1 and 0 < pars["t_b"] < 1):
+            raise BdError("'t_a' y 't_b' van entre 0 y 1 sin tocar los extremos (0.5 = punto medio).")
+    elif op == "crease":
+        if level is None:
+            raise BdError("crease necesita 'level' (>= 0; más alto = arista más filosa).")
+        pars["level"] = _opt_num(level, "level", 0.0)
+        if whole_mesh is True:
+            pars["whole_mesh"] = True
+        elif faces is None and edges is None:
+            raise BdError("crease necesita 'faces' y/o 'edges' (selectores) o whole_mesh=True.")
+        if faces is not None:
+            pars["faces"] = _selector_caras(faces)
+        if edges is not None:
+            pars["edges"] = _selector_aristas(edges)
+    elif op == "collapse":
+        if (face is None) == (edge is None):
+            raise BdError("collapse necesita 'face' O 'edge' (un índice), no los dos ni ninguno.")
+        if face is not None:
+            pars["face"] = _indice(face, "face")
+        else:
+            pars["edge"] = _indice(edge, "edge")
+    elif op == "cap":
+        if edges is None:
+            raise BdError("cap necesita 'edges' (un selector de las aristas del borde abierto).")
+        pars["edges"] = _selector_aristas(edges)
+    elif op == "spin":
+        if edge is None:
+            raise BdError("spin necesita 'edge' (el índice de la arista compartida por DOS triángulos).")
+        pars["edge"] = _indice(edge, "edge")
+    return acad.call("edit_mesh_faces", pars)
+
+
+def trim_surface(blank: str, pick_point: list[float], tools: Optional[list[str]] = None,
+                 curves: Optional[list[str]] = None, project_dir: Optional[list[float]] = None,
+                 auto_extend: bool = False) -> dict[str, Any]:
+    pars: dict[str, Any] = {"blank": _handle(blank, "blank"), "pick_point": _punto3(pick_point, "pick_point")}
+    if not tools and not curves:
+        raise BdError("Falta el corte: pasá 'tools' (superficies) y/o 'curves' (curvas).")
+    if tools:
+        pars["tools"] = _handles(tools, "tools", maximo=100)
+    if curves:
+        pars["curves"] = _handles(curves, "curves", maximo=100)
+    if pars["blank"] in pars.get("tools", []) + pars.get("curves", []):
+        raise BdError("La superficie a recortar no puede ser su propia herramienta de corte.")
+    if project_dir is not None:
+        pars["project_dir"] = _vector(project_dir, "project_dir")
+    if auto_extend is True:
+        pars["auto_extend"] = True
+    return acad.call("trim_surface", pars)
+
+
+def extend_surface(handle: str, edges: dict[str, Any], distance: float, mode: str = "extend",
+                   associative: bool = False) -> dict[str, Any]:
+    if mode not in ("extend", "stretch"):
+        raise BdError("'mode' es extend o stretch.")
+    d = _opt_num(distance, "distance", 0.0)
+    if d == 0:
+        raise BdError("'distance' tiene que ser mayor que cero.")
+    pars: dict[str, Any] = {"handle": _handle(handle), "edges": _selector_aristas(edges), "distance": d, "mode": mode}
+    if associative is True:
+        pars["associative"] = True
+    return acad.call("extend_surface", pars)
+
+
+def fillet_surfaces(surface1: str, pick1: list[float], surface2: str, pick2: list[float], radius: float,
+                    trim: str = "both", direction: Optional[list[float]] = None, associative: bool = False) -> dict[str, Any]:
+    if trim not in ("both", "none", "first", "second"):
+        raise BdError("'trim' es both, none, first o second.")
+    s1, s2 = _handle(surface1, "surface1"), _handle(surface2, "surface2")
+    if s1 == s2:
+        raise BdError("surface1 y surface2 tienen que ser superficies distintas.")
+    r = _opt_num(radius, "radius", 0.0)
+    if r == 0:
+        raise BdError("'radius' tiene que ser mayor que cero.")
+    pars: dict[str, Any] = {"surface1": s1, "pick1": _punto3(pick1, "pick1"), "surface2": s2,
+                            "pick2": _punto3(pick2, "pick2"), "radius": r, "trim": trim}
+    if direction is not None:
+        pars["direction"] = _vector(direction, "direction")
+    if associative is True:
+        pars["associative"] = True
+    return acad.call("fillet_surfaces", pars)
