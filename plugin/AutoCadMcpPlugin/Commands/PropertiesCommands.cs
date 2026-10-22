@@ -53,14 +53,14 @@ namespace AutoCadMcpPlugin.Commands
 
         // ------------------------------------------------------------ reflexión
 
-        private static bool EsNumero(Type t)
+        internal static bool EsNumero(Type t)
         {
             return t == typeof(int) || t == typeof(short) || t == typeof(long) || t == typeof(double)
                 || t == typeof(float) || t == typeof(byte) || t == typeof(uint) || t == typeof(ushort);
         }
 
         /// <summary>Tipos que se saben llevar y traer a JSON.</summary>
-        private static bool Soportado(Type t)
+        internal static bool Soportado(Type t)
         {
             t = Nullable.GetUnderlyingType(t) ?? t;
             return t == typeof(string) || t == typeof(bool) || EsNumero(t) || t.IsEnum
@@ -116,7 +116,7 @@ namespace AutoCadMcpPlugin.Commands
 
         // ------------------------------------------------------------ valores <-> JSON
 
-        private static JsonNode AJson(object v)
+        internal static JsonNode AJson(object v)
         {
             if (v == null) return null;
             switch (v)
@@ -184,7 +184,7 @@ namespace AutoCadMcpPlugin.Commands
             return r;
         }
 
-        private static object DeJson(Type destino, JsonNode v, string nombre)
+        internal static object DeJson(Type destino, JsonNode v, string nombre)
         {
             var t = Nullable.GetUnderlyingType(destino) ?? destino;
             if (v == null)

@@ -20,6 +20,7 @@ import compose as compose_mod
 import consulta as consulta_mod
 import edicion as edicion_mod
 import propiedades as prop_mod
+import metodos as met_mod
 import electrical as elec_mod
 import engine as engine_mod
 import model3d as model3d_mod
@@ -5490,6 +5491,60 @@ def zoom_extents() -> dict[str, Any]:
     capture_viewport pedido inmediatamente después no choca con un comando
     en curso."""
     return acad.call("zoom_extents", {})
+
+
+def _met(fn, *args, **kw) -> dict[str, Any]:
+    try:
+        return fn(*args, **kw)
+    except met_mod.MetodosError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+def list_object_methods(entity_type: Optional[str] = None, handle: Optional[str] = None,
+                        filter: Optional[str] = None) -> dict[str, Any]:
+    """Qué MÉTODOS se pueden invocar sobre un tipo de objeto (por clase,
+    p.ej. 'Polyline', 'Line', 'Circle', 'DBText', 'Solid3d', o por el handle de
+    uno): nombre, parámetros con tipo (las enumeraciones traen sus valores; un
+    objeto del dibujo se pasa por su handle), qué devuelve y si se abre en
+    lectura ('read') o escritura ('write'). Es la lista REAL de la versión de
+    AutoCAD instalada.
+
+    Solo aparecen los métodos de instancia con parámetros simples: sin rutas ni
+    direcciones, sin el ciclo de vida del objeto (Dispose, Close, Open...) y
+    sin los que guardan, exportan, cargan o ejecutan. 'filter' acota por texto
+    en el nombre ('Offset', 'Closest', 'Param'...)."""
+    return _met(met_mod.list_methods, entity_type, handle, filter)
+
+
+@mcp.tool()
+def call_object_method(handle: str, method: str, args: Optional[list[Any]] = None,
+                       add_results_to_space: bool = False,
+                       mode: Optional[str] = None) -> dict[str, Any]:
+    """Invoca un MÉTODO de un objeto del dibujo y devuelve su resultado:
+    la geometría que AutoCAD ya sabe resolver sin reescribirla.
+
+    Ej. (curvas): call_object_method(h, "GetClosestPointTo", [[3,4,0], false])
+                  -> punto de la curva más cercano a (3,4)
+                  call_object_method(h, "GetOffsetCurves", [0.5], add_results_to_space=True)
+                  -> desfasa 0.5 y agrega las curvas nuevas al dibujo (devuelve sus handles)
+                  call_object_method(h, "IntersectWith", [otro_handle, "OnBothOperands"])
+                  -> 'out' trae los puntos de intersección
+                  call_object_method(h, "GetPointAtParameter", [0.5])
+    args: los argumentos en orden: números, texto, booleanos, puntos [x,y,z],
+        vectores, enumeraciones por nombre, o el handle de otro objeto. No se
+        pasan los parámetros de salida ('out'), ni el marcador gráfico: se
+        crean solos y vuelven en 'out'. Una colección que el método RECIBE (los puntos de
+        corte de GetSplitCurves) va como último argumento: una lista de puntos [[x,y,z],...].
+    add_results_to_space: si el método devuelve objetos NUEVOS (GetOffsetCurves,
+        GetSplitCurves, Clone, Explode...) se descartan, salvo que lo pidas: se
+        agregan al espacio activo y vuelven sus handles en 'created'.
+    mode: 'read' o 'write'; se infiere por el nombre (Get*/Is*/Has*/Intersect*
+        leen, el resto abre el objeto en escritura).
+    Todo en UNA transacción: si AutoCAD rechaza la llamada no queda nada a
+    medias. Una lectura no deja rastro en el deshacer. Qué métodos hay y con
+    qué parámetros: list_object_methods."""
+    return _met(met_mod.call_method, handle, method, args, add_results_to_space, mode)
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:

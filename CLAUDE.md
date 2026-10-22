@@ -393,6 +393,34 @@ patrón; rechazó con motivo una propiedad de solo lectura, una inexistente, un 
 existe, sin tocar nada; la llamada con una propiedad buena y una mala no cambió ninguna. `undo` la revierte si no hay lecturas entre medio
 (misma limitación que arriba). Falta la 2022 y probar propiedades de 3D sobre objetos reales.
 
+## 3.sexies Métodos de cualquier objeto: `list_object_methods`, `call_object_method` (plugin 1.12.1)
+
+La otra mitad de la API: una curva sabe desfasarse (`GetOffsetCurves`), partirse (`GetSplitCurves`), dar su punto más cercano a otro
+(`GetClosestPointTo`), cortarse con otra entidad (`IntersectWith`), dar el punto de un parámetro (`GetPointAtParameter`), invertirse
+(`ReverseCurve`), extenderse (`Extend`), explotarse (`Explode`)... AutoCAD ya lo resuelve; reescribirlo es el error geométrico de siempre.
+Por reflexión sobre la clase real del objeto, como las propiedades: línea/círculo/arco 60 sobrecargas admitidas, polilínea 78, texto 44, MText 51,
+achurado 53, bloque 46, cota 50, Solid3d 56, Region 42 (de 120-170 métodos públicos cada una).
+
+- `list_object_methods(entity_type | handle, filter?)`: qué métodos hay, con parámetros tipados (enumeraciones con sus valores; un objeto del
+  dibujo se pasa por su handle), qué devuelven y si se abren en `read` o `write`.
+- `call_object_method(handle, method, args, add_results_to_space?, mode?)`: invoca uno. Los parámetros de salida y el marcador gráfico se
+  crean solos y vuelven en `out`; una colección que el método RECIBE (los puntos de `GetSplitCurves`) va como último argumento. Lo NUEVO que
+  devuelve un método (curvas de `GetOffsetCurves`, pedazos de `GetSplitCurves`, `Explode`) se descarta salvo `add_results_to_space=True`: entonces
+  se agrega al espacio activo y vuelven sus handles. Una transacción: si AutoCAD rechaza la llamada no queda nada a medias; una lectura se aborta
+  y no deja rastro en el deshacer.
+
+Qué se permite: lista BLANCA de forma —solo métodos públicos de INSTANCIA declarados por la API de AutoCAD, no genéricos, con parámetros
+simples (números, texto, booleanos, puntos, vectores, escalas, enumeraciones) o un objeto del dibujo por handle— y lista NEGRA de nombres: sin
+el ciclo de vida (`Dispose`, `Close`, `Open`, `UpgradeOpen`, `SwapIdWith`...), sin lo que guarda/exporta/carga/ejecuta (`Save*`, `Export*`,
+`DxfOut`, `Plot*`, `Load*`, `Execute*`...) y sin parámetros que parezcan rutas o direcciones. Nada estático, nada de `System.*`. No es un ejecutor
+de comandos ni de código: solo operaciones de los objetos del dibujo.
+
+Verificado en vivo (2027): punto más cercano, punto en un parámetro, distancia a un parámetro (polilínea, 15 en el parámetro 1.5),
+intersecciones línea×línea (5,0) y círculo×línea (2 puntos), desfase con y sin agregar, `Extend`, `ReverseCurve` (extremos intercambiados),
+`Explode` (2 líneas) y `GetSplitCurves` por puntos y por parámetros (3 pedazos); rechazó con motivo un método inexistente, `Dispose`, `Close`, un
+argumento de tipo equivocado y un handle inexistente. Falta la 2022 y 3D real. `IntersectWith` con `ExtendBoth` entre una línea y una polilínea
+devolvió 0 puntos: sin investigar.
+
 ## 4. Muros: una planta entera es `create_wall_network`
 
 Un muro NO es una línea. Los muros de una planta van en **UNA** llamada a

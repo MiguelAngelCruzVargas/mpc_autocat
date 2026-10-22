@@ -197,6 +197,12 @@ namespace AutoCadMcpPlugin
                 case "list_properties":
                     return PropertiesCommands.List(doc, pars);
 
+                // Métodos de los objetos por reflexión (MethodsCommands)
+                case "list_methods":
+                    return MethodsCommands.List(doc, pars);
+                case "call_method":
+                    return MethodsCommands.Call(doc, pars);
+
                 // Edición con el motor nativo de AutoCAD: TRIM, EXTEND, FILLET, JOIN,
                 // OVERKILL (comando fijo por operación; ver NativeOpsCommand)
                 case "native_op":
