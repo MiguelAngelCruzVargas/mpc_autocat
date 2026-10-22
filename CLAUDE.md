@@ -1,6 +1,12 @@
 # Cómo dibujar planos con este MCP
 
 Reglas de trabajo cuando alguien pide dibujar algo en AutoCAD con estas tools.
+
+## 000. Qué tool va: `list_tool_categories` (el mapa, ordenado como la cinta de AutoCAD)
+
+Con 250+ tools, buscar a ciegas gasta turnos. `list_tool_categories()` las ordena en dos familias: las **genéricas**, con el nombre de los paneles de la cinta de AutoCAD (`dibujo`, `modificar`, `anotacion`, `capas`, `bloques`, `propiedades`, `utilidades`, `vista`, `modelado3d`, `layouts`, `xref`, `sistema`), y las de **proyecto**, por tipo de trabajo (`p_arq` casa, `p_est` estructura, `p_inst` instalaciones, `p_civil` vial y terreno, `p_det` detalles, `p_3d`, `p_entrega`). `category=<clave>` lista sus tools con una línea de qué hacen y los comandos de AutoCAD que cubren; **`workflow=casa|estructura|instalaciones|vial|3d|laminas` da los pasos EN ORDEN con la tool de cada uno** (qué se requiere para hacer una casa); `query=<texto>` busca. Una tool nueva se registra en `mcp_server/categorias.py` (`test_categorias.py` falla si falta o sobra una).
+
+**Cobertura contra AutoCAD, leída y no recordada:** `python tools/mapa_cinta.py` extrae la cinta real (`acad.cuix`: pestaña > panel > comando, 360 comandos distintos) y `python tools/cobertura_cinta.py` la cruza con las tools y escribe `COBERTURA_CINTA.md`: ✔ tool propia, ◐ alcanzable por reflexión (`create_object`/`call_object_method`/`set_object_properties`), ○ solo con interfaz, ▫ fuera de alcance, ✖ pendiente (con su familia: restricciones paramétricas, superficies y mallas, underlays...). Es la lista de qué falta, ordenada como la ve quien usa AutoCAD.
 
 ## Si no hay tool para lo que necesitás: `api_guide` → `describe_api` → `run_code`
 

@@ -23,6 +23,7 @@ import propiedades as prop_mod
 import metodos as met_mod
 import bd_extra as bd_mod
 import ojos as ojos_mod
+import categorias as categorias_mod
 import primitivas as prim_mod
 import electrical as elec_mod
 import engine as engine_mod
@@ -6230,6 +6231,53 @@ def diagnose_autocad(recent_commands: int = 8, lookback_minutes: float = 15.0) -
     Solo lee: no cierra diálogos ni toca procesos. Las fallas de conexión y los cortes ya traen
     este diagnóstico pegado al mensaje."""
     return ojos_mod.diagnostico(max(1, min(int(recent_commands), 40)), max(1.0, float(lookback_minutes)) * 60.0)
+
+
+@mcp.tool()
+def list_tool_categories(category: Optional[str] = None, workflow: Optional[str] = None,
+                         query: Optional[str] = None) -> dict[str, Any]:
+    """Mapa de las herramientas, ORDENADO como la cinta de AutoCAD y por tipo de trabajo, para no
+    buscar a ciegas entre 260. Llamala PRIMERO cuando no sepas qué tool va.
+
+    Sin argumentos: las categorías (con cuántas tools tiene cada una) y los flujos disponibles.
+    category: una clave de las categorías (dibujo, modificar, anotacion, capas, bloques,
+        propiedades, utilidades, vista, modelado3d, layouts, xref, sistema, p_arq, p_est,
+        p_inst, p_civil, p_det, p_3d, p_entrega): lista sus tools con una línea de qué hace
+        cada una y los comandos de AutoCAD que cubre.
+    workflow: casa | estructura | instalaciones | vial | 3d | laminas: los PASOS en orden,
+        con la tool de cada uno («qué se requiere para hacer una casa»).
+    query: busca en el nombre y la descripción de las tools (p.ej. 'zapata', 'cota', 'losa')."""
+    import inspect
+    cats = categorias_mod.CATEGORIAS
+    if workflow is not None:
+        f = categorias_mod.FLUJOS.get(workflow)
+        if f is None:
+            return {"ok": False, "error": f"workflow '{workflow}' no existe. Hay: {', '.join(categorias_mod.FLUJOS)}."}
+        return {"workflow": workflow, "titulo": f["titulo"],
+                "pasos": [{"n": i + 1, "paso": p, "como": c} for i, (p, c) in enumerate(f["pasos"])]}
+
+    def linea(nombre: str) -> str:
+        fn = globals().get(nombre)
+        d = (inspect.getdoc(fn) or "").strip().splitlines() if fn else []
+        return d[0][:160] if d else ""
+
+    if category is not None:
+        if category not in cats:
+            return {"ok": False, "error": f"category '{category}' no existe. Hay: {', '.join(cats)}."}
+        return {"category": category, "titulo": cats[category],
+                "tools": [{"tool": n, "que_hace": linea(n), "comandos_autocad": categorias_mod.comandos_de(n)}
+                          for n in categorias_mod.tools_en(category)]}
+    if query:
+        q = query.lower()
+        hallados = []
+        for n, (c, cmds) in categorias_mod.todas().items():
+            texto = (n + " " + linea(n) + " " + cmds).lower()
+            if q in texto:
+                hallados.append({"tool": n, "categoria": c, "que_hace": linea(n)})
+        return {"query": query, "resultados": hallados[:40], "total": len(hallados)}
+    return {"categorias": [{"clave": k, "titulo": v, "tools": len(categorias_mod.tools_en(k))} for k, v in cats.items()],
+            "flujos": {k: v["titulo"] for k, v in categorias_mod.FLUJOS.items()},
+            "nota": "category=<clave> lista las tools; workflow=<flujo> da los pasos en orden; query=<texto> busca."}
 
 
 def _prop(fn, *args, **kw) -> dict[str, Any]:
