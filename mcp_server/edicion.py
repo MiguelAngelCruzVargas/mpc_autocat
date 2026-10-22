@@ -20,6 +20,7 @@ import time
 from typing import Any, Optional
 
 import autocad_client as acad
+import session
 
 _HANDLE = re.compile(r"^[0-9A-Fa-f]{1,16}$")
 _ESPERA_S = 30.0
@@ -84,6 +85,10 @@ def _ejecutar(params: dict[str, Any], esperar_s: float) -> dict[str, Any]:
     else:
         estado = dict(estado)
         estado["ok"] = True
+    if estado.get("state") in ("done", "error"):
+        # Para que undo sepa cuántos pasos de AutoCAD ocupó (ver session.py).
+        session.note_undo_weight(2 if estado.get("changed") else 1,
+                                 estado if estado.get("changed") else None)
     return estado
 
 
@@ -127,3 +132,93 @@ def overkill(handles: Optional[list[str]] = None, all: bool = False,
     if all:
         return _ejecutar({"op": "overkill", "all": True}, wait_s)
     return _ejecutar({"op": "overkill", "handles": _handles(handles, "handles", 2)}, wait_s)
+
+
+# ---------------------------------------------------------------- deshacer
+
+_ESPERA_PASO_S = 3.0      # AutoCAD ejecuta el UNDO al procesar su cola, no al responder
+_MAX_PASOS_NATIVA = 3   # esperado 1-2; más podría deshacer operaciones AJENAS
+
+
+def _existe(handle: str) -> bool:
+    try:
+        acad.call("get_entity", {"handle": handle})
+        return True
+    except acad.AutoCadError:
+        return False
+
+
+def _caja(handle: str) -> Optional[list[float]]:
+    try:
+        e = acad.call("get_entity", {"handle": handle})
+    except acad.AutoCadError:
+        return None
+    b = e.get("bbox")
+    return [float(v) for v in b[:4]] if isinstance(b, (list, tuple)) and len(b) >= 4 else None
+
+
+def _revertida(op: dict[str, Any]) -> bool:
+    """¿Volvió todo lo que la operación cambió? Borradas existen otra vez,
+    creadas ya no, y las modificadas con su caja de antes."""
+    for h in (op.get("deleted") or [])[:50]:
+        if not _existe(h):
+            return False
+    for c in (op.get("created") or [])[:50]:
+        if _existe(c["handle"]):
+            return False
+    for m in (op.get("modified") or [])[:50]:
+        antes, ahora = m.get("before"), _caja(m["handle"])
+        if antes is None or ahora is None:
+            return False
+        if any(abs(float(a) - b) > 1e-6 for a, b in zip(antes, ahora)):
+            return False
+    return True
+
+
+def deshacer(operaciones: int) -> dict[str, Any]:
+    """Deshace las últimas `operaciones` de este MCP. Una tool de dibujo se
+    revierte con UN paso de UNDO; una operación nativa se deshace de a un paso
+    comprobando después de cada uno si ya volvió lo que cambió (ver session.py)."""
+    hechas: list[dict[str, Any]] = []
+    # Desde el plugin 1.10.1 las lecturas no dejan pasos vacíos en UNDO y la
+    # verificación paso a paso converge. En uno anterior cada lectura de la
+    # verificación agregaría pasos: se pide el conteo fijo (2) y se avisa.
+    try:
+        v = str(acad.call("ping", {}).get("pluginVersion", "0"))
+        viejo = tuple(int(x) for x in v.split(".")[:3]) < (1, 10, 1)
+    except (acad.AutoCadError, ValueError):
+        viejo = False
+    for pasos, nativa in session.pop_undo(operaciones):
+        if nativa is not None and viejo:
+            acad.call("undo", {"steps": 2})
+            time.sleep(_ESPERA_PASO_S)
+            hechas.append({"kind": "nativa", "op": nativa.get("op"), "autocadSteps": 2,
+                           "reverted": None,
+                           "warning": "Plugin anterior a 1.10.1: se pidieron 2 pasos sin poder verificarlo."})
+            continue
+        if nativa is None or not (nativa.get("modified") or nativa.get("deleted")):
+            # Una tool de dibujo: un UNDO, sin verificar. Verificar con lecturas
+            # dejaría un paso vacío por lectura en el historial y cada vuelta
+            # deshacería también operaciones ajenas.
+            r = acad.call("undo", {"steps": 1})
+            hechas.append({"kind": "dibujo", "autocadSteps": 1, "result": r})
+            time.sleep(1.0)
+            continue
+        usados, ok = 0, False
+        while usados < _MAX_PASOS_NATIVA and not ok:
+            acad.call("undo", {"steps": 1})
+            usados += 1
+            limite = time.monotonic() + _ESPERA_PASO_S
+            while time.monotonic() < limite:
+                time.sleep(0.5)
+                if _revertida(nativa):
+                    ok = True
+                    break
+        hechas.append({"kind": "nativa" if nativa.get("modified") or nativa.get("deleted") else "dibujo",
+                       "op": nativa.get("op"), "autocadSteps": usados, "reverted": ok})
+    todo_ok = all(h.get("reverted", True) is not False for h in hechas)
+    out: dict[str, Any] = {"ok": todo_ok, "operations": operaciones, "done": hechas}
+    if not todo_ok:
+        out["warning"] = ("No se pudo confirmar que la operación nativa se haya revertido tras "
+                          f"{_MAX_PASOS_NATIVA} pasos: revisá el dibujo (list_entities / query_entities).")
+    return out

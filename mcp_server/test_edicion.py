@@ -159,6 +159,78 @@ def test_sesion() -> None:
     check("native_op NO se reintenta", session.retry_safe("native_op"), False)
 
 
+class PluginUndo(Plugin):
+    """Plugin falso con UNDO: una operación nativa se revierte recién al 2.º paso
+    (como en AutoCAD: el comando registrado vacío + el comando de adentro)."""
+
+    def __init__(self, version="1.10.1", pasos_para_revertir=2):
+        super().__init__(0, {"state": "done", "changed": True, "op": "join", "created": [],
+                             "deleted": [], "deletedCount": 0,
+                             "modified": [{"handle": "A1", "before": [0, 0, 5, 0], "after": [0, 0, 10, 0]}]})
+        self.version, self.necesarios, self.undos = version, pasos_para_revertir, 0
+
+    def __call__(self, cmd, params=None):
+        if cmd == "ping":
+            return {"ok": True, "pluginVersion": self.version}
+        if cmd == "undo":
+            self.undos += 1
+            self.llamadas.append((cmd, params or {}))
+            return {"status": "encolado"}
+        if cmd == "get_entity":
+            self.llamadas.append((cmd, params or {}))
+            caja = [0, 0, 5, 0] if self.undos >= self.necesarios else [0, 0, 10, 0]
+            return {"handle": params["handle"], "bbox": caja}
+        return super().__call__(cmd, params)
+
+
+def test_undo() -> None:
+    real_call, real_paso, real_espera = server.acad.call, edicion._PASO_S, edicion._ESPERA_PASO_S
+    edicion._PASO_S, edicion._ESPERA_PASO_S = 0.0, 0.05
+    try:
+        # una operación nativa se deshace de a un paso, verificando
+        session.reset()
+        p = PluginUndo()
+        server.acad.call = p
+        server.join_entities(["A1", "B2"])
+        r = server.undo(1)
+        check("undo de una nativa: ok", r["ok"], True)
+        check("usó 2 pasos (verificando, no contando)", r["done"][0]["autocadSteps"], 2)
+        check("quedó revertida", r["done"][0]["reverted"], True)
+        check("se pidieron 2 UNDO de a 1", [c for c in p.llamadas if c[0] == "undo"], [("undo", {"steps": 1})] * 2)
+
+        # si no vuelve nunca, no se queda en un bucle y lo dice
+        session.reset()
+        p = PluginUndo(pasos_para_revertir=10_000)
+        server.acad.call = p
+        server.join_entities(["A1", "B2"])
+        r = server.undo(1)
+        check("si no revierte: ok=False", r["ok"], False)
+        check("corta en el tope", r["done"][0]["autocadSteps"], edicion._MAX_PASOS_NATIVA)
+        check("avisa", "warning" in r, True)
+
+        # una tool de dibujo: un solo UNDO, sin verificar
+        session.reset()
+        session.note_undo_weight(1)
+        p = PluginUndo()
+        server.acad.call = p
+        r = server.undo(1)
+        check("tool de dibujo: un UNDO", [c for c in p.llamadas if c[0] == "undo"], [("undo", {"steps": 1})])
+        check("tool de dibujo: ok", r["ok"], True)
+
+        # plugin anterior a 1.10.1: conteo fijo y aviso, sin verificar
+        session.reset()
+        p = PluginUndo(version="1.10.0")
+        server.acad.call = p
+        server.join_entities(["A1", "B2"])
+        r = server.undo(1)
+        check("plugin viejo: pide 2 pasos de una vez", [c for c in p.llamadas if c[0] == "undo"], [("undo", {"steps": 2})])
+        check("plugin viejo: avisa que no pudo verificar", "warning" in r["done"][0], True)
+        check("plugin viejo: no marca fallo", r["ok"], True)
+    finally:
+        server.acad.call, edicion._PASO_S, edicion._ESPERA_PASO_S = real_call, real_paso, real_espera
+        session.reset()
+
+
 def main() -> int:
     test_validaciones()
     test_trim_manda_lo_correcto()
@@ -167,6 +239,7 @@ def main() -> int:
     test_sin_cambios_se_ve()
     test_si_tarda_no_se_repite()
     test_sesion()
+    test_undo()
     if FAILED:
         print("\nFALLARON:")
         for f in FAILED:

@@ -5734,14 +5734,17 @@ def undo(steps: int = 1) -> dict[str, Any]:
     segui con get_drawing_info o list_entities después, y esperá ~2 s: AutoCAD
     lo ejecuta cuando procesa su cola, no al momento de responder.
 
-    Verificado en vivo (2027): deshace lo creado por las tools de dibujo
-    (create_line...). NO revierte las operaciones nativas (trim_entity,
-    extend_entity, fillet_entities, join_entities, overkill_entities): AutoCAD
-    informa que deshizo MCPNATIVEOP pero la geometría queda como estaba. Para
-    esas, guardá el dibujo antes de editar (save_drawing) o corregí a mano."""
+    'steps' son OPERACIONES de este MCP, no pasos de AutoCAD. Una tool de
+    dibujo se revierte con un UNDO; una operación NATIVA (trim_entity,
+    extend_entity, fillet_entities, join_entities, overkill_entities) se deshace
+    de a un paso comprobando después de cada uno si ya volvió lo que cambió
+    (borradas, creadas, cajas de las modificadas), porque en AutoCAD ocupa 2
+    pasos más uno por cada lectura intermedia. Devuelve 'done' con qué pasó en
+    cada operación y 'ok'. Espera hasta ~3 s por paso nativo.
+    Lo hecho con run_code o a mano no se registra: se supone de 1 paso."""
     if steps < 1:
         raise ValueError("steps tiene que ser >= 1.")
-    return acad.call("undo", {"steps": steps})
+    return edicion_mod.deshacer(steps)
 
 
 # ------------------------------------------------- Acceso total a la API

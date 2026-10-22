@@ -132,7 +132,39 @@ namespace AutoCadMcpPlugin
                         // No se restaura: el anterior es justamente el valor viejo.
                         if (!ReferenceEquals(HostApplicationServices.WorkingDatabase, actual.Database))
                             HostApplicationServices.WorkingDatabase = actual.Database;
-                        JsonObject r = Handlers.Execute(cmd, actual, pars);
+                        // Las LECTURAS no dejan rastro en el historial de deshacer. Probado en
+                        // vivo (2027): cada get_entity / list_entities / get_drawing_info -- todo
+                        // lo que abre una transaccion -- dejaba un paso VACIO en UNDO, asi que
+                        // "undo 1" tras un create_line seguido de una lectura deshacia la lectura
+                        // y no el dibujo. ping y las variables de sistema (sin transaccion) no
+                        // lo hacian. Con el registro apagado durante la lectura el conteo de
+                        // pasos vuelve a ser el de las operaciones que de verdad cambian algo.
+                        bool reactivarUndo = false;
+                        if (EsLectura(cmd))
+                        {
+                            try
+                            {
+                                if (actual.Database.UndoRecording)
+                                {
+                                    actual.Database.DisableUndoRecording(true);
+                                    reactivarUndo = true;
+                                }
+                            }
+                            catch (Exception) { }
+                        }
+                        JsonObject r;
+                        try
+                        {
+                            r = Handlers.Execute(cmd, actual, pars);
+                        }
+                        finally
+                        {
+                            if (reactivarUndo)
+                            {
+                                try { actual.Database.DisableUndoRecording(false); }
+                                catch (Exception) { }
+                            }
+                        }
                         // Modo "ver dibujar" (el cliente manda _live): lo que
                         // se agrega por API no se pinta hasta que algo fuerza
                         // un redibujo -- la planta aparecía recién al hacer

@@ -55,6 +55,18 @@ _LIFECYCLE = frozenset({
 # fue y llama a note_mutation() solo cuando corresponde.
 _COUNTED_BY_CALLER = frozenset({"run_code"})
 
+# Historial de operaciones deshacibles, de la más vieja a la más nueva. Cada una es
+# (pasos, nativa): 'nativa' es None para una tool de dibujo (un UNDO de AutoCAD la
+# revierte) y el resultado de la operación para trim/extend/fillet/join/overkill.
+# Esas últimas NO se pueden deshacer contando pasos: envueltas en un comando
+# registrado ocupan 2 pasos, y cada llamada de lectura intermedia (get_entity,
+# list_entities...) agrega otro, así que el número cambia. Verificado en vivo (2027):
+# tras un join, undo(2) lo revierte con 0-1 lecturas en medio y no con 2 o más. Por eso
+# se deshacen de a UN paso, mirando después de cada uno si ya volvió lo que cambiaron.
+_UNDO_HISTORIAL: list[tuple[int, Optional[dict]]] = []
+_MAX_UNDO_HISTORIAL = 500
+_SIN_PESO_AL_CONTAR = frozenset({"native_op", "undo"})
+
 _OPS_SINCE_SAVE = [0]
 _SAVE_PATH: list[Optional[str]] = [None]
 _DIRTY_SINCE_CHECK = [False]
@@ -94,7 +106,43 @@ def after_call(cmd: str, params: dict[str, Any],
         return result
     if cmd in _COUNTED_BY_CALLER or not _is_mutation(cmd):
         return result
+    if cmd not in _SIN_PESO_AL_CONTAR:
+        note_undo_weight(1, _creados(cmd, result))
     return note_mutation(result)
+
+
+def _creados(cmd: str, result: Any) -> Optional[dict]:
+    """Si la tool CREÓ entidades y devolvió sus handles, deja anotado cuáles: así
+    undo puede comprobar que desaparecieron (cada lectura intermedia deja un paso
+    vacío en el UNDO de AutoCAD y contar pasos no alcanza). Los handles
+    provisorios de un lote ('$L12') no sirven."""
+    if not cmd.startswith("create_") or not isinstance(result, dict):
+        return None
+    hs: list[str] = []
+    for k, v in result.items():
+        if k == "handle" or k.lower().endswith("handles") or k == "handles":
+            for h in ([v] if isinstance(v, str) else v if isinstance(v, list) else []):
+                if isinstance(h, str) and h and not h.startswith("$") and h not in hs:
+                    hs.append(h)
+    if not hs:
+        return None
+    return {"op": cmd, "created": [{"handle": h} for h in hs], "deleted": [], "modified": []}
+
+
+def note_undo_weight(peso: int, nativa: Optional[dict] = None) -> None:
+    """Registra una operación deshacible (y, si es nativa, qué cambió)."""
+    _UNDO_HISTORIAL.append((max(int(peso), 1), nativa))
+    if len(_UNDO_HISTORIAL) > _MAX_UNDO_HISTORIAL:
+        del _UNDO_HISTORIAL[:len(_UNDO_HISTORIAL) - _MAX_UNDO_HISTORIAL]
+
+
+def pop_undo(operaciones: int) -> list[tuple[int, Optional[dict]]]:
+    """Saca las últimas `operaciones` (la más nueva primero). Las que no se
+    registraron (run_code, lo hecho a mano) salen como (1, None)."""
+    salida: list[tuple[int, Optional[dict]]] = []
+    for _ in range(max(int(operaciones), 0)):
+        salida.append(_UNDO_HISTORIAL.pop() if _UNDO_HISTORIAL else (1, None))
+    return salida
 
 
 def note_mutation(result: Any = None) -> Any:
@@ -156,3 +204,4 @@ def reset() -> None:
     _OPS_SINCE_SAVE[0] = 0
     _SAVE_PATH[0] = None
     _DIRTY_SINCE_CHECK[0] = False
+    _UNDO_HISTORIAL.clear()
