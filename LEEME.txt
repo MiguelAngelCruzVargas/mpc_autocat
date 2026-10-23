@@ -1,26 +1,54 @@
-AUTOCAD IA - Instalación (Windows)
-==================================
+VIGENTRA ARCHITECH (AutoCAD IA) - Instalación y activación (Windows)
+=====================================================================
 
-1. Cerrá AutoCAD.
-2. Doble clic en  INSTALAR.bat  (no pide administrador).
-   Instala el plugin de AutoCAD, el servidor y crea el acceso directo
-   "AutoCAD IA" en el escritorio. Si falta Python 3.10+, ofrece instalarlo.
-3. Abrí AutoCAD. En la línea de comandos debe decir:
-   [MCP] Plugin cargado. Escuchando en 127.0.0.1:8765
-4. Doble clic en "AutoCAD IA" del escritorio: se abre el panel en el
-   navegador. Ahí elegís la IA (OpenRouter, OpenAI, Anthropic, DeepSeek, una
-   local) y pegás tu clave. La clave se guarda cifrada en tu usuario.
+Lo que necesitas
+  - Windows 10 u 11 (64 bits).
+  - AutoCAD instalado, con TU propia licencia (este programa no la incluye).
+  - Una IA a tu elección: una clave de OpenAI, Anthropic, OpenRouter, DeepSeek,
+    Groq, etc., o un modelo local. Se paga aparte, al proveedor que elijas.
+  - Internet para activar la licencia y para la IA.
+  - Una clave de licencia de Vigentra (te la mandamos al comprar) o iniciar la
+    prueba gratis de 7 días.
+
+Instalar
+  1. Cierra AutoCAD.
+  2. Descomprime el .zip y haz doble clic en  INSTALAR.bat  (no pide
+     administrador). Instala el plugin de AutoCAD, el servidor y crea el acceso
+     directo "AutoCAD IA" en el escritorio. Si falta Python 3.10+, ofrece
+     instalarlo.
+  3. Abre AutoCAD. En la línea de comandos debe decir:
+        [MCP] Plugin cargado. Escuchando en 127.0.0.1:8765
+     La primera vez AutoCAD pregunta si cargar el plugin: elige "Siempre cargar"
+     (Always Load).
+
+Activar la licencia
+  4. Doble clic en "AutoCAD IA" del escritorio: se abre el panel en el
+     navegador. Elige tu IA y pega tu clave. La clave se guarda cifrada en tu
+     usuario.
+  5. En el panel escribe:   activa mi licencia con la clave AIA-XXXXX-...
+     o, para probar 7 días gratis (una sola vez por equipo):   inicia mi prueba
+  6. Para ver el estado en cualquier momento:   cómo va mi licencia
+
+  - Una clave sirve en 2 equipos. Si cambias de computadora, avísanos y la
+    liberamos.
+  - La licencia se renueva sola cada unos 4 días si hay internet. Sin internet
+    el programa sigue funcionando hasta 7 días.
+
+Versiones de AutoCAD
+  - Probado en vivo: 2022 y 2027.
+  - 2019 a 2021 y 2023 a 2026: el plugin compila con la misma API de cada
+    versión, pero todavía no se probó en un AutoCAD real de esas versiones.
 
 Claude Desktop, Claude Code y OpenCode: el instalador les agrega las
-herramientas de AutoCAD solo (sin pisar tu configuración). Reiniciálos.
-ChatGPT de escritorio no soporta herramientas locales: usá el panel con tu
+herramientas de AutoCAD solo (sin pisar tu configuración). Reinícialos.
+ChatGPT de escritorio no soporta herramientas locales: usa el panel con tu
 clave de OpenAI.
-
-Versiones de AutoCAD: 2019 a 2025 (2022 es la que se probó).
-AutoCAD 2026: debería funcionar (usa el mismo plugin que 2025) pero NO está
-probado. AutoCAD 2027: no soportado todavía.
 
 Desinstalar:  powershell -File tools\instalar.ps1 -Desinstalar
 
-IMPORTANTE: es un asistente de ayuda. Puede equivocarse y todo lo que dibuja
-debe revisarlo un ingeniero o arquitecto. No reemplaza a un profesional.
+IMPORTANTE
+  - Es un asistente de ayuda. Puede equivocarse y todo lo que dibuja o calcula
+    debe revisarlo un ingeniero o arquitecto. No reemplaza a un profesional.
+  - Vigentra Architech es un producto independiente de Vigentra Technologies;
+    no es un producto de Autodesk. AutoCAD es marca de Autodesk, Inc.
+  - Soporte: vigentra.inf@gmail.com  |  https://vigentra.mx

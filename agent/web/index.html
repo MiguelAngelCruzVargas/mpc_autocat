@@ -19,6 +19,68 @@
   <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
   <!-- ======================================================================
+       PRIMEROS PASOS: AutoCAD conectado, IA elegida y licencia activada
+       ====================================================================== -->
+  <div id="start-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pp-titulo">
+    <div class="modal-card pp-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <h3 id="pp-titulo">Primeros pasos</h3>
+          <p>Tres cosas y listo para dibujar.</p>
+        </div>
+        <button class="btn-icon btn-ghost" id="btn-close-start" title="Cerrar">✕</button>
+      </div>
+
+      <ol class="pp-lista">
+        <li class="pp-paso" id="pp-1">
+          <span class="pp-num">1</span>
+          <div class="pp-cuerpo">
+            <b>AutoCAD con el plugin</b>
+            <p id="pp-1-txt">Comprobando…</p>
+            <ul class="pp-ayuda" id="pp-1-ayuda">
+              <li>Abre AutoCAD (2019 a 2027).</li>
+              <li>En su línea de comandos debe decir <code>[MCP] Plugin cargado</code>.</li>
+              <li>Si AutoCAD pregunta si cargar el plugin, elige <b>Siempre cargar</b>.</li>
+            </ul>
+          </div>
+          <span class="pp-estado" id="pp-1-est" aria-live="polite"></span>
+        </li>
+
+        <li class="pp-paso" id="pp-2">
+          <span class="pp-num">2</span>
+          <div class="pp-cuerpo">
+            <b>Tu inteligencia artificial</b>
+            <p id="pp-2-txt">Comprobando…</p>
+            <button class="btn btn-sm" id="btn-pp-ia" type="button">Elegir IA y pegar mi clave</button>
+          </div>
+          <span class="pp-estado" id="pp-2-est" aria-live="polite"></span>
+        </li>
+
+        <li class="pp-paso" id="pp-3">
+          <span class="pp-num">3</span>
+          <div class="pp-cuerpo">
+            <b>Tu licencia</b>
+            <p id="pp-3-txt">Comprobando…</p>
+            <div class="pp-licencia" id="pp-3-form">
+              <input id="pp-clave" type="text" placeholder="AIA-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off" spellcheck="false">
+              <button class="btn btn-sm btn-primary" id="btn-pp-activar" type="button">Activar</button>
+              <button class="btn btn-sm btn-ghost" id="btn-pp-prueba" type="button">Probar 7 días gratis</button>
+            </div>
+            <p class="pp-error" id="pp-3-err" hidden></p>
+            <small class="pp-nota">La clave te llega al comprar. Sirve en 2 equipos; la prueba gratis es una sola vez por equipo.</small>
+          </div>
+          <span class="pp-estado" id="pp-3-est" aria-live="polite"></span>
+        </li>
+      </ol>
+
+      <div class="pp-pie">
+        <small>¿Dudas? <b>vigentra.inf@gmail.com</b> · <a href="https://vigentra.mx/instalacion" target="_blank" rel="noopener">Guía completa</a></small>
+        <button class="btn btn-primary" id="btn-start-ok" type="button">Empezar a dibujar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================
        MODAL DE CONFIGURACIÓN INICIAL (CON ICONO TÉCNICO DE PLANO / ESCUADRA)
        ====================================================================== -->
   <div id="welcome-modal" class="modal-overlay hidden">
@@ -263,6 +325,9 @@
       <div class="sidebar-footer">
         <button class="btn btn-sm btn-ghost" id="btn-new-session" title="Reiniciar memoria del agente">
           Nueva Sesión
+        </button>
+        <button class="btn btn-sm btn-ghost" id="btn-open-start" title="Estado de AutoCAD, de la IA y de la licencia">
+          Primeros pasos
         </button>
         <button class="btn btn-sm btn-ghost" id="btn-open-settings" title="Abrir configuración">
           Configuración

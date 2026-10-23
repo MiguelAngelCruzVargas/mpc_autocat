@@ -38,6 +38,27 @@ def _estandar_mod() -> Any:
         sys.path.insert(0, _MCP_DIR)
     import estandar
     return estandar
+
+def _licencia_mod() -> Any:
+    """licencia.py vive con el servidor MCP (el plugin y las tools lo usan): el panel
+    lo importa de ahi para activar y mostrar el estado con las MISMAS reglas."""
+    import sys
+    if _MCP_DIR not in sys.path:
+        sys.path.insert(0, _MCP_DIR)
+    import licencia
+    return licencia
+
+
+def _estado_licencia() -> dict[str, Any]:
+    lic = _licencia_mod()
+    e = dict(lic.estado(tocar_reloj=False))
+    e["obligatoria"] = bool(lic.OBLIGATORIA)
+    if e.get("motivo") == "sin_licencia":
+        # el texto de licencia.py habla de funciones internas; al cliente se le dice que hacer
+        e["mensaje"] = ("Todavia no activas tu licencia. Pega la clave que recibiste al comprar "
+                        "o empieza la prueba gratis de 7 dias.")
+    return e
+
 _WEB_DIR = os.path.join(_AQUI, "web")
 _HTML = os.path.join(_WEB_DIR, "index.html")
 
@@ -524,6 +545,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_verificar_autocad())
             return
 
+        if self.path == "/api/primeros_pasos":
+            guardadas = [f for f in credenciales.listar() if f.get("clave")]
+            self._json({"autocad": _verificar_autocad(),
+                        "ia": {"configurada": bool(guardadas), "proveedores": [f["proveedor"] for f in guardadas]},
+                        "licencia": _estado_licencia()})
+            return
+
         if self.path == "/api/estado":
             guardadas = {f["proveedor"]: f for f in credenciales.listar()}
             conteo = _contar_perfiles()
@@ -606,6 +634,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": True, "proteccion": modo,
                         "clave": credenciales.enmascarar(clave.strip())})
+            return
+
+        if self.path in ("/api/licencia/activar", "/api/licencia/prueba"):
+            lic = _licencia_mod()
+            try:
+                if self.path.endswith("/activar"):
+                    e = lic.activate(str(datos.get("clave", "")))
+                else:
+                    e = lic.start_trial()
+            except lic.LicenciaError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            e = dict(e)
+            e["obligatoria"] = bool(lic.OBLIGATORIA)
+            self._json({"ok": True, "licencia": e})
             return
 
         if self.path == "/api/preferencias":

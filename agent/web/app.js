@@ -426,6 +426,8 @@ async function init() {
   }
 
   registrarEventos();
+  registrarEventosPrimerosPasos();
+  abrirPrimerosPasosSiHaceFalta();
   actualizarEstadoAutoCAD();
   actualizarEntregables();
   restaurarHistorial();
@@ -1634,6 +1636,111 @@ function registrarEventos() {
   }
   if (btnWizRecheck) btnWizRecheck.onclick = ejecutarDiagnosticos;
   if (btnOpenSettings) btnOpenSettings.onclick = () => abrirWizard(0);
+}
+
+
+// ==========================================================================
+// PRIMEROS PASOS: AutoCAD conectado, IA elegida y licencia activada
+// ==========================================================================
+let ppTimer = null;
+
+function ppMarcar(n, ok, texto) {
+  const li = $('#pp-' + n);
+  if (!li) return;
+  li.classList.toggle('ok', !!ok);
+  li.classList.toggle('pend', !ok);
+  const est = $('#pp-' + n + '-est');
+  if (est) est.textContent = ok ? '✓ Listo' : 'Falta';
+  const txt = $('#pp-' + n + '-txt');
+  if (txt && texto) txt.textContent = texto;
+}
+
+async function refrescarPrimerosPasos() {
+  let d;
+  try {
+    const r = await fetch('/api/primeros_pasos');
+    d = await r.json();
+  } catch (e) {
+    return null;
+  }
+  const ac = d.autocad || {};
+  ppMarcar(1, ac.conectado, ac.conectado
+    ? 'AutoCAD está conectado' + ((ac.pluginVersion || ac.version) ? ' (plugin ' + (ac.pluginVersion || ac.version) + ')' : '') + '.'
+    : 'No veo AutoCAD. Ábrelo y espera a que cargue el plugin; esto se actualiza solo.');
+  const ayuda = $('#pp-1-ayuda');
+  if (ayuda) ayuda.hidden = !!ac.conectado;
+  const ia = d.ia || {};
+  ppMarcar(2, ia.configurada, ia.configurada
+    ? 'IA lista: ' + (ia.proveedores || []).join(', ') + '.'
+    : 'Elige el proveedor que prefieras y pega tu clave. Se guarda cifrada en tu usuario.');
+  const lic = d.licencia || {};
+  const sinExigir = !lic.obligatoria;
+  ppMarcar(3, lic.valida || sinExigir, lic.valida
+    ? (lic.mensaje || 'Licencia activa.')
+    : (sinExigir ? 'Esta copia no exige licencia.' : (lic.mensaje || 'Activa tu clave o empieza la prueba gratis de 7 días.')));
+  const form = $('#pp-3-form');
+  if (form) form.hidden = !!(lic.valida || sinExigir);
+  const todo = !!ac.conectado && !!ia.configurada && (lic.valida || sinExigir);
+  const ok = $('#btn-start-ok');
+  if (ok) ok.textContent = todo ? 'Empezar a dibujar' : 'Continuar de todos modos';
+  return { d, todo };
+}
+
+function abrirPrimerosPasos() {
+  const m = $('#start-modal');
+  if (!m) return;
+  m.classList.remove('hidden');
+  refrescarPrimerosPasos();
+  clearInterval(ppTimer);
+  ppTimer = setInterval(refrescarPrimerosPasos, 4000);
+}
+
+function cerrarPrimerosPasos() {
+  const m = $('#start-modal');
+  if (m) m.classList.add('hidden');
+  clearInterval(ppTimer);
+  ppTimer = null;
+}
+
+async function ppLicencia(ruta, cuerpo) {
+  const err = $('#pp-3-err');
+  if (err) err.hidden = true;
+  const botones = [$('#btn-pp-activar'), $('#btn-pp-prueba')];
+  botones.forEach(b => { if (b) b.disabled = true; });
+  try {
+    const r = await fetch(ruta, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo || {}) });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'No se pudo activar.');
+    showToast('Licencia activada', 'success');
+    await refrescarPrimerosPasos();
+  } catch (e) {
+    if (err) { err.textContent = e.message; err.hidden = false; }
+  } finally {
+    botones.forEach(b => { if (b) b.disabled = false; });
+  }
+}
+
+function registrarEventosPrimerosPasos() {
+  const abrir = $('#btn-open-start');
+  if (abrir) abrir.onclick = abrirPrimerosPasos;
+  const cerrar = $('#btn-close-start');
+  if (cerrar) cerrar.onclick = cerrarPrimerosPasos;
+  const ok = $('#btn-start-ok');
+  if (ok) ok.onclick = cerrarPrimerosPasos;
+  const ia = $('#btn-pp-ia');
+  if (ia) ia.onclick = () => { cerrarPrimerosPasos(); abrirWizard(0); };
+  const act = $('#btn-pp-activar');
+  if (act) act.onclick = () => ppLicencia('/api/licencia/activar', { clave: ($('#pp-clave') || {}).value || '' });
+  const pru = $('#btn-pp-prueba');
+  if (pru) pru.onclick = () => ppLicencia('/api/licencia/prueba');
+  const clave = $('#pp-clave');
+  if (clave) clave.addEventListener('keydown', e => { if (e.key === 'Enter' && act) act.click(); });
+}
+
+async function abrirPrimerosPasosSiHaceFalta() {
+  // Al abrir el panel: si la copia exige licencia y no hay una valida, esta pantalla va primero.
+  const r = await refrescarPrimerosPasos();
+  if (r && r.d && r.d.licencia && r.d.licencia.obligatoria && !r.d.licencia.valida) abrirPrimerosPasos();
 }
 
 // Iniciar cuando el DOM esté listo
