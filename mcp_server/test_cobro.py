@@ -40,9 +40,12 @@ def firmar(cuerpo: bytes, t: int | None = None, secreto: str = SECRETO) -> str:
     return f"t={t},v1=" + hmac.new(secreto.encode(), f"{t}.".encode() + cuerpo, hashlib.sha256).hexdigest()
 
 
-def evento(tipo="checkout.session.completed", sesion=SESION, plan="anual", pago="paid") -> bytes:
+def evento(tipo="checkout.session.completed", sesion=SESION, plan="anual", pago="paid", renueva=None) -> bytes:
+    meta = {"plan": plan}
+    if renueva:
+        meta["renueva_kid"] = renueva
     return json.dumps({"type": tipo, "data": {"object": {
-        "id": sesion, "payment_status": pago, "metadata": {"plan": plan}, "amount_total": 299000, "currency": "mxn",
+        "id": sesion, "payment_status": pago, "metadata": meta, "amount_total": 299000, "currency": "mxn",
         "customer_details": {"email": "cliente@ejemplo.com"}}}}).encode()
 
 
@@ -179,6 +182,77 @@ def main() -> int:
     check("sk_test_ con COBRO_ACEPTAR_PRUEBAS: a la venta", len(cb3.planes()), 2)
     cb4 = cobro.Cobro(svc, db, "sk_live_x", SECRETO, precios, "https://vigentra.mx", post=stripe_falso)
     check("sk_live_: a la venta sin permisos especiales", len(cb4.planes()), 2)
+
+    # ---- Stripe se encarga de la factura-recibo y del RFC; el correo lleva la clave; la renovacion suma tiempo
+    cb5 = cobro.Cobro(svc, db, "sk_live_x", SECRETO, precios, "https://vigentra.mx", post=stripe_falso)
+    cb5.hilos = False
+    enviados = []
+    cb5.correo = lambda *a: enviados.append(a)
+    cb5.crear_checkout("anual")
+    campos = llamadas[-1][2]
+    check("Checkout pide factura-recibo y RFC a Stripe",
+          (campos["invoice_creation[enabled]"], campos["tax_id_collection[enabled]"], campos["customer_creation"]), ("true", "true", "always"))
+    check("la factura avisa como pedir CFDI", "CFDI" in campos["invoice_creation[invoice_data][footer]"], True)
+
+    c = evento(sesion="cs_live_correo000001")
+    r = cb5.procesar_webhook(c, firmar(c))
+    lic = [l for l in svc.listar() if l["kid"] == r["kid"]][0]
+    check("el pago manda UN correo con la clave a quien pago",
+          (len(enviados), enviados[0][0], enviados[0][1], enviados[0][2].startswith("AIA-"), enviados[0][3] == r["kid"]),
+          (1, "cliente@ejemplo.com", "anual", True, True))
+    cb5.procesar_webhook(c, firmar(c))
+    check("el reintento de Stripe no manda otro correo", len(enviados), 1)
+    import correo
+    msg = correo.armar("a@b.co", "v@v.co", "anual", "AIA-XXXXX-XXXXX-XXXXX-XXXXX", "abc123", "cs_live_x")
+    cuerpo = msg.get_content()
+    check("el correo trae la clave, la descarga, la referencia y los terminos",
+          all(x in cuerpo for x in ("AIA-XXXXX-XXXXX-XXXXX-XXXXX", "/descargas/AutoCAD-IA-", "abc123", "/terminos", "soporte")) or "Soporte" in cuerpo, True)
+
+    def falla(*a):
+        raise OSError("smtp caido")
+    cb5.correo = falla
+    c = evento(sesion="cs_live_correo000002")
+    r = cb5.procesar_webhook(c, firmar(c))
+    check("si el correo falla el webhook sigue bien y la clave queda en /gracias",
+          (cb5.entrega("cs_live_correo000002")["estado"], "kid" in r), ("lista", True))
+    cb5.correo = None
+    c = evento(sesion="cs_live_correo000003")
+    check("sin SMTP no se manda nada y todo funciona", cb5.procesar_webhook(c, firmar(c)).get("plan"), "anual")
+
+    # renovacion: el cliente pega su clave y el tiempo se SUMA a la misma licencia
+    ahora0 = svc.ahora()
+    base = svc.crear("anual")
+    svc.activar(base["clave"], "b" * 64)
+    v0 = svc.vence_de(base["kid"])
+    cb5.crear_checkout("anual", "", base["clave"])
+    check("renovar: el Checkout lleva el kid, no la clave", (llamadas[-1][2]["metadata[renueva_kid]"] == base["kid"], base["clave"] in str(llamadas[-1][2])), (True, False))
+    c = evento(sesion="cs_live_renueva00001", renueva=base["kid"])
+    n_lic = len(svc.listar())
+    r = cb5.procesar_webhook(c, firmar(c))
+    check("renovar: no crea licencia nueva y suma 365 dias", (r["renovada"], len(svc.listar()), round((svc.vence_de(base["kid"]) - v0) / 86400)), (True, n_lic, 365))
+    e = cb5.entrega("cs_live_renueva00001")
+    check("renovar: /gracias dice 'renovada' con el nuevo vencimiento y sin clave", (e["estado"], "clave" in e, e["vence"] == int(svc.vence_de(base["kid"]))), ("renovada", False, True))
+    nueva = svc.crear("mensual")  # sin activar todavia
+    cb5.crear_checkout("mensual", "", nueva["clave"])
+    c = evento(sesion="cs_live_renueva00002", plan="mensual", renueva=nueva["kid"])
+    cb5.procesar_webhook(c, firmar(c))
+    fila = svc.db.execute("select dias, vence from licencias where kid=?", (nueva["kid"],)).fetchone()
+    check("renovar una clave sin activar suma al plazo que tendra (30+30)", (fila["dias"], fila["vence"]), (60, None))
+    cb5.precios["perpetua"] = dict(cb5.precios["anual"])  # el test no vende perpetua: se agrega para probar su rechazo
+    for nombre, args, codigo in (("clave inexistente", ("anual", "", "AIA-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ"), 403),
+                                 ("plan distinto al de la clave", ("mensual", "", base["clave"]), 400),
+                                 ("perpetua no se renueva", ("perpetua", "", base["clave"]), 400)):
+        try:
+            cb5.crear_checkout(*args)
+            check("renovar: " + nombre, "no lanzo", codigo)
+        except cobro.ErrorCobro as exc:
+            check("renovar: " + nombre, exc.codigo, codigo)
+    svc.revocar(base["kid"])
+    try:
+        cb5.crear_checkout("anual", "", base["clave"])
+        check("renovar: clave revocada", "no lanzo", 403)
+    except cobro.ErrorCobro as exc:
+        check("renovar: clave revocada", exc.codigo, 403)
 
     # sin Stripe configurado las rutas no existen
     srv2 = servidor.crear_servidor(svc, "x" * 30, "127.0.0.1", 0, None)

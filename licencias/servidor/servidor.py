@@ -42,6 +42,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from cobro import Cobro, ErrorCobro
+from correo import correo_desde_entorno
 
 DIA = 86400
 TOKEN_DIAS = 7
@@ -197,6 +198,35 @@ class Servicio:
         if fila is None:
             raise ErrorLicencia("No existe esa licencia (kid).", 404)
         return fila
+
+    def por_clave(self, clave: str) -> Optional[sqlite3.Row]:
+        """La licencia de esa clave, o None. Sirve para renovar: el cliente pega su clave al comprar otro periodo."""
+        if len(normalizar(clave)) < 12:
+            return None
+        with self._lock:
+            return self.db.execute("SELECT * FROM licencias WHERE clave_hash=?", (hash_clave(clave),)).fetchone()
+
+    def renovar(self, kid: str, dias: int) -> dict[str, Any]:
+        """Suma `dias` a una licencia de plazo. Si todavia no se activo (no corre su plazo) se suman al plazo que tendra."""
+        with self._lock:
+            fila = self._kid(kid)
+            if fila["plan"] == "perpetua":
+                raise ErrorLicencia("Una licencia perpetua no vence: no hay que renovarla.")
+            if fila["estado"] != "activa":
+                raise ErrorLicencia("Esa licencia esta revocada.", 403)
+            if fila["vence"] is None:
+                self.db.execute("UPDATE licencias SET dias=? WHERE kid=?", ((fila["dias"] or 0) + dias, kid))
+                nuevo = None
+            else:
+                nuevo = max(fila["vence"], self.ahora()) + dias * DIA
+                self.db.execute("UPDATE licencias SET vence=? WHERE kid=?", (nuevo, kid))
+            self.db.commit()
+        return {"kid": kid, "vence": nuevo}
+
+    def vence_de(self, kid: str) -> Optional[float]:
+        with self._lock:
+            fila = self.db.execute("SELECT vence FROM licencias WHERE kid=?", (kid,)).fetchone()
+        return None if fila is None else fila["vence"]
 
     def revocar(self, kid: str) -> dict[str, Any]:
         with self._lock:
@@ -356,7 +386,7 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                         limite_compras.fallo(ip)
                         if ruta == "/v1/comprar" and metodo == "POST":
                             d = self._leer()
-                            return self._responder(200, {"url": cobro.crear_checkout(str(d.get("plan", "")), str(d.get("email", "")))})
+                            return self._responder(200, {"url": cobro.crear_checkout(str(d.get("plan", "")), str(d.get("email", "")), str(d.get("clave", "")))})
                         if ruta == "/v1/entrega" and metodo == "GET":
                             sesion = urllib.parse.parse_qs(self.path.partition("?")[2]).get("session_id", [""])[0]
                             return self._responder(200, cobro.entrega(sesion))
@@ -414,6 +444,8 @@ def main() -> int:
         cobro = Cobro(servicio, ruta_db, os.environ["STRIPE_SECRET_KEY"], os.environ["COBRO_WEBHOOK_SECRET"],
                       json.loads(os.environ["COBRO_PRECIOS"]), os.environ.get("COBRO_URL_SITIO", "https://vigentra.mx"),
                       aceptar_pruebas=os.environ.get("COBRO_ACEPTAR_PRUEBAS") == "1")
+        cobro.correo = correo_desde_entorno()
+        print("Correo de la clave:", "activo" if cobro.correo else "NO configurado (la clave solo se ve en /gracias)", flush=True)
         print("Cobro con Stripe:", ", ".join(cobro.precios), "| a la venta:", cobro.a_la_venta, flush=True)
     srv = crear_servidor(servicio, token, "0.0.0.0", int(os.environ.get("PORT", "8780")), cobro)
     print("Servidor de licencias escuchando en el puerto", srv.server_address[1], flush=True)

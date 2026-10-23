@@ -94,14 +94,18 @@ class Cobro:
         self.en_prueba = secret_key.startswith("sk_test_")
         self.aceptar_pruebas = aceptar_pruebas
         self.precios = self._validar(precios)
+        self.correo: Optional[Callable[..., None]] = None  # correo.correo_desde_entorno(); None = no se manda
+        self.hilos = True  # el correo sale en un hilo para no hacer esperar a Stripe (las pruebas lo ponen en False)
         self._lock = threading.Lock()
         self.db = sqlite3.connect(ruta_db, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS compras (
                 sesion TEXT PRIMARY KEY, plan TEXT NOT NULL, kid TEXT NOT NULL, clave TEXT, correo TEXT DEFAULT '',
-                monto INTEGER, moneda TEXT, creada REAL NOT NULL);
+                monto INTEGER, moneda TEXT, creada REAL NOT NULL, renovacion INTEGER DEFAULT 0);
         """)
+        if "renovacion" not in [r[1] for r in self.db.execute("PRAGMA table_info(compras)")]:
+            self.db.execute("ALTER TABLE compras ADD COLUMN renovacion INTEGER DEFAULT 0")  # bases de antes de la renovacion
         self.db.commit()
 
     @staticmethod
@@ -127,7 +131,7 @@ class Cobro:
         return [{"plan": plan, "nombre": p["nombre"], "monto": p["monto"], "moneda": p["moneda"], "dias": DIAS[plan]}
                 for plan, p in self.precios.items()]
 
-    def crear_checkout(self, plan: str, correo: str = "") -> str:
+    def crear_checkout(self, plan: str, correo: str = "", clave_renovar: str = "") -> str:
         p = self.precios.get(plan)
         if p is None or not self.a_la_venta:
             raise ErrorCobro("Ese plan no esta a la venta.", 404)
@@ -144,7 +148,28 @@ class Cobro:
             "cancel_url": f"{self.url_sitio}/comprar?cancelado=1",
             "metadata[plan]": plan, "metadata[producto]": "autocad-ia",
             "payment_intent_data[metadata][plan]": plan,
+            "payment_intent_data[description]": p["nombre"],
+            # Stripe genera la factura-recibo en PDF del pago y deja capturar el RFC / ID fiscal y la direccion. La factura
+            # fiscal mexicana (CFDI) es otra cosa: la emite un PAC, Stripe no la da.
+            "invoice_creation[enabled]": "true",
+            "invoice_creation[invoice_data][description]": p["nombre"],
+            "invoice_creation[invoice_data][footer]": "Para factura fiscal (CFDI) escribe a vigentra.inf@gmail.com con tu constancia de situacion fiscal y tu referencia de pedido.",
+            "invoice_creation[invoice_data][metadata][plan]": plan,
+            "tax_id_collection[enabled]": "true", "customer_creation": "always",
+            "billing_address_collection": "auto",
         }
+        clave_renovar = (clave_renovar or "").strip()
+        if clave_renovar:
+            if plan == "perpetua":
+                raise ErrorCobro("La licencia perpetua no vence: no hay nada que renovar.")
+            fila = self.servicio.por_clave(clave_renovar)
+            if fila is None:
+                raise ErrorCobro("No reconocemos esa clave. Revisa que este completa (AIA-XXXXX-XXXXX-XXXXX-XXXXX).", 403)
+            if fila["estado"] != "activa":
+                raise ErrorCobro("Esa licencia no esta activa. Escribe a soporte.", 403)
+            if fila["plan"] != plan:
+                raise ErrorCobro("Tu clave es del plan %s: renueva con el plan %s (para cambiar de plan escribe a soporte)." % (fila["plan"], fila["plan"]))
+            campos["metadata[renueva_kid]"] = fila["kid"]
         if correo:
             campos["customer_email"] = correo
         try:
@@ -177,14 +202,37 @@ class Cobro:
             return {"pendiente": True}
         detalle = obj.get("customer_details") or {}
         correo = str(detalle.get("email") or obj.get("customer_email") or "")[:200]
+        renueva = str((obj.get("metadata") or {}).get("renueva_kid", ""))
         with self._lock:
             if self.db.execute("SELECT 1 FROM compras WHERE sesion=?", (sesion,)).fetchone():
                 return {"duplicado": True}  # Stripe reintenta: la misma compra nunca da dos claves
-            lic = self.servicio.crear(plan, nota=f"stripe {sesion} {correo}"[:200])
-            self.db.execute("INSERT INTO compras (sesion, plan, kid, clave, correo, monto, moneda, creada) VALUES (?,?,?,?,?,?,?,?)",
-                            (sesion, plan, lic["kid"], lic["clave"], correo, obj.get("amount_total"), obj.get("currency"), self.ahora()))
+            if renueva:
+                self.servicio.renovar(renueva, DIAS[plan])
+                kid, clave = renueva, None
+            else:
+                lic = self.servicio.crear(plan, nota=f"stripe {sesion} {correo}"[:200])
+                kid, clave = lic["kid"], lic["clave"]
+            self.db.execute("INSERT INTO compras (sesion, plan, kid, clave, correo, monto, moneda, creada, renovacion) VALUES (?,?,?,?,?,?,?,?,?)",
+                            (sesion, plan, kid, clave, correo, obj.get("amount_total"), obj.get("currency"), self.ahora(), 1 if renueva else 0))
             self.db.commit()
-        return {"kid": lic["kid"], "plan": plan}
+        self._avisar(correo, plan, clave, kid, sesion, bool(renueva))
+        return {"kid": kid, "plan": plan, "renovada": bool(renueva)}
+
+    def _avisar(self, correo: str, plan: str, clave: Optional[str], kid: str, sesion: str, renovada: bool) -> None:
+        """Manda la clave por correo si hay SMTP. Nunca rompe el webhook: si falla, la clave sigue en /gracias."""
+        if not (self.correo and CORREO.match(correo or "")):
+            return
+
+        def enviar() -> None:
+            try:
+                self.correo(correo, plan, clave, kid, sesion, renovada)
+            except Exception as exc:  # noqa: BLE001
+                print("No se pudo mandar el correo de", kid, "-", type(exc).__name__, flush=True)
+
+        if self.hilos:
+            threading.Thread(target=enviar, daemon=True).start()
+        else:
+            enviar()
 
     # ------------------------------------------------------------------ entrega
     def entrega(self, sesion: str) -> dict[str, Any]:
@@ -194,12 +242,15 @@ class Cobro:
             limite = self.ahora() - RETENCION_DIAS * 86400
             self.db.execute("UPDATE compras SET clave=NULL WHERE creada<? AND clave IS NOT NULL", (limite,))
             self.db.commit()
-            fila = self.db.execute("SELECT plan, clave, kid, monto, moneda, creada FROM compras WHERE sesion=?", (sesion,)).fetchone()
+            fila = self.db.execute("SELECT plan, clave, kid, monto, moneda, creada, renovacion FROM compras WHERE sesion=?", (sesion,)).fetchone()
         if fila is None:
             return {"estado": "procesando"}  # el webhook todavia no llego (o el pago no se completo)
         # `referencia` (el kid) no sirve para activar nada: es el numero de pedido que el cliente cita a soporte
         datos = {"plan": fila["plan"], "referencia": fila["kid"], "monto": fila["monto"], "moneda": fila["moneda"],
                  "fecha": int(fila["creada"])}
+        if fila["renovacion"]:
+            vence = self.servicio.vence_de(fila["kid"])
+            return {"estado": "renovada", **datos, "vence": None if vence is None else int(vence)}
         if fila["clave"] is None:
             return {"estado": "entregada", **datos}
         return {"estado": "lista", "clave": fila["clave"], **datos}
