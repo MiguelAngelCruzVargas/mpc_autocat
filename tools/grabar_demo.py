@@ -222,7 +222,12 @@ class Grabacion:
                # no llegaba a codificar en tiempo real.
                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "21",
                "-pix_fmt", "yuv420p", "-movflags", "+faststart", self.salida]
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        # El stderr de ffmpeg va a un archivo, NO a un pipe sin leer: el filtro drawtext
+        # (reload=1) avisa cada vez que lee el texto mientras se reescribe, y con el pipe
+        # lleno ffmpeg se bloqueaba, dejaba de consumir cuadros y el video salía cortado
+        # (visto en una toma de 6 min: el video terminaba a los 288 s).
+        self._f_err = os.path.splitext(self.salida)[0] + ".ffmpeg.log"
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=open(self._f_err, "wb"))
         self.t0 = time.time()
         self.hilo = threading.Thread(target=self._bucle, daemon=True)
         self.hilo.start()
@@ -239,8 +244,13 @@ class Grabacion:
             self.proc.stdin.close()
         except OSError:
             pass
-        err = self.proc.stderr.read() if self.proc.stderr else b""
         self.proc.wait(timeout=180)
+        try:
+            with open(self._f_err, "rb") as fe:
+                err = fe.read()[-2000:]
+            os.remove(self._f_err)
+        except OSError:
+            err = b""
         self.cap.cerrar()
         if self.estaba_min:
             _volver_a_minimizar(self.h)
