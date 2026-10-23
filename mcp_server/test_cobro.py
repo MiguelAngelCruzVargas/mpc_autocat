@@ -139,6 +139,9 @@ def main() -> int:
 
         s, d, _ = pedir(base + f"/v1/entrega?session_id={SESION}")
         check("entrega: clave lista", (s, d["estado"], d["clave"].startswith("AIA-")), (200, "lista", True))
+        check("entrega: resumen de la compra (plan, referencia, importe, moneda)",
+              (d["plan"], d["referencia"] == svc.listar()[-1]["kid"] or d["referencia"] in [l["kid"] for l in svc.listar()], d["monto"], d["moneda"], isinstance(d["fecha"], int)),
+              ("anual", True, 299000, "mxn", True))
         # la clave entregada activa de verdad
         r = svc.activar(d["clave"], "a" * 64)
         check("la clave entregada activa un equipo", r["plan"], "anual")

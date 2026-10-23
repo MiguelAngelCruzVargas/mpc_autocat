@@ -194,9 +194,12 @@ class Cobro:
             limite = self.ahora() - RETENCION_DIAS * 86400
             self.db.execute("UPDATE compras SET clave=NULL WHERE creada<? AND clave IS NOT NULL", (limite,))
             self.db.commit()
-            fila = self.db.execute("SELECT plan, clave FROM compras WHERE sesion=?", (sesion,)).fetchone()
+            fila = self.db.execute("SELECT plan, clave, kid, monto, moneda, creada FROM compras WHERE sesion=?", (sesion,)).fetchone()
         if fila is None:
             return {"estado": "procesando"}  # el webhook todavia no llego (o el pago no se completo)
+        # `referencia` (el kid) no sirve para activar nada: es el numero de pedido que el cliente cita a soporte
+        datos = {"plan": fila["plan"], "referencia": fila["kid"], "monto": fila["monto"], "moneda": fila["moneda"],
+                 "fecha": int(fila["creada"])}
         if fila["clave"] is None:
-            return {"estado": "entregada", "plan": fila["plan"]}
-        return {"estado": "lista", "plan": fila["plan"], "clave": fila["clave"]}
+            return {"estado": "entregada", **datos}
+        return {"estado": "lista", "clave": fila["clave"], **datos}
