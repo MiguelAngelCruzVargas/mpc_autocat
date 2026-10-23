@@ -70,7 +70,8 @@ KPIs: costo por prueba, prueba→compra, CAC, días a la primera compra, renovac
 4. **Instalador sin firma digital:** Windows muestra "protegió su PC" y AutoCAD pide confirmar. Un certificado de firma de código baja la fricción.
 5. **Sin testimonios ni casos de clientes.**
 6. Faltan la llave real de Stripe, el correo con la clave y la revisión legal de los términos.
-7. **Capacidad de soporte:** el plan prioritario se prometió; hay que tener quién responda.
+7. **Solo Windows y AutoCAD completo.** No funciona en Mac, AutoCAD LT ni AutoCAD web (Autodesk no admite complementos .NET ahí). En los anuncios hay que excluir a usuarios de Mac y avisarlo en el texto, o se pagan clics que no pueden comprar.
+8. **Capacidad de soporte:** el plan prioritario se prometió; hay que tener quién responda.
 
 ## 7. Plan de 30 días
 

@@ -2,8 +2,9 @@ VIGENTRA ARCHITECH (AutoCAD IA) - Instalación y activación (Windows)
 =====================================================================
 
 Lo que necesitas
-  - Windows 10 u 11 (64 bits).
-  - AutoCAD instalado, con TU propia licencia (este programa no la incluye).
+  - Windows 10 u 11 (64 bits). No hay versión para Mac.
+  - AutoCAD completo instalado (no AutoCAD LT ni AutoCAD web: no admiten complementos .NET), con TU propia
+    licencia (este programa no la incluye).
   - Una IA a tu elección: una clave de OpenAI, Anthropic, OpenRouter, DeepSeek,
     Groq, etc., o un modelo local. Se paga aparte, al proveedor que elijas.
   - Internet para activar la licencia y para la IA.
