@@ -412,8 +412,9 @@ def main() -> int:
     cobro = None
     if os.environ.get("STRIPE_SECRET_KEY") and os.environ.get("COBRO_WEBHOOK_SECRET") and os.environ.get("COBRO_PRECIOS"):
         cobro = Cobro(servicio, ruta_db, os.environ["STRIPE_SECRET_KEY"], os.environ["COBRO_WEBHOOK_SECRET"],
-                      json.loads(os.environ["COBRO_PRECIOS"]), os.environ.get("COBRO_URL_SITIO", "https://vigentra.mx"))
-        print("Cobro con Stripe activo:", ", ".join(cobro.precios), flush=True)
+                      json.loads(os.environ["COBRO_PRECIOS"]), os.environ.get("COBRO_URL_SITIO", "https://vigentra.mx"),
+                      aceptar_pruebas=os.environ.get("COBRO_ACEPTAR_PRUEBAS") == "1")
+        print("Cobro con Stripe:", ", ".join(cobro.precios), "| a la venta:", cobro.a_la_venta, flush=True)
     srv = crear_servidor(servicio, token, "0.0.0.0", int(os.environ.get("PORT", "8780")), cobro)
     print("Servidor de licencias escuchando en el puerto", srv.server_address[1], flush=True)
     srv.serve_forever()

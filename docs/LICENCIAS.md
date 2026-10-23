@@ -50,3 +50,11 @@ El código no fija precios, solo plazos: `perpetua` (sin vencimiento), `anual` (
 - La verificación corre en la máquina del cliente. Quien se lo proponga puede **parchear el plugin** (un `.dll` de .NET se descompila fácil). Esto frena copiar el zip, usar una clave en muchos equipos, seguir después de vencer, y permite revocar. **No es a prueba de un crackeador decidido.** Lo que sí es sólido: nadie puede **fabricar** una licencia sin la clave privada.
 - Mejoras posibles, de más a menos útiles: ofuscar el plugin; **firmar el código** con un certificado (quita el aviso «Unsigned Executable File» de AutoCAD y da confianza al comprar); ata la prueba gratis a una cuenta/correo.
 - Antes de vender: términos de uso, aviso de que **no es un producto de Autodesk** (y que el cliente necesita su propia licencia de AutoCAD), y revisar qué datos guarda el servidor (hash de clave, hash de equipo, nombre del PC).
+
+## Cobro con Stripe (compra en linea)
+
+- Flujo: `https://vigentra.mx/comprar` -> Stripe Checkout -> webhook firmado `https://vigentra-architech.vigentra.mx/stripe/webhook` -> la licencia se crea SOLO con el pago confirmado -> `https://vigentra.mx/gracias` muestra la clave y la descarga (`/descargas/AutoCAD-IA-<version>.zip`, con su SHA-256).
+- Precios (MXN, IVA incluido, en centavos) en `licencias/servidor/configurar_stripe.py` (`PRECIOS`): mensual 349, anual 2,290, perpetua 5,800 (lanzamiento). Para cambiarlos: editar y volver a correr el script en el VPS.
+- La llave de Stripe se lee del `.env` de la consola (`/opt/vigentra-nube/.env`), asi Access y Architech comparten modo. **Con `sk_test_` el servidor no vende nada** (planes vacios, `/comprar` dice «pronto», los pagos de prueba no crean licencias). Para salir a produccion: poner la llave `sk_live_` en la consola (`nube/configurar-stripe.sh`) y despues correr en el VPS `cd /opt/autocad-ia-licencias && python3 configurar_stripe.py` (crea el webhook del modo real y reinicia).
+- Al publicar una version nueva: reconstruir el zip, subirlo a `/opt/landing-vigentra/sitio/descargas/` y actualizar version y SHA-256 en `landing/gracias.html`.
+- Probado con Stripe falso (`mcp_server/test_cobro.py`) y en el VPS con la llave de prueba (planes, sesion de Checkout real, firma falsa rechazada, webhook firmado -> clave entregada; esa licencia de verificacion se revoco).

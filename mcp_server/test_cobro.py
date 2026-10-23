@@ -67,7 +67,7 @@ def main() -> int:
     db = os.path.join(tmp, "l.db")
     svc = servidor.Servicio(db, ec.generate_private_key(ec.SECP256R1()))
     precios = {"anual": {"monto": 299000, "nombre": "Vigentra Architech anual"}, "mensual": {"monto": 49900}}
-    cb = cobro.Cobro(svc, db, "sk_test_x", SECRETO, precios, "https://vigentra.mx", post=stripe_falso)
+    cb = cobro.Cobro(svc, db, "sk_test_x", SECRETO, precios, "https://vigentra.mx", post=stripe_falso, aceptar_pruebas=True)
 
     # ---- firma
     c = evento()
@@ -159,6 +159,23 @@ def main() -> int:
         check("pasados 30 dias la clave ya no se muestra", (d["estado"], "clave" in d), ("entregada", False))
     finally:
         srv.shutdown()
+
+    # llave de PRUEBA: no vende ni regala licencias salvo que se pida expresamente
+    cb2 = cobro.Cobro(svc, db, "sk_test_x", SECRETO, precios, "https://vigentra.mx", post=stripe_falso)
+    check("sk_test_ sin permiso: planes vacios (la pagina muestra 'pronto')", cb2.planes(), [])
+    try:
+        cb2.crear_checkout("anual")
+        check("sk_test_ sin permiso: no abre pagos", "abrio", "404")
+    except cobro.ErrorCobro as e:
+        check("sk_test_ sin permiso: no abre pagos", e.codigo, 404)
+    n0 = len(svc.listar())
+    cuerpo = evento(sesion="cs_test_prueba0000001")
+    r = cb2.procesar_webhook(cuerpo, firmar(cuerpo))
+    check("sk_test_ sin permiso: el webhook de prueba no crea licencia", (r.get("ignorado"), len(svc.listar())), (True, n0))
+    cb3 = cobro.Cobro(svc, db, "sk_test_x", SECRETO, precios, "https://vigentra.mx", post=stripe_falso, aceptar_pruebas=True)
+    check("sk_test_ con COBRO_ACEPTAR_PRUEBAS: a la venta", len(cb3.planes()), 2)
+    cb4 = cobro.Cobro(svc, db, "sk_live_x", SECRETO, precios, "https://vigentra.mx", post=stripe_falso)
+    check("sk_live_: a la venta sin permisos especiales", len(cb4.planes()), 2)
 
     # sin Stripe configurado las rutas no existen
     srv2 = servidor.crear_servidor(svc, "x" * 30, "127.0.0.1", 0, None)

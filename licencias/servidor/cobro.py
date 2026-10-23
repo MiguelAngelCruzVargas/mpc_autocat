@@ -20,6 +20,7 @@ Variables de entorno (las lee servidor.main):
   COBRO_PRECIOS            JSON: {"mensual": {"monto": 29900, "nombre": "..."}, "anual": {...}, "perpetua": {...}}
                            `monto` en centavos de la moneda (MXN por defecto, `moneda` para cambiarla)
   COBRO_URL_SITIO          https://vigentra.mx (a donde vuelve el cliente: /gracias y /instalacion)
+  COBRO_ACEPTAR_PRUEBAS    1 solo para probar con sk_test_; sin esto una llave de prueba no vende nada
 """
 from __future__ import annotations
 
@@ -83,10 +84,15 @@ def firma_valida(cuerpo: bytes, cabecera: str, secreto: str, ahora: float) -> bo
 
 class Cobro:
     def __init__(self, servicio, ruta_db: str, secret_key: str, webhook_secret: str, precios: dict[str, dict[str, Any]],
-                 url_sitio: str, post: Callable[..., tuple[int, bytes]] = _post_stripe, ahora=time.time):
+                 url_sitio: str, post: Callable[..., tuple[int, bytes]] = _post_stripe, ahora=time.time,
+                 aceptar_pruebas: bool = False):
         self.servicio, self.secret_key, self.webhook_secret = servicio, secret_key, webhook_secret
         self.url_sitio = url_sitio.rstrip("/")
         self.post, self.ahora = post, ahora
+        # Con una llave de PRUEBA (sk_test_) cualquiera paga con la tarjeta 4242 sin cobrarse nada: por defecto eso no
+        # vende ni regala licencias. Solo con COBRO_ACEPTAR_PRUEBAS=1 (para probar el flujo de punta a punta).
+        self.en_prueba = secret_key.startswith("sk_test_")
+        self.aceptar_pruebas = aceptar_pruebas
         self.precios = self._validar(precios)
         self._lock = threading.Lock()
         self.db = sqlite3.connect(ruta_db, check_same_thread=False)
@@ -111,13 +117,19 @@ class Cobro:
         return limpios
 
     # ------------------------------------------------------------------ publico
+    @property
+    def a_la_venta(self) -> bool:
+        return self.aceptar_pruebas or not self.en_prueba
+
     def planes(self) -> list[dict[str, Any]]:
+        if not self.a_la_venta:
+            return []  # la pagina muestra "pronto"
         return [{"plan": plan, "nombre": p["nombre"], "monto": p["monto"], "moneda": p["moneda"], "dias": DIAS[plan]}
                 for plan, p in self.precios.items()]
 
     def crear_checkout(self, plan: str, correo: str = "") -> str:
         p = self.precios.get(plan)
-        if p is None:
+        if p is None or not self.a_la_venta:
             raise ErrorCobro("Ese plan no esta a la venta.", 404)
         correo = (correo or "").strip()
         if correo and not CORREO.match(correo):
@@ -159,6 +171,8 @@ class Cobro:
         sesion, plan = str(obj.get("id", "")), str((obj.get("metadata") or {}).get("plan", ""))
         if not SESION.match(sesion) or plan not in self.precios:
             return {"ignorado": True}
+        if sesion.startswith("cs_test_") and not self.aceptar_pruebas:
+            return {"ignorado": True, "motivo": "pago de prueba"}
         if obj.get("payment_status") != "paid":  # p. ej. OXXO/SPEI: el aviso de pago llega despues
             return {"pendiente": True}
         detalle = obj.get("customer_details") or {}
