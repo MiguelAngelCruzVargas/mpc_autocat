@@ -2,7 +2,7 @@
 vigentra-architech.vigentra.mx, licencias.169-58-78-148.sslip.io {
 	encode zstd gzip
 	request_body {
-		max_size 16KB
+		max_size 256KB
 	}
 	reverse_proxy 127.0.0.1:8780 {
 		header_up X-Real-IP {remote_host}

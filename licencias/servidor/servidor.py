@@ -33,12 +33,15 @@ import sqlite3
 import sys
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+from cobro import Cobro, ErrorCobro
 
 DIA = 86400
 TOKEN_DIAS = 7
@@ -265,8 +268,12 @@ class _Limite:
             self.fallos.setdefault(ip, []).append(self.ahora())
 
 
-def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", puerto: int = 0) -> ThreadingHTTPServer:
+ORIGENES_SITIO = ("https://vigentra.mx", "https://www.vigentra.mx")
+
+
+def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", puerto: int = 0, cobro: Any = None) -> ThreadingHTTPServer:
     limite = _Limite()
+    limite_compras = _Limite()
 
     class Manejador(BaseHTTPRequestHandler):
         server_version = "AutoCADIA-Licencias"
@@ -279,6 +286,10 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
             self.send_response(codigo)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(datos)))
+            origen = self.headers.get("Origin") or ""
+            if origen in ORIGENES_SITIO and self.path.split("?")[0] in ("/v1/planes", "/v1/comprar", "/v1/entrega"):
+                self.send_header("Access-Control-Allow-Origin", origen)
+                self.send_header("Vary", "Origin")
             self.end_headers()
             self.wfile.write(datos)
 
@@ -324,6 +335,34 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                     if ruta == "/admin/liberar":
                         return self._responder(200, servicio.liberar(str(d.get("kid", "")), d.get("maquina")))
                     return self._responder(404, {"error": "no existe"})
+                if ruta == "/stripe/webhook" and metodo == "POST":
+                    if cobro is None:
+                        return self._responder(404, {"error": "no existe"})
+                    n = int(self.headers.get("Content-Length") or 0)
+                    if n > 262144:
+                        return self._responder(413, {"error": "Pedido demasiado grande."})
+                    try:
+                        return self._responder(200, cobro.procesar_webhook(self.rfile.read(n), self.headers.get("Stripe-Signature", "")))
+                    except ErrorCobro as exc:
+                        return self._responder(exc.codigo, {"error": str(exc)})
+                if ruta in ("/v1/planes", "/v1/comprar", "/v1/entrega"):
+                    if cobro is None:
+                        return self._responder(404, {"error": "La compra en linea todavia no esta activa."})
+                    try:
+                        if ruta == "/v1/planes" and metodo == "GET":
+                            return self._responder(200, {"planes": cobro.planes()})
+                        if limite_compras.bloqueado(ip):
+                            return self._responder(429, {"error": "Demasiados intentos. Espera unos minutos."})
+                        limite_compras.fallo(ip)
+                        if ruta == "/v1/comprar" and metodo == "POST":
+                            d = self._leer()
+                            return self._responder(200, {"url": cobro.crear_checkout(str(d.get("plan", "")), str(d.get("email", "")))})
+                        if ruta == "/v1/entrega" and metodo == "GET":
+                            sesion = urllib.parse.parse_qs(self.path.partition("?")[2]).get("session_id", [""])[0]
+                            return self._responder(200, cobro.entrega(sesion))
+                    except ErrorCobro as exc:
+                        return self._responder(exc.codigo, {"error": str(exc)})
+                    return self._responder(404, {"error": "no existe"})
                 if metodo == "POST" and ruta in ("/v1/activar", "/v1/prueba"):
                     if limite.bloqueado(ip):
                         return self._responder(429, {"error": "Demasiados intentos. Espera unos minutos."})
@@ -350,6 +389,17 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
         def do_POST(self):  # noqa: N802
             self._atender("POST")
 
+        def do_OPTIONS(self):  # noqa: N802 - preflight CORS de la pagina de compra
+            origen = self.headers.get("Origin") or ""
+            self.send_response(204 if origen in ORIGENES_SITIO else 403)
+            if origen in ORIGENES_SITIO:
+                self.send_header("Access-Control-Allow-Origin", origen)
+                self.send_header("Access-Control-Allow-Methods", "GET, POST")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
     return ThreadingHTTPServer((host, puerto), Manejador)
 
 
@@ -357,8 +407,14 @@ def main() -> int:
     token = os.environ.get("LICENCIA_ADMIN_TOKEN", "")
     if len(token) < 24:
         raise SystemExit("Falta LICENCIA_ADMIN_TOKEN (minimo 24 caracteres aleatorios).")
-    servicio = Servicio(os.environ.get("LICENCIA_DB", "licencias.db"), cargar_privada())
-    srv = crear_servidor(servicio, token, "0.0.0.0", int(os.environ.get("PORT", "8780")))
+    ruta_db = os.environ.get("LICENCIA_DB", "licencias.db")
+    servicio = Servicio(ruta_db, cargar_privada())
+    cobro = None
+    if os.environ.get("STRIPE_SECRET_KEY") and os.environ.get("COBRO_WEBHOOK_SECRET") and os.environ.get("COBRO_PRECIOS"):
+        cobro = Cobro(servicio, ruta_db, os.environ["STRIPE_SECRET_KEY"], os.environ["COBRO_WEBHOOK_SECRET"],
+                      json.loads(os.environ["COBRO_PRECIOS"]), os.environ.get("COBRO_URL_SITIO", "https://vigentra.mx"))
+        print("Cobro con Stripe activo:", ", ".join(cobro.precios), flush=True)
+    srv = crear_servidor(servicio, token, "0.0.0.0", int(os.environ.get("PORT", "8780")), cobro)
     print("Servidor de licencias escuchando en el puerto", srv.server_address[1], flush=True)
     srv.serve_forever()
     return 0
