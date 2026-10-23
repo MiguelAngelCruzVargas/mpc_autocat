@@ -54,6 +54,8 @@ def main() -> int:
     c.add_argument("--equipos", type=int, default=2, help="equipos permitidos (2 por defecto)")
     c.add_argument("--nota", default="", help="a quien se vendio")
     sub.add_parser("listar")
+    es = sub.add_parser("estadisticas", help="pruebas iniciadas, licencias creadas y ventas por video/anuncio")
+    es.add_argument("--dias", type=int, default=30)
     for n in ("revocar", "reactivar"):
         sub.add_parser(n).add_argument("kid")
     e = sub.add_parser("extender")
@@ -72,6 +74,18 @@ def main() -> int:
             print("%s  %-8s %-9s vence %-10s equipos %d/%d  %s" % (lic["kid"], lic["plan"], lic["estado"], fecha(lic["vence"]), len(lic["equipos"]), lic["max_equipos"], lic["nota"]))
             for q in lic["equipos"]:
                 print("      - %s (%s…) ultimo uso %s" % (q["equipo"] or "?", q["maquina"], fecha(q["ultima"])))
+    elif a.cmd == "estadisticas":
+        r = llamar("/admin/estadisticas?dias=%d" % a.dias)
+        s = r["servicio"]
+        print("Ultimos %d dias" % a.dias)
+        print("  Pruebas iniciadas: %d | equipos activados: %d | licencias creadas: %s" % (s["pruebas_iniciadas"], s["equipos_activados"], s["licencias_creadas"] or "ninguna"))
+        for d, n in s["pruebas_por_dia"].items():
+            print("    %s  %d prueba(s)" % (d, n))
+        v = r.get("ventas")
+        if v:
+            print("  Compras: %d | monto: $%.2f" % (v["compras"], v["monto"] / 100))
+            for c in v["por_canal"]:
+                print("    %-12s %-16s %-22s %-22s %-8s%s  x%d  $%.2f" % (c["source"], c["medium"], c["campaign"], c["content"], c["plan"], " (renov.)" if c["renovacion"] else "", c["compras"], c["monto"] / 100))
     elif a.cmd in ("revocar", "reactivar"):
         print(llamar("/admin/" + a.cmd, {"kid": a.kid}))
     elif a.cmd == "extender":

@@ -223,6 +223,20 @@ class Servicio:
             self.db.commit()
         return {"kid": kid, "vence": nuevo}
 
+    def resumen(self, dias: int = 30) -> dict[str, Any]:
+        """Pruebas iniciadas, licencias creadas y equipos activados en los ultimos `dias`. Solo lectura."""
+        limite = self.ahora() - max(1, int(dias)) * DIA
+        with self._lock:
+            pruebas = [r[0] for r in self.db.execute("SELECT inicio FROM pruebas WHERE inicio>=? ORDER BY inicio", (limite,))]
+            lic = self.db.execute("SELECT plan, COUNT(*) FROM licencias WHERE creada>=? GROUP BY plan", (limite,)).fetchall()
+            act = self.db.execute("SELECT COUNT(DISTINCT maquina) FROM activaciones WHERE primera>=?", (limite,)).fetchone()[0]
+        por_dia: dict[str, int] = {}
+        for t in pruebas:
+            d = time.strftime("%Y-%m-%d", time.localtime(t))
+            por_dia[d] = por_dia.get(d, 0) + 1
+        return {"dias": dias, "pruebas_iniciadas": len(pruebas), "pruebas_por_dia": por_dia,
+                "licencias_creadas": {p: n for p, n in lic}, "equipos_activados": act}
+
     def vence_de(self, kid: str) -> Optional[float]:
         with self._lock:
             fila = self.db.execute("SELECT vence FROM licencias WHERE kid=?", (kid,)).fetchone()
@@ -353,6 +367,10 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                         return self._responder(401, {"error": "no autorizado"})
                     if metodo == "GET" and ruta == "/admin/listar":
                         return self._responder(200, {"licencias": servicio.listar()})
+                    if metodo == "GET" and ruta == "/admin/estadisticas":
+                        q = urllib.parse.parse_qs(self.path.partition("?")[2]).get("dias", ["30"])[0]
+                        dias = int(q) if q.isdigit() and 1 <= int(q) <= 730 else 30
+                        return self._responder(200, {"servicio": servicio.resumen(dias), "ventas": cobro.estadisticas(dias) if cobro else None})
                     d = self._leer()
                     if ruta == "/admin/crear":
                         return self._responder(200, servicio.crear(d.get("plan", ""), d.get("dias"), d.get("max_equipos", MAX_EQUIPOS_DEFECTO), d.get("nota", "")))
@@ -386,7 +404,7 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                         limite_compras.fallo(ip)
                         if ruta == "/v1/comprar" and metodo == "POST":
                             d = self._leer()
-                            return self._responder(200, {"url": cobro.crear_checkout(str(d.get("plan", "")), str(d.get("email", "")), str(d.get("clave", "")))})
+                            return self._responder(200, {"url": cobro.crear_checkout(str(d.get("plan", "")), str(d.get("email", "")), str(d.get("clave", "")), d.get("utm"))})
                         if ruta == "/v1/entrega" and metodo == "GET":
                             sesion = urllib.parse.parse_qs(self.path.partition("?")[2]).get("session_id", [""])[0]
                             return self._responder(200, cobro.entrega(sesion))

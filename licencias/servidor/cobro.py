@@ -39,6 +39,7 @@ from typing import Any, Callable, Optional
 STRIPE_API = "https://api.stripe.com/v1"
 TOLERANCIA_FIRMA_S = 300
 RETENCION_DIAS = 30
+UTM_VALOR = re.compile(r"^[A-Za-z0-9_\-. ]{1,100}$")
 SESION = re.compile(r"^cs_(live|test)_[A-Za-z0-9]{10,200}$")
 CORREO = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}$")
 DIAS = {"mensual": 30, "anual": 365, "perpetua": None}  # los mismos que servidor.PLANES
@@ -102,10 +103,14 @@ class Cobro:
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS compras (
                 sesion TEXT PRIMARY KEY, plan TEXT NOT NULL, kid TEXT NOT NULL, clave TEXT, correo TEXT DEFAULT '',
-                monto INTEGER, moneda TEXT, creada REAL NOT NULL, renovacion INTEGER DEFAULT 0);
+                monto INTEGER, moneda TEXT, creada REAL NOT NULL, renovacion INTEGER DEFAULT 0,
+                utm_source TEXT DEFAULT '', utm_medium TEXT DEFAULT '', utm_campaign TEXT DEFAULT '', utm_content TEXT DEFAULT '');
         """)
-        if "renovacion" not in [r[1] for r in self.db.execute("PRAGMA table_info(compras)")]:
-            self.db.execute("ALTER TABLE compras ADD COLUMN renovacion INTEGER DEFAULT 0")  # bases de antes de la renovacion
+        columnas = [r[1] for r in self.db.execute("PRAGMA table_info(compras)")]
+        for col in ("renovacion INTEGER DEFAULT 0", "utm_source TEXT DEFAULT ''", "utm_medium TEXT DEFAULT ''",
+                    "utm_campaign TEXT DEFAULT ''", "utm_content TEXT DEFAULT ''"):
+            if col.split()[0] not in columnas:
+                self.db.execute("ALTER TABLE compras ADD COLUMN " + col)  # bases de antes de la renovacion / de la medicion
         self.db.commit()
 
     @staticmethod
@@ -131,7 +136,7 @@ class Cobro:
         return [{"plan": plan, "nombre": p["nombre"], "monto": p["monto"], "moneda": p["moneda"], "dias": DIAS[plan]}
                 for plan, p in self.precios.items()]
 
-    def crear_checkout(self, plan: str, correo: str = "", clave_renovar: str = "") -> str:
+    def crear_checkout(self, plan: str, correo: str = "", clave_renovar: str = "", utm: Optional[dict] = None) -> str:
         p = self.precios.get(plan)
         if p is None or not self.a_la_venta:
             raise ErrorCobro("Ese plan no esta a la venta.", 404)
@@ -158,6 +163,12 @@ class Cobro:
             "tax_id_collection[enabled]": "true", "customer_creation": "always",
             "billing_address_collection": "auto",
         }
+        # de que anuncio o video vino la compra (parametros utm de la pagina); solo texto corto y seguro
+        if isinstance(utm, dict):
+            for k in ("source", "medium", "campaign", "content"):
+                v = str(utm.get(k, "")).strip()
+                if v and UTM_VALOR.match(v):
+                    campos[f"metadata[utm_{k}]"] = v
         clave_renovar = (clave_renovar or "").strip()
         if clave_renovar:
             if plan == "perpetua":
@@ -202,7 +213,9 @@ class Cobro:
             return {"pendiente": True}
         detalle = obj.get("customer_details") or {}
         correo = str(detalle.get("email") or obj.get("customer_email") or "")[:200]
-        renueva = str((obj.get("metadata") or {}).get("renueva_kid", ""))
+        meta = obj.get("metadata") or {}
+        renueva = str(meta.get("renueva_kid", ""))
+        utm = [str(meta.get(f"utm_{k}", ""))[:100] for k in ("source", "medium", "campaign", "content")]
         with self._lock:
             if self.db.execute("SELECT 1 FROM compras WHERE sesion=?", (sesion,)).fetchone():
                 return {"duplicado": True}  # Stripe reintenta: la misma compra nunca da dos claves
@@ -212,8 +225,10 @@ class Cobro:
             else:
                 lic = self.servicio.crear(plan, nota=f"stripe {sesion} {correo}"[:200])
                 kid, clave = lic["kid"], lic["clave"]
-            self.db.execute("INSERT INTO compras (sesion, plan, kid, clave, correo, monto, moneda, creada, renovacion) VALUES (?,?,?,?,?,?,?,?,?)",
-                            (sesion, plan, kid, clave, correo, obj.get("amount_total"), obj.get("currency"), self.ahora(), 1 if renueva else 0))
+            self.db.execute("INSERT INTO compras (sesion, plan, kid, clave, correo, monto, moneda, creada, renovacion, "
+                            "utm_source, utm_medium, utm_campaign, utm_content) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (sesion, plan, kid, clave, correo, obj.get("amount_total"), obj.get("currency"), self.ahora(),
+                             1 if renueva else 0, *utm))
             self.db.commit()
         self._avisar(correo, plan, clave, kid, sesion, bool(renueva))
         return {"kid": kid, "plan": plan, "renovada": bool(renueva)}
@@ -233,6 +248,21 @@ class Cobro:
             threading.Thread(target=enviar, daemon=True).start()
         else:
             enviar()
+
+    # ------------------------------------------------------------------ estadisticas
+    def estadisticas(self, dias: int = 30) -> dict[str, Any]:
+        """Ventas de los ultimos `dias` por canal (utm), para saber que video o anuncio vende. Solo lectura."""
+        limite = self.ahora() - max(1, int(dias)) * 86400
+        with self._lock:
+            filas = self.db.execute(
+                "SELECT utm_source, utm_medium, utm_campaign, utm_content, plan, renovacion, COUNT(*) n, COALESCE(SUM(monto), 0) total "
+                "FROM compras WHERE creada>=? AND sesion NOT LIKE 'cs_test_%' "
+                "GROUP BY utm_source, utm_medium, utm_campaign, utm_content, plan, renovacion ORDER BY total DESC", (limite,)).fetchall()
+        canales = [{"source": f["utm_source"] or "(directo)", "medium": f["utm_medium"], "campaign": f["utm_campaign"],
+                    "content": f["utm_content"], "plan": f["plan"], "renovacion": bool(f["renovacion"]),
+                    "compras": f["n"], "monto": f["total"]} for f in filas]
+        return {"dias": dias, "compras": sum(c["compras"] for c in canales), "monto": sum(c["monto"] for c in canales),
+                "por_canal": canales}
 
     # ------------------------------------------------------------------ entrega
     def entrega(self, sesion: str) -> dict[str, Any]:

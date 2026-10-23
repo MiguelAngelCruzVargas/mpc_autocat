@@ -254,6 +254,32 @@ def main() -> int:
     except cobro.ErrorCobro as exc:
         check("renovar: clave revocada", exc.codigo, 403)
 
+    # ---- medicion: de que video/anuncio vino la compra
+    cb7 = cobro.Cobro(svc, db, "sk_live_x", SECRETO, precios, "https://vigentra.mx", post=stripe_falso)
+    cb7.hilos = False
+    cb7.crear_checkout("anual", "", "", {"source": "tiktok", "medium": "video_organico", "campaign": "cortes_2026_10",
+                                         "content": "corte_01", "term": "<script>", "otra": "x"})
+    m = {k: v for k, v in llamadas[-1][2].items() if k.startswith("metadata[utm_")}
+    check("el Checkout lleva los utm del video", m, {"metadata[utm_source]": "tiktok", "metadata[utm_medium]": "video_organico",
+                                                     "metadata[utm_campaign]": "cortes_2026_10", "metadata[utm_content]": "corte_01"})
+    cb7.crear_checkout("anual", "", "", {"source": "<script>alert(1)</script>", "campaign": "x" * 200})
+    check("utm con caracteres raros o demasiado largos se descartan",
+          [k for k in llamadas[-1][2] if k.startswith("metadata[utm_")], [])
+    ev = json.loads(evento(sesion="cs_live_utm00000001"))
+    ev["data"]["object"]["metadata"].update({"utm_source": "tiktok", "utm_medium": "video_organico", "utm_campaign": "cortes_2026_10", "utm_content": "corte_01"})
+    c = json.dumps(ev).encode()
+    cb7.procesar_webhook(c, firmar(c))
+    ev2 = json.loads(evento(sesion="cs_live_utm00000002", plan="mensual"))
+    c = json.dumps(ev2).encode()
+    cb7.procesar_webhook(c, firmar(c))
+    est = cb7.estadisticas(30)
+    canal = [x for x in est["por_canal"] if x["source"] == "tiktok"]
+    check("estadisticas: la venta queda atribuida al video", (len(canal), canal[0]["content"], canal[0]["compras"]), (1, "corte_01", 1))
+    check("estadisticas: lo sin utm sale como directo", any(x["source"] == "(directo)" for x in est["por_canal"]), True)
+    check("estadisticas: no cuenta pagos de prueba (cs_test_)", all(x["compras"] >= 1 for x in est["por_canal"]) and est["compras"] >= 2, True)
+    res = svc.resumen(30)
+    check("resumen del servicio: pruebas, licencias y equipos", (isinstance(res["pruebas_iniciadas"], int), "anual" in res["licencias_creadas"], res["equipos_activados"] >= 1), (True, True, True))
+
     # sin Stripe configurado las rutas no existen
     srv2 = servidor.crear_servidor(svc, "x" * 30, "127.0.0.1", 0, None)
     threading.Thread(target=srv2.serve_forever, daemon=True).start()
