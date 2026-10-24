@@ -57,6 +57,22 @@ def test_diseno():
     return d, f
 
 
+def test_limite_de_zapata():
+    """Roca a 1.50 m y solo 1.60 m perpendicular al muro: la zapata respeta el limite o dice por que no se puede."""
+    f = pa.design_fence(250, 5.0, 0.8, 1.6, total_h=2.80, wall_h=1.40, pilaster_h=3.15)
+    ex = [(f["cargas"]["N_t_m"] * f["spacing"], 0.68)]
+    d = pa.design_gate_portal(5.0, 3.45, 4.20, 250, 19.0, 1.5, 1.6, core_options=(0.45,), extra_loads=ex, footing_max_L=1.60)
+    z = d["zapata"]
+    ok(z["L"] <= 1.60 + 1e-9 and z["ok"], "la zapata respeta L <= 1.60 y pasa todas sus revisiones (L=%.2f B=%.2f)" % (z["L"], z["B"]))
+    libre = pa.design_gate_portal(5.0, 3.45, 4.20, 250, 19.0, 1.5, 1.6, core_options=(0.45,), extra_loads=ex)
+    ok(libre["zapata"]["L"] >= z["L"], "sin limite la zapata no es mas corta que con limite")
+    try:
+        pa.design_gate_portal(5.0, 3.45, 4.20, 250, 19.0, 1.5, 1.6, core_options=(0.45,), extra_loads=ex, footing_max_L=1.0)
+        ok(False, "con L <= 1.00 no hay zapata: tiene que decirlo")
+    except ValueError as e:
+        ok("anclar" in str(e), "con un limite imposible lo dice y sugiere anclar a la roca")
+
+
 def test_cantidades(d, f):
     rr = {"trabe": {"arc_length_m": 5.2, "stirrups": 36, "bar_len_inf_m": 6.4, "bar_len_sup_m": 6.7},
           "pil1": {"height_m": 5.3, "bar_len_m": 6.0, "stirrupCount": 40},
@@ -78,6 +94,7 @@ if __name__ == "__main__":
     test_geometria()
     test_zapata_contacto()
     d, f = test_diseno()
+    test_limite_de_zapata()
     test_cantidades(d, f)
     if FALLAS:
         print(f"\n{len(FALLAS)} fallas")

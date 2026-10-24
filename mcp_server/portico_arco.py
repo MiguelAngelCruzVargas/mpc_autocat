@@ -358,19 +358,28 @@ def contacto(B: float, L: float, N: float, Mx: float, My: float, n: int = 41) ->
 def tamano_zapata(n_serv_t: float, combos: list[tuple[float, float]], q_adm: float,
                   depth: float, gamma_s: float, core: float, h: float = 0.40,
                   min_contacto: float = 0.90, paso: float = 0.1,
-                  maximo: float = 5.0, max_aspecto: float = 2.0) -> dict[str, Any]:
+                  maximo: float = 5.0, max_aspecto: float = 2.0,
+                  max_L: Optional[float] = None, max_B: Optional[float] = None) -> dict[str, Any]:
     """Zapata rectangular de MENOR VOLUMEN (paso 10 cm). B va en el sentido del portón
     (donde actua el momento en el plano) y L fuera del plano (donde actua el viento o
     el sismo, que es el momento grande): una zapata larga hacia afuera del plano gasta
     menos concreto que una cuadrada. combos = [(M_en_plano, M_fuera_del_plano)] de
     servicio, t·m. Presion con CONTACTO REAL (sin tension), bruta (zapata y relleno
-    incluidos) contra q_adm, y >= min_contacto del area comprimida."""
+    incluidos) contra q_adm, y >= min_contacto del area comprimida.
+    max_L / max_B: espacio que de verdad hay para excavar (lote, calle, roca). Con un limite
+    dado la relacion de aspecto deja de ser una regla de diseno y se relaja a 4."""
     n = int(round((maximo - 1.0) / paso))
+    if max_L is not None or max_B is not None:
+        max_aspecto = max(max_aspecto, 4.0)
     mejor = None
     for kb in range(n + 1):
         B = round(1.0 + paso * kb, 2)
+        if max_B is not None and B > max_B + 1e-9:
+            break
         for kl in range(n + 1):
             L = round(1.0 + paso * kl, 2)
+            if max_L is not None and L > max_L + 1e-9:
+                break
             if mejor and B * L >= mejor["B"] * mejor["L"] - 1e-9:
                 break
             if max(B, L) / min(B, L) > max_aspecto + 1e-9:
@@ -388,8 +397,11 @@ def tamano_zapata(n_serv_t: float, combos: list[tuple[float, float]], q_adm: flo
                 mejor = {"B": B, "L": L, "h": h, "q_max": _r(peor), "contacto": _r(cont, 2), "momentos": mom}
                 break
     if mejor is None:
-        raise ValueError(f"Con q = {q_adm:.1f} t/m² no basta una zapata de {maximo:.0f} m: "
-                         f"hay que reducir los momentos o mejorar el suelo.")
+        lim = ""
+        if max_L is not None or max_B is not None:
+            lim = (f" (limitada a {'B <= %.2f ' % max_B if max_B else ''}{'L <= %.2f ' % max_L if max_L else ''}m)").replace("  ", " ")
+        raise ValueError(f"Con q = {q_adm:.1f} t/m² no basta una zapata de {maximo:.0f} m{lim}: "
+                         f"hay que reducir los momentos, mejorar el suelo o anclar la zapata a la roca.")
     return mejor
 
 
@@ -408,11 +420,15 @@ def design_gate_portal(clear_span: float, spring_h: float, crown_h: float,
                        top_ends_h: Optional[float] = None, top_crown_h: Optional[float] = None,
                        tymp_kg_m2: float = 400.0, cornisa_kg_m: float = 60.0,
                        tymp_t: float = 0.20, core_options: tuple[float, ...] = (),
-                       extra_loads: Optional[list[tuple[float, float]]] = None) -> dict[str, Any]:
+                       extra_loads: Optional[list[tuple[float, float]]] = None,
+                       footing_max_L: Optional[float] = None,
+                       footing_max_B: Optional[float] = None) -> dict[str, Any]:
     """Diseño del portico de acceso con su fronton. Devuelve geometria, esfuerzos,
     trabe, pilastra, castillos y dala del fronton y zapata, mas 'supuestos' y
     'decisions'. Sin capacidad del suelo, fc, desplante o peso del relleno rechaza
-    (no los inventa). core_options: nucleos a probar si el primero no da."""
+    (no los inventa). core_options: nucleos a probar si el primero no da.
+    footing_max_L / footing_max_B: espacio disponible para la zapata (m): L fuera del plano del
+    portico (perpendicular al muro) y B en el sentido del porton."""
     for nombre, v in (("fc", fc), ("allowable_bearing", allowable_bearing), ("depth", depth),
                       ("soil_unit_weight", soil_unit_weight)):
         if v is None or v <= 0:
@@ -460,7 +476,8 @@ def design_gate_portal(clear_span: float, spring_h: float, crown_h: float,
         elegido: dict[str, Any] = {}
         for q in sorted({3.0, 5.0, 7.5, 10.0, 15.0, float(allowable_bearing)}):
             try:
-                dim = tamano_zapata(rc["V_serv_t"], combos, q, depth, soil_unit_weight, core_)
+                dim = tamano_zapata(rc["V_serv_t"], combos, q, depth, soil_unit_weight, core_,
+                                    max_L=footing_max_L, max_B=footing_max_B)
                 sens.append({"q_t_m2": q, "B": dim["B"], "L": dim["L"], "h": dim["h"],
                              "q_max_t_m2": dim["q_max"], "contacto": dim["contacto"]})
             except ValueError:
@@ -469,8 +486,11 @@ def design_gate_portal(clear_span: float, spring_h: float, crown_h: float,
             if abs(q - allowable_bearing) < 1e-9:
                 elegido = dim
         if not elegido:
-            raise ValueError("Con ese suelo no basta una zapata de 5 m: hay que reducir los momentos o "
-                             "mejorar el suelo.")
+            lim = ""
+            if footing_max_L is not None or footing_max_B is not None:
+                lim = " y ese espacio" + (f" (L <= {footing_max_L:.2f} m)" if footing_max_L else "")
+            raise ValueError(f"Con ese suelo{lim} no basta una zapata aislada: hay que reducir los momentos, "
+                             f"mejorar el suelo o anclar la zapata a la roca.")
         mx, my = elegido["momentos"]
         zr = zap.design_footing(
             kind="aislada", dead_load=rc["V_serv_t"], live_load=0.0, allowable_bearing=1000.0, fc=fcz,
