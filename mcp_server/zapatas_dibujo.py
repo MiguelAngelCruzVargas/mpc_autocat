@@ -76,7 +76,9 @@ def draw_footing_section(z: dict[str, Any], x: float, y: float, upm: float,
                          column_stirrup_spacing: float = 0.10,
                          title: Optional[str] = None,
                          mark: str = "",
-                         text_mm: float = 2.0) -> dict[str, Any]:
+                         text_mm: float = 2.0,
+                         roca: bool = False,
+                         roca_espesor: float = 0.40) -> dict[str, Any]:
     """Corte de una zapata bajo columna ('aislada', 'lindero', 'esquina').
 
     (x, y): x = eje de la columna, y = nivel del terreno natural (N.T.N.).
@@ -85,6 +87,10 @@ def draw_footing_section(z: dict[str, Any], x: float, y: float, upm: float,
     slope: talud de la excavación, horizontal por unidad vertical.
     soil_band: ancho de la franja de terreno achurada a lo largo del corte.
     soil_extend: cuánto sigue el terreno más allá del borde de excavación.
+    roca: la zapata se apoya sobre roca (desplante = profundidad de la roca):
+        el terreno natural llega hasta el fondo de excavación y debajo va el
+        estrato de roca, en vez de una franja de tierra bajo la zapata.
+    roca_espesor: espesor dibujado del estrato de roca, m.
     """
     if z.get("kind") not in ("aislada", "lindero", "esquina", "corrida"):
         raise ValueError("draw_footing_section dibuja zapatas bajo columna o corridas; "
@@ -92,7 +98,8 @@ def draw_footing_section(z: dict[str, Any], x: float, y: float, upm: float,
     _capas()
     with acad.lote():
         r = _corte(z, x, y, upm, column_above, working_space, slope, soil_band,
-                   soil_extend, column_cover, column_stirrup_spacing, title, mark, text_mm)
+                   soil_extend, column_cover, column_stirrup_spacing, title, mark, text_mm,
+                   roca, roca_espesor)
     r = acad.resolver(r)
     r["batchErrors"] = list(acad.LOTE_ERRORES)
     acad.LOTE_ERRORES.clear()
@@ -100,7 +107,8 @@ def draw_footing_section(z: dict[str, Any], x: float, y: float, upm: float,
 
 
 def _corte(z, x, y, upm, column_above, working_space, slope, soil_band, soil_extend,
-           column_cover, column_stirrup_spacing, title, mark, text_mm):
+           column_cover, column_stirrup_spacing, title, mark, text_mm,
+           roca=False, roca_espesor=0.40):
     sp = z["specs"]
     muro = z["kind"] == "corrida"
     gb = z.get("grade_beam") if muro else None
@@ -138,14 +146,26 @@ def _corte(z, x, y, upm, column_above, working_space, slope, soil_band, soil_ext
         [(ex_l1, y), (ex_l0, y_exc), (ex_r0, y_exc), (ex_r1, y), (X_R, y)]
     if colind:
         corte = [(xl, y + 0.0), (xl, y_exc), (ex_r0, y_exc), (ex_r1, y), (X_R, y)]
-    franja = dt.offset_open(corte, soil_band)
-    # El borde de afuera de la franja, irregular: se lee como tierra cortada.
-    borde = []
-    for a, b in zip(franja, franja[1:]):
-        borde += dt.jagged_points(a, b, upm, amp_mm=1.2, step_mm=3.0,
-                                  seed=int(abs(a[0] * 100)) % 97)[:-1]
-    borde.append(franja[-1])
-    _achurar(corte + list(reversed(borde)), "tierra", upm)
+    if roca:
+        # Sobre roca: el terreno natural es una masa a cada lado de la
+        # excavación, de la superficie a la roca; el estrato de roca va debajo.
+        lados = ([] if colind else [[(X_L, y), (ex_l1, y), (ex_l0, y_exc), (X_L, y_exc)]]) +             [[(ex_r1, y), (X_R, y), (X_R, y_exc), (ex_r0, y_exc)]]
+        for masa in lados:
+            _achurar(masa, "tierra", upm)
+        xr0 = xl - 0.10 if colind else X_L
+        _rock = _rect(xr0, y_exc - roca_espesor, X_R, y_exc)
+        mat_mod.draw_material(_rock, "roca", layer=L_TERR, scale=upm, lineweight=25)
+        y_roca_fondo = y_exc - roca_espesor
+    else:
+        franja = dt.offset_open(corte, soil_band)
+        # El borde de afuera de la franja, irregular: se lee como tierra cortada.
+        borde = []
+        for a, b in zip(franja, franja[1:]):
+            borde += dt.jagged_points(a, b, upm, amp_mm=1.2, step_mm=3.0,
+                                      seed=int(abs(a[0] * 100)) % 97)[:-1]
+        borde.append(franja[-1])
+        _achurar(corte + list(reversed(borde)), "tierra", upm)
+        y_roca_fondo = y_exc
     # El corte (talud y fondo de excavación) y el terreno natural.
     dt._poly([(ex_l1, y), (ex_l0, y_exc), (ex_r0, y_exc), (ex_r1, y)], L_TERR, 25)
     if not colind:
@@ -296,7 +316,7 @@ def _corte(z, x, y, upm, column_above, working_space, slope, soil_band, soil_ext
     dt.dimension((xl + cov, y_bx), (xl + cov, y_bx + gancho),
                  (xl - 4 * upm, y_bx + gancho / 2), upm, angle=90)
     # Abajo: volados + columna, y el total.
-    y_inf = min(y_exc - soil_band, y_exc) - 6 * upm
+    y_inf = (y_roca_fondo if roca else min(y_exc - soil_band, y_exc)) - 6 * upm
     cortes = sorted({round(v, 4) for v in (xl, x - a1 / 2, x + a1 / 2, xr)})
     for a, b in zip(cortes, cortes[1:]):
         dt.dimension((a, y_exc), (b, y_exc), ((a + b) / 2, y_inf), upm,
@@ -318,6 +338,10 @@ def _corte(z, x, y, upm, column_above, working_space, slope, soil_band, soil_ext
         ((xd - min(0.1, (xr - xar) * 0.2), (y_exc + y_fb) / 2), sp["plantilla"]),
         (((xr + ex_r0) / 2, y_exc), sp["fondo"]),
     ]
+    if roca:
+        comunes[-1] = (((xr + ex_r0) / 2, y_exc),
+                       "SUPERFICIE DE ROCA LIMPIA, LAVADA Y NIVELADA (SIN ROMPER LA ROCA)")
+        comunes.append(((X_R - 0.10, y_exc - roca_espesor * 0.5), "ROCA DE APOYO (VER E.M.S.)"))
     if muro:
         nombre_muro = ("MURO DE BLOCK" if z.get("wall_material") == "mamposteria"
                        else "MURO DE CONCRETO") + f" e={c1 * 100:.0f} cm"
@@ -477,18 +501,29 @@ def _planta(z, x, y, upm, axis_x, axis_y, section_label, title, mark, text_mm):
     dt._poly([(xb_, y0 + cov), (xb_, y1 - cov)], L_ARM, 35, width=by["db"])
     for ye in (y0 + cov, y1 - cov):
         dt.dot(xb_, ye, by["db"] * 0.9, L_ARM, 7)
-    dt.text(f"{bx['bar']} @ {bx['spacing'] * 100:.0f} (X) L={B - 2 * cov:.2f}+GANCHOS",
-            xb_ + 0.06, yb + bx["db"] + 0.6 * h, h)
+    # Rótulos de la barra tipo: completos si caben en la zapata; si es corta
+    # van sin el largo (el largo sale en el cuadro de zapatas) para no
+    # salirse ni cruzarse con las líneas de reparto.
+    txt_x = f"{bx['bar']} @ {bx['spacing'] * 100:.0f} (X) L={B - 2 * cov:.2f}+GANCHOS"
+    if dt.text_width(txt_x, h) > (x1 - cov) - (xb_ + 0.06) - 0.05:
+        txt_x = f"{bx['bar']} @ {bx['spacing'] * 100:.0f} (X)"
+    y_tx = yb + bx["db"] + 0.6 * h
+    if y_tx + h > y1 - 0.03:                 # la barra está pegada al borde: el texto va debajo
+        y_tx = yb - bx["db"] - 1.6 * h
+    dt.text(txt_x, xb_ + 0.06, y_tx, h)
     y_txt_y = (y_cara + sg_y * vy * 0.10) if arriba else (y0 + cov + 0.08)
-    dt.text(f"{by['bar']} @ {by['spacing'] * 100:.0f} (Y) L={L - 2 * cov:.2f}+GANCHOS",
-            xb_ - by["db"] - 0.6 * h, y_txt_y, h, rotation=90)
+    txt_y = f"{by['bar']} @ {by['spacing'] * 100:.0f} (Y) L={L - 2 * cov:.2f}+GANCHOS"
+    y_libre = ((y1 - cov) - y_txt_y) if arriba else ((y_cara - sg_y * 0.0) - y_txt_y)
+    if dt.text_width(txt_y, h) > y_libre - 0.10:
+        txt_y = f"{by['bar']} @ {by['spacing'] * 100:.0f} (Y)"
+    dt.text(txt_y, xb_ - by["db"] - 0.6 * h, y_txt_y, h, rotation=90)
     xd = x_cara + sg_x * vx * 0.70
     distribution_line((xd, ys_x[0]), (xd, ys_x[-1]), upm,
                       f"{len(ys_x)} VARS. {bx['bar']}", side=-1)
     yd = y_cara + sg_y * vy * 0.45
     distribution_line((xs_y[0], yd), (xs_y[-1], yd), upm,
                       f"{len(xs_y)} VARS. {by['bar']}", side=1,
-                      at=0.75 if derecha else 0.25)
+                      at=(0.25 if derecha else 0.75) if (x1 - x0) < 3.2 else (0.75 if derecha else 0.25))
 
     # Colindancia: el límite de propiedad sobre la cara de la zapata.
     lados_col = [o < 1e-6 for o in (izq, der, aba, arr)]

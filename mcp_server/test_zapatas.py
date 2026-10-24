@@ -185,6 +185,20 @@ def test_dibujo_de_cada_tipo() -> None:
         check(f"{nombre}: caja del corte con sentido", b[2] > b[0] and b[3] > b[1], b)
 
 
+def test_corte_sobre_roca() -> None:
+    preview.DRAWN.clear()
+    space.clear()
+    acad.LOTE_ERRORES.clear()
+    space.set_scale(0.025)
+    z = zapatas.design_footing(mark="Z-1", **TIPOS["aislada"])
+    c = zapatas_dibujo.draw_footing_section(z, 0.0, 0.0, 0.025, roca=True)
+    check("sobre roca: sin errores de lote", not c["batchErrors"])
+    textos = " ".join(str(e.get("text", "")) for e in preview.DRAWN)
+    check("sobre roca: rotula la superficie y el estrato de roca",
+          "ROCA LIMPIA" in textos and "ROCA DE APOYO" in textos)
+    check("sobre roca: la caja baja hasta el estrato", c["box"][1] < -z["depth"] - z["lean_concrete"] - 0.4, c["box"])
+
+
 def test_cuadros() -> None:
     preview.DRAWN.clear()
     space.clear()

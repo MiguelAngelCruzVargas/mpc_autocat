@@ -73,6 +73,24 @@ def test_limite_de_zapata():
         ok("anclar" in str(e), "con un limite imposible lo dice y sugiere anclar a la roca")
 
 
+def test_cantidades_roca():
+    """Sobre roca la excavacion es en el suelo que la cubre y se agrega la limpieza de la roca."""
+    f = pa.design_fence(250, 5.0, 0.8, 1.6, total_h=2.80, wall_h=1.40, pilaster_h=3.15)
+    ex = [(f["cargas"]["N_t_m"] * f["spacing"], 0.68)]
+    d = pa.design_gate_portal(5.0, 3.45, 4.20, 250, 19.0, 1.5, 1.6, core_options=(0.45,), extra_loads=ex, footing_max_L=1.60)
+    rr = {"trabe": {"arc_length_m": 5.2, "stirrups": 36, "bar_len_inf_m": 6.4, "bar_len_sup_m": 6.7},
+          "pil1": {"height_m": 5.6, "bar_len_m": 6.0, "stirrupCount": 40},
+          "pil2": {"height_m": 3.7, "pata_m": 0.3, "stirrupCount": 35}, "fronton_h": 0.8, "dala_len": 7.2}
+    q = pc.cantidades(d, f, rr, 1.5, 0.8, bays=3, roca=True)
+    c = [i["concept"] for i in q["items"]]
+    ok(any("hasta la roca de apoyo" in x for x in c) and not any("arcilloso" in x for x in c), "la excavacion dice que llega a la roca")
+    ok(any("Limpieza, lavado y nivelación de la roca" in x for x in c), "agrega la limpieza de la roca de apoyo")
+    area = [i["qty"] for i in q["items"] if "Limpieza" in i["concept"]][0]
+    ok(abs(area - 2 * d["zapata"]["B"] * d["zapata"]["L"]) < 0.01, "la limpieza mide el area de las 2 zapatas")
+    q0 = pc.cantidades(d, f, rr, 1.5, 0.8, bays=3)
+    ok(any("arcilloso" in i["concept"] for i in q0["items"]), "sin roca=True sigue como antes")
+
+
 def test_cantidades(d, f):
     rr = {"trabe": {"arc_length_m": 5.2, "stirrups": 36, "bar_len_inf_m": 6.4, "bar_len_sup_m": 6.7},
           "pil1": {"height_m": 5.3, "bar_len_m": 6.0, "stirrupCount": 40},
@@ -95,6 +113,7 @@ if __name__ == "__main__":
     test_zapata_contacto()
     d, f = test_diseno()
     test_limite_de_zapata()
+    test_cantidades_roca()
     test_cantidades(d, f)
     if FALLAS:
         print(f"\n{len(FALLAS)} fallas")

@@ -46,8 +46,10 @@ def _est_len(b: float, h: float, cover: float, db_e: float) -> float:
 
 
 def cantidades(d: dict[str, Any], f: dict[str, Any], r: dict[str, Any], depth_portico: float,
-               depth_barda: float, bays: int = 3) -> dict[str, Any]:
-    """r: resultados de los dibujos: trabe, pil1, pil2, fronton_h, dala_len."""
+               depth_barda: float, bays: int = 3, roca: bool = False) -> dict[str, Any]:
+    """r: resultados de los dibujos: trabe, pil1, pil2, fronton_h, dala_len.
+    roca=True: las zapatas del portico se apoyan sobre roca a `depth_portico`: la excavacion es en el
+    suelo que la cubre (no se rompe la roca) y se agrega la limpieza y nivelacion de la superficie."""
     g, v, fr = d["geometria"], d["viga"], d["fronton"]
     z, zc = d["zapata"], f["cimentacion"]
     P1, Pd = d["pilastra_terminada"], d["pilastra_prof"]
@@ -79,7 +81,12 @@ def cantidades(d: dict[str, Any], f: dict[str, Any], r: dict[str, Any], depth_po
     if lg:
         exc += (lg["b"] + 0.6) * Ltl * 0.60                              # trabe de liga: fondo a 0.60 m
     G = "CIMENTACIÓN"
-    it(G, "Excavación a mano en terreno arcilloso (con 30 cm de holgura de trabajo por lado)", "m³", exc)
+    if roca:
+        it(G, f"Excavación a mano en el suelo hasta la roca de apoyo, a {depth_portico:.2f} m (con 30 cm de holgura de trabajo por lado)",
+           "m³", exc)
+        it(G, "Limpieza, lavado y nivelación de la roca bajo las 2 zapatas Z-1", "m²", 2 * B * Lz)
+    else:
+        it(G, "Excavación a mano en terreno arcilloso (con 30 cm de holgura de trabajo por lado)", "m³", exc)
     it(G, "Plantilla de concreto pobre f'c = 100 kg/cm², e = 5 cm", "m³", 2 * B * Lz * 0.05 + Bc * L_corrida * 0.05,
        mix="concreto_100")
     it(G, f"Concreto f'c = 250 kg/cm² en zapatas Z-1 ({B:.2f} x {Lz:.2f} x {hz:.2f}), 2 piezas", "m³",

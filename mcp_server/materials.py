@@ -130,6 +130,10 @@ MATERIALS: dict[str, dict[str, Any]] = {
     "mamposteria": {
         "label": "MAMPOSTERIA DE PIEDRA", "procedural": "stones",
         "shape": "angulosa", "coverage": 0.80, "lineweight": LW_CUT},
+    "roca": {
+        # Roca de apoyo cortada: bloques angulosos casi sin junta.
+        "label": "ROCA", "procedural": "stones", "shape": "angulosa",
+        "coverage": 0.90, "lineweight": LW_CUT},
     "ciclopeo": {
         # Concreto con piedra bola embebida: textura de concreto y piedras
         # sueltas, al 35% -- es un concreto con piedra, no un relleno.
@@ -149,6 +153,7 @@ ALIASES = {
     "gravel": "grava", "sand": "arena", "steel": "acero",
     "piedra": "piedra_bola", "canto_rodado": "piedra_bola",
     "piedra_braza": "mamposteria", "stone": "mamposteria",
+    "rock": "roca", "roca_sana": "roca",
 }
 
 
