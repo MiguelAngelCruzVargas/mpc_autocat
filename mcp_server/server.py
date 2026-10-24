@@ -4485,6 +4485,27 @@ def export_concept_catalog(result: dict[str, Any], path: str,
 
 
 @mcp.tool()
+def export_portico_report(design_path: str, quantities_path: str, out_dir: str, project: str = "",
+                          project_notes: Optional[list[str]] = None,
+                          compare: Optional[dict[str, str]] = None) -> dict[str, Any]:
+    """MEMORIA DE CÁLCULO (.md) y LIBRO DE CANTIDADES (.xlsx) del pórtico y la barda, generados DESDE el diseño:
+    los mismos archivos de entrada dan SIEMPRE los mismos dos archivos de salida. Cada número sale del diseño
+    y de las cantidades; cada revisión que no cumple (volteo, cortante, flexión, peralte mínimo, interacción
+    carga-momento...) sale con su demanda, su capacidad y NO CUMPLE, y la memoria abre con el aviso.
+
+    design_path: JSON {"d": design_gate_portal, "f": design_fence} (el que dejan los scripts del proyecto).
+    quantities_path: JSON de portico_cuadros.cantidades.
+    out_dir: carpeta de salida ('Memoria de calculo.md' y 'Calculos y cantidades.xlsx').
+    project: nombre para los títulos. project_notes: líneas extra para 'Supuestos' (datos del cliente).
+    compare: {etiqueta: ruta de otras cantidades} para listar la alternativa en el resumen.
+    El Excel trae Elementos, Cantidades (P.U. en celdas amarillas, importe y total formulados), Acero,
+    Materiales, Diseño, Revisión y Supuestos. Devuelve las rutas y la lista 'no_cumplen'."""
+    import portico_reporte
+    return portico_reporte.exportar(design_path, quantities_path, out_dir, project,
+                                    notas_proyecto=project_notes, comparar=compare)
+
+
+@mcp.tool()
 def get_drawing_info() -> dict[str, Any]:
     """Info general del dibujo activo: nombre de archivo, unidades, capa actual,
     cantidad de entidades en el espacio modelo."""
@@ -4588,6 +4609,23 @@ def list_layouts() -> dict[str, Any]:
 def set_current_layout(name: str) -> dict[str, Any]:
     """Cambia la pestaña activa a ese layout (o 'Model' para el espacio modelo)."""
     return acad.call("set_current_layout", {"name": name})
+
+
+@mcp.tool()
+def refit_viewport(layout: str, min_x: float, min_y: float, max_x: float, max_y: float,
+                   handle: Optional[str] = None, scale_denominator: Optional[float] = None,
+                   model_units_per_mm: Optional[float] = None, resize: str = "grow",
+                   margin: float = 0.25) -> dict[str, Any]:
+    """REENCUADRA el viewport de una lámina sobre una caja del MODELO: se usa cuando un detalle se redibujó y
+    su viewport quedó cortando el dibujo o mostrando el de al lado. El centro de la vista va al centro de la
+    caja (min_x..max_y, unidades del modelo); la escala no cambia salvo que se pasen scale_denominator Y
+    model_units_per_mm (1000 dibujando en metros). resize: 'none' deja el tamaño, 'grow' lo agranda solo si la
+    caja no entra (nunca lo achica), 'fit' lo ajusta a la caja más 'margin'. Sin 'handle' elige el viewport
+    que ya cubría esa zona; si hay duda, lo dice. El viewport vuelve a quedar bloqueado y el layout activo
+    vuelve al de antes. Devuelve antes, después y si la caja entra ('caja_entra')."""
+    import viewport_ajuste
+    return viewport_ajuste.refit_viewport(layout, [min_x, min_y, max_x, max_y], handle, scale_denominator,
+                                          model_units_per_mm, resize, margin)
 
 
 @mcp.tool()

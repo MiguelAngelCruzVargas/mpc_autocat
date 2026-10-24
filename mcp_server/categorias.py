@@ -209,7 +209,7 @@ _r("modelado3d", "convert_mesh", "CONVTOSOLID CONVTOSURFACE")
 # ---- láminas e impresión
 _r("layouts", "create_layout", "LAYOUT")
 _r("layouts", "list_layouts set_current_layout delete_layout rename_layout copy_layout", "")
-_r("layouts", "create_viewport", "MVIEW")
+_r("layouts", "create_viewport refit_viewport", "MVIEW")
 _r("layouts", "configure_layout list_plot_options", "PAGESETUP")
 _r("layouts", "export_pdf", "EXPORTPDF PLOT")
 _r("layouts", "compose_layout compose_sheet")
@@ -265,6 +265,7 @@ _r("p_3d", "create_3d_model dress_3d_model create_phone_3d")
 # ---- proyecto: cierre y entrega
 _r("p_entrega", "check_all check_sheet check_annotations check_view_titles check_drawing_hygiene check_office_standard")
 _r("p_entrega", "package_deliverables")
+_r("p_entrega", "export_portico_report")
 
 
 # ------------------------------------------------------------------ flujos de trabajo por tipo de proyecto
