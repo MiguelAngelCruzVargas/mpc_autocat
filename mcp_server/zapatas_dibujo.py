@@ -461,13 +461,16 @@ def _planta(z, x, y, upm, axis_x, axis_y, section_label, title, mark, text_mm):
 
     # Parrilla: TODAS las barras finas (se ve la malla sin tapar nada) y una
     # barra tipo por dirección a su diámetro, que es la que se rotula.
-    def reparto(a, b, s, db):
+    def reparto(a, b, s, db, n=None):
+        if n:       # el diseño dice cuántas barras y a qué separación: centradas, a esa separación
+            mid = (a + b) / 2
+            return [mid + (i - (n - 1) / 2) * s for i in range(n)]
         n = max(2, int(round((b - a - db) / s)) + 1)
         paso = (b - a - db) / (n - 1)
         return [a + db / 2 + i * paso for i in range(n)]
 
-    ys_x = reparto(y0 + cov, y1 - cov, bx["spacing"], bx["db"])
-    xs_y = reparto(x0 + cov, x1 - cov, by["spacing"], by["db"])
+    ys_x = reparto(y0 + cov, y1 - cov, bx["spacing"], bx["db"], bx.get("count"))
+    xs_y = reparto(x0 + cov, x1 - cov, by["spacing"], by["db"], by.get("count"))
     for yy in ys_x:
         dt._poly([(x0 + cov, yy), (x1 - cov, yy)], L_GRAF, 13, color=8)
     for xx in xs_y:
@@ -501,29 +504,33 @@ def _planta(z, x, y, upm, axis_x, axis_y, section_label, title, mark, text_mm):
     dt._poly([(xb_, y0 + cov), (xb_, y1 - cov)], L_ARM, 35, width=by["db"])
     for ye in (y0 + cov, y1 - cov):
         dt.dot(xb_, ye, by["db"] * 0.9, L_ARM, 7)
-    # Rótulos de la barra tipo: completos si caben en la zapata; si es corta
-    # van sin el largo (el largo sale en el cuadro de zapatas) para no
-    # salirse ni cruzarse con las líneas de reparto.
-    txt_x = f"{bx['bar']} @ {bx['spacing'] * 100:.0f} (X) L={B - 2 * cov:.2f}+GANCHOS"
-    if dt.text_width(txt_x, h) > (x1 - cov) - (xb_ + 0.06) - 0.05:
-        txt_x = f"{bx['bar']} @ {bx['spacing'] * 100:.0f} (X)"
-    y_tx = yb + bx["db"] + 0.6 * h
-    if y_tx + h > y1 - 0.03:                 # la barra está pegada al borde: el texto va debajo
-        y_tx = yb - bx["db"] - 1.6 * h
-    dt.text(txt_x, xb_ + 0.06, y_tx, h)
-    y_txt_y = (y_cara + sg_y * vy * 0.10) if arriba else (y0 + cov + 0.08)
-    txt_y = f"{by['bar']} @ {by['spacing'] * 100:.0f} (Y) L={L - 2 * cov:.2f}+GANCHOS"
-    y_libre = ((y1 - cov) - y_txt_y) if arriba else ((y_cara - sg_y * 0.0) - y_txt_y)
-    if dt.text_width(txt_y, h) > y_libre - 0.10:
-        txt_y = f"{by['bar']} @ {by['spacing'] * 100:.0f} (Y)"
-    dt.text(txt_y, xb_ - by["db"] - 0.6 * h, y_txt_y, h, rotation=90)
-    xd = x_cara + sg_x * vx * 0.70
-    distribution_line((xd, ys_x[0]), (xd, ys_x[-1]), upm,
-                      f"{len(ys_x)} VARS. {bx['bar']}", side=-1)
-    yd = y_cara + sg_y * vy * 0.45
-    distribution_line((xs_y[0], yd), (xs_y[-1], yd), upm,
-                      f"{len(xs_y)} VARS. {by['bar']}", side=1,
-                      at=(0.25 if derecha else 0.75) if (x1 - x0) < 3.2 else (0.75 if derecha else 0.25))
+    chico = (x1 - x0) < 1.6      # zapata chica: los rótulos no caben sobre la parrilla; van en una leyenda abajo
+    if chico:
+        pass
+    else:
+        # Rótulos de la barra tipo: completos si caben en la zapata; si es corta
+        # van sin el largo (el largo sale en el cuadro de zapatas) para no
+        # salirse ni cruzarse con las líneas de reparto.
+        txt_x = f"{bx['bar']} @ {bx['spacing'] * 100:.0f} (X) L={B - 2 * cov:.2f}+GANCHOS"
+        if dt.text_width(txt_x, h) > (x1 - cov) - (xb_ + 0.06) - 0.05:
+            txt_x = f"{bx['bar']} @ {bx['spacing'] * 100:.0f} (X)"
+        y_tx = yb + bx["db"] + 0.6 * h
+        if y_tx + h > y1 - 0.03:                 # la barra está pegada al borde: el texto va debajo
+            y_tx = yb - bx["db"] - 1.6 * h
+        dt.text(txt_x, xb_ + 0.06, y_tx, h)
+        y_txt_y = (y_cara + sg_y * vy * 0.10) if arriba else (y0 + cov + 0.08)
+        txt_y = f"{by['bar']} @ {by['spacing'] * 100:.0f} (Y) L={L - 2 * cov:.2f}+GANCHOS"
+        y_libre = ((y1 - cov) - y_txt_y) if arriba else ((y_cara - sg_y * 0.0) - y_txt_y)
+        if dt.text_width(txt_y, h) > y_libre - 0.10:
+            txt_y = f"{by['bar']} @ {by['spacing'] * 100:.0f} (Y)"
+        dt.text(txt_y, xb_ - by["db"] - 0.6 * h, y_txt_y, h, rotation=90)
+        xd = x_cara + sg_x * vx * 0.70
+        distribution_line((xd, ys_x[0]), (xd, ys_x[-1]), upm,
+                          f"{len(ys_x)} VARS. {bx['bar']}", side=-1)
+        yd = y_cara + sg_y * vy * 0.45
+        distribution_line((xs_y[0], yd), (xs_y[-1], yd), upm,
+                          f"{len(xs_y)} VARS. {by['bar']}", side=1,
+                          at=(0.25 if derecha else 0.75) if (x1 - x0) < 3.2 else (0.75 if derecha else 0.25))
 
     # Colindancia: el límite de propiedad sobre la cara de la zapata.
     lados_col = [o < 1e-6 for o in (izq, der, aba, arr)]
@@ -552,8 +559,17 @@ def _planta(z, x, y, upm, axis_x, axis_y, section_label, title, mark, text_mm):
 
     dt.chain([x0, x - a1 / 2, x + a1 / 2, x1], "bottom", y0 - 0.20, upm)
     dt.chain([y0, y - a2 / 2, y + a2 / 2, y1], "right", x1 + 0.40, upm)
+    if chico:
+        yl = y0 - 0.78
+        dt.text(f"BARRA TIPO X: {bx['bar']} @ {bx['spacing'] * 100:.0f} cm, {len(ys_x)} VARS., L = {B - 2 * cov:.2f} m + GANCHOS",
+                x0, yl, h)
+        dt.text(f"BARRA TIPO Y: {by['bar']} @ {by['spacing'] * 100:.0f} cm, {len(xs_y)} VARS., L = {L - 2 * cov:.2f} m + GANCHOS",
+                x0, yl - 1.8 * h, h)
     # Nombre de la zapata en el volado de arriba a la izquierda.
-    dt.text(z["mark"], x0 + 0.10, y1 - 0.12 - h * 1.6, h * 1.6, lw=35)
+    if (x1 - x0) < 1.6:      # zapata chica: el nombre va arriba del borde, fuera de la parrilla
+        dt.text(z["mark"], x0, y1 + 0.08, h * 1.6, lw=35)
+    else:
+        dt.text(z["mark"], x0 + 0.10, y1 - 0.12 - h * 1.6, h * 1.6, lw=35)
 
     tit = title or f"PLANTA {z['mark']}"
     t = sym_mod.create_view_title(x0 - 0.45, y1 + ext + 22 * upm, tit,

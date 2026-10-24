@@ -155,8 +155,9 @@ def armado_pilastra(d: dict[str, Any], x: float, y_piso: float, upm: float, fc: 
     _capas()
     g, p, z = d["geometria"], d["pilastra"], d["zapata"]
     core = d["nucleo"]
-    y_zap_sup = y_piso - (z["depth"] - z["h"] - 0.05 + 0.05) + 0.0 - 0.0
-    y_zap_sup = y_piso - z["depth"] + z["h"] + 0.05             # cara superior de la zapata (sobre plantilla)
+    ped = z.get("pedestal")
+    # cara superior de la zapata: el desplante llega al FONDO de la zapata (igual que su corte)
+    y_zap_sup = y_piso - z["depth"] + z["h"] + (0.0 if ped else 0.05)
     y_top = y_piso + y_nucleo_top(g, d)
     H = y_top - y_zap_sup
     db = _db(p["bars"]["bar"])
@@ -173,7 +174,14 @@ def armado_pilastra(d: dict[str, Any], x: float, y_piso: float, upm: float, fc: 
         confinement_length=p["stirrups"]["conf_length"], confinement_spacing=p["stirrups"]["conf_spacing"])
     with acad.lote():
         # cara superior de la zapata y N.T.N.
-        prim.line((x - 0.9, y_zap_sup), (x + 0.9, y_zap_sup), L_CON, 35)
+        if ped:
+            # zapata y dado (más ancho que el núcleo) desde la zapata hasta el N.T.N.
+            prim.poly([(x - z["B"] / 2, y_zap_sup - z["h"]), (x + z["B"] / 2, y_zap_sup - z["h"]),
+                       (x + z["B"] / 2, y_zap_sup), (x - z["B"] / 2, y_zap_sup)], L_CON, True, 35)
+            prim.poly([(x - ped[0] / 2, y_zap_sup), (x - ped[0] / 2, y_piso), (x + ped[0] / 2, y_piso),
+                       (x + ped[0] / 2, y_zap_sup)], L_CON, False, 35)
+        else:
+            prim.line((x - 0.9, y_zap_sup), (x + 0.9, y_zap_sup), L_CON, 35)
         prim.line((x - 0.9, y_piso), (x + 0.9, y_piso), L_CON, 25)
         # patas de las barras dentro de la zapata
         for xb in (xe + 0.04 + db / 2, xe + core - 0.04 - db / 2):
@@ -181,7 +189,7 @@ def armado_pilastra(d: dict[str, Any], x: float, y_piso: float, upm: float, fc: 
             prim.poly([(xb, y_zap_sup + 0.05), (xb, y_zap_sup - z["h"] + 0.075 + db / 2 + 0.02),
                        (xb + lado * gancho_pie, y_zap_sup - z["h"] + 0.075 + db / 2 + 0.02)],
                       LAYER_ARMADO, False, LW_ARMADO)
-        prim.line((x - 0.9, y_zap_sup - z["h"] - 0.05), (x + 0.9, y_zap_sup - z["h"] - 0.05), L_OCU, 13)
+        prim.line((x - 0.9, y_zap_sup - z["h"] - (0.0 if ped else 0.05)), (x + 0.9, y_zap_sup - z["h"] - (0.0 if ped else 0.05)), L_OCU, 13)
         # eje
         prim.line((x, y_zap_sup - 0.6), (x, y_top + 0.4), L_EJE, 13)
     # corte B-B a la derecha: caja de block 90 x 60 con el nucleo de concreto al centro
@@ -206,6 +214,9 @@ def armado_pilastra(d: dict[str, Any], x: float, y_piso: float, upm: float, fc: 
              ((xe + core - 0.05, y_top - 0.20),
               f"@ {p['stirrups']['conf_spacing'] * 100:.0f} cm EN {p['stirrups']['conf_length']:.2f} m DE CADA EXTREMO"),
              ((xe + core / 2, y_zap_sup + 0.10), f"PATAS DE {gancho_pie * 100:.0f} cm EN LA ZAPATA")]
+    if ped:
+        items.append(((x - ped[0] / 2, (y_zap_sup + y_piso) / 2),
+                      f"DADO {ped[0] * 100:.0f}x{ped[1] * 100:.0f} DE CONCRETO, h = {y_piso - y_zap_sup:.2f} m"))
     dt.callouts(items, "left", xe - 0.05, upm, text_mm=2.0)
     ann.create_dimension_chain(positions=[y_zap_sup, y_piso, y_piso + g["spring_h"], y_top], side="right",
                                reference=xe + core + 0.02, scale=upm)

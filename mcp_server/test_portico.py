@@ -91,6 +91,26 @@ def test_cantidades_roca():
     ok(any("arcilloso" in i["concept"] for i in q0["items"]), "sin roca=True sigue como antes")
 
 
+def test_cantidades_dado_y_liga():
+    """Con dado en la zapata y liga a lo largo de la barda se cuentan el dado y la liga completa."""
+    f = pa.design_fence(250, 5.0, 0.8, 1.6, total_h=2.80, wall_h=1.40, pilaster_h=3.15)
+    ex = [(f["cargas"]["N_t_m"] * f["spacing"], 0.68)]
+    d = pa.design_gate_portal(5.0, 3.45, 4.20, 250, 19.0, 1.5, 1.6, core_options=(0.45,), extra_loads=ex, footing_max_L=1.60)
+    d["zapata"]["pedestal"], d["zapata"]["pedestal_height"] = [0.5, 0.5], 1.3
+    d["liga"] = {"b": 0.20, "h": 0.40, "bars": {"count": 4, "bar": "#3"}, "stirrup": "#2", "stirrup_spacing": 0.20,
+                 "a_lo_largo": True}
+    rr = {"trabe": {"arc_length_m": 5.2, "stirrups": 36, "bar_len_inf_m": 6.4, "bar_len_sup_m": 6.7},
+          "pil1": {"height_m": 6.1, "bar_len_m": 6.5, "stirrupCount": 46},
+          "pil2": {"height_m": 3.7, "pata_m": 0.3, "stirrupCount": 35}, "fronton_h": 0.8, "dala_len": 7.2}
+    q = pc.cantidades(d, f, rr, 1.5, 0.8, bays=3, roca=True)
+    por = {i["concept"]: i for i in q["items"]}
+    dado = [i for c, i in por.items() if "dados de las zapatas" in c and i["unit"] == "m³"]
+    ok(dado and abs(dado[0]["qty"] - 2 * 0.5 * 0.5 * 1.3) < 0.01, "cuenta el concreto de los dos dados")
+    liga = [i for c, i in por.items() if "trabe de liga TL-1" in c and i["unit"] == "m³"]
+    ok(liga and liga[0]["qty"] > 0.20 * 0.40 * 15.0, "la liga mide el largo de toda la barda, no solo el claro del portón")
+    ok(any("hasta la última pilastra" in c for c in por), "el concepto de la liga dice hasta donde llega")
+
+
 def test_cantidades(d, f):
     rr = {"trabe": {"arc_length_m": 5.2, "stirrups": 36, "bar_len_inf_m": 6.4, "bar_len_sup_m": 6.7},
           "pil1": {"height_m": 5.3, "bar_len_m": 6.0, "stirrupCount": 40},
@@ -114,6 +134,7 @@ if __name__ == "__main__":
     d, f = test_diseno()
     test_limite_de_zapata()
     test_cantidades_roca()
+    test_cantidades_dado_y_liga()
     test_cantidades(d, f)
     if FALLAS:
         print(f"\n{len(FALLAS)} fallas")

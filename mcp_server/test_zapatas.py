@@ -185,6 +185,19 @@ def test_dibujo_de_cada_tipo() -> None:
         check(f"{nombre}: caja del corte con sentido", b[2] > b[0] and b[3] > b[1], b)
 
 
+def test_peralte_impuesto() -> None:
+    z = zapatas.design_footing(kind="aislada", dead_load=8.81, live_load=0.0, allowable_bearing=1000.0, fc=250, depth=1.5,
+                               column=[0.4, 0.4], soil_unit_weight=1.6, code="NTC", moment_x=1.37, moment_y=5.7,
+                               tie_beam=False, width=1.2, length=1.2, min_thickness=0.20, pedestal=[0.5, 0.5],
+                               pedestal_height=1.3, column_bar="#4", column_bar_count=8, bars=("#3",), fixed_thickness=True)
+    check("peralte impuesto: no sube el peralte", abs(z["h"] - 0.20) < 1e-9, z["h"])
+    check("peralte impuesto: la parrilla es de #3", z["bars_x"]["bar"] == "#3" and z["bars_y"]["bar"] == "#3")
+    check("peralte impuesto: lo que no cumple sale con ok=False",
+          not z["checks"]["cortante_x"]["ok"] and not z["checks"]["peralte_minimo"]["ok"] and not z["ok"])
+    check("peralte impuesto: la flexion dice cuanto acero falta",
+          z["checks"]["flexion_x"]["As_req_cm2"] > z["checks"]["flexion_x"]["As_cm2"])
+
+
 def test_corte_sobre_roca() -> None:
     preview.DRAWN.clear()
     space.clear()

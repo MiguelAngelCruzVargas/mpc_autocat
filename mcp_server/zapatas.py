@@ -289,7 +289,8 @@ def design_footing(kind: str,
                    overhang_left: Optional[float] = None,
                    aspect: Optional[float] = None,
                    grade_beam_height: float = 0.0,
-                   mark: str = "Z-1") -> dict[str, Any]:
+                   mark: str = "Z-1",
+                   fixed_thickness: bool = False) -> dict[str, Any]:
     """Diseña una zapata y devuelve TODO lo que el plano tiene que decir.
 
     kind: 'aislada', 'lindero', 'esquina', 'corrida' o 'combinada'.
@@ -319,6 +320,10 @@ def design_footing(kind: str,
       pedestal). Los estribos del dado salen de ACI 318-19 25.7.2.1.
     column_bar / column_bar_count: el armado de la columna; los arranques
       son del mismo número y cantidad (ACI 318-19 16.3.4.1: >= 0.005·Ag).
+    fixed_thickness: el peralte (min_thickness) lo impone el proyecto y NO se
+      sube. Las revisiones que no cumplen quedan con ok=False y en 'warnings'
+      (en vez de crecer el peralte): sirve para dibujar y cuantificar una
+      zapata ya definida y dejar dicho, con números, que no cumple.
     columns (combinada): [{"dead":..,"live":..,"size":[c1,c2]}, {...}],
       spacing = distancia entre ejes, m. boundary_left: la columna 1 está
       en colindancia; si no, overhang_left = volado desde su eje.
@@ -379,7 +384,7 @@ def design_footing(kind: str,
     gamma_c = 2.4
 
     # ---- 1. área por capacidad de carga (servicio)
-    h = max(min_thickness, 0.15 + cover + 0.02)
+    h = min_thickness if fixed_thickness else max(min_thickness, 0.15 + cover + 0.02)
     def q_efectiva(hh):
         if bearing_is_net:
             return allowable_bearing
@@ -485,6 +490,21 @@ def design_footing(kind: str,
         as_y = max(as_flexion(mu_y, B, dy, fc_mpa, fy_mpa), as_minimo(B, h, fy_mpa))
         disponible_arranque = h - cover - 2 * db_guess - db_col
         ok_arranque = disponible_arranque >= ldc - 1e-6
+        if fixed_thickness:
+            # Peralte impuesto: se arma con la barra y la separación de obra que dé el acero MÍNIMO
+            # y se revisa lo que pide el cálculo; lo que no cumple queda dicho en las revisiones.
+            tope = 999.9
+            req_x = as_x if math.isfinite(as_x) else tope
+            req_y = as_y if math.isfinite(as_y) else tope
+            arm_x = elegir_armado(as_minimo(L, h, fy_mpa), L, h, bars)
+            arm_y = elegir_armado(as_minimo(B, h, fy_mpa), B, h, bars)
+            arm_x["As_req_cm2"], arm_y["As_req_cm2"] = _r(req_x, 2), _r(req_y, 2)
+            vx = qu * L * max(vol_x - dx, 0.0)
+            vy = qu * B * max(vol_y - dy, 0.0)
+            vcx = PHI_CORTANTE * vc_un_sentido(fc_mpa, L, dx, arm_x["As_cm2"] / (L * dx * 1e4))
+            vcy = PHI_CORTANTE * vc_un_sentido(fc_mpa, B, dy, arm_y["As_cm2"] / (B * dy * 1e4))
+            as_x, as_y = req_x, req_y
+            break
         if pun["ok"] and ok_arranque and math.isfinite(as_x) and math.isfinite(as_y):
             try:
                 arm_x = elegir_armado(as_x, L, h, bars)

@@ -76,10 +76,17 @@ def cantidades(d: dict[str, Any], f: dict[str, Any], r: dict[str, Any], depth_po
     x_ext = xo + P2 / 2 + sp * (bays - 1) + P2 / 2 + 0.4                # fin del cimiento corrido (por lado)
     L_corrida = 2 * (x_ext - (Lax + B / 2))
     lg = d.get("liga")
-    Ltl = (g["L_ejes"] - B) if lg else 0.0
+    ped = z.get("pedestal")
+    a_ped = ped[0] if ped else B
+    Labierto = (g["L_ejes"] - a_ped) if lg else 0.0                      # liga entre los dados del portón
+    Ltl = Labierto
+    if lg and lg.get("a_lo_largo"):
+        # además, a lo largo de la barda hasta la última pilastra de cada lado (sobre el cimiento corrido)
+        x_ult = xo + P2 / 2 + sp * (bays - 1) - Lax - a_ped / 2
+        Ltl = Labierto + 2 * x_ult
     exc = 2 * (B + 0.6) * (Lz + 0.6) * depth_portico + (Bc + 0.6) * depth_barda * L_corrida
     if lg:
-        exc += (lg["b"] + 0.6) * Ltl * 0.60                              # trabe de liga: fondo a 0.60 m
+        exc += (lg["b"] + 0.6) * Labierto * 0.60                         # liga bajo el acceso: fondo a 0.60 m
     G = "CIMENTACIÓN"
     if roca:
         it(G, f"Excavación a mano en el suelo hasta la roca de apoyo, a {depth_portico:.2f} m (con 30 cm de holgura de trabajo por lado)",
@@ -95,11 +102,21 @@ def cantidades(d: dict[str, Any], f: dict[str, Any], r: dict[str, Any], depth_po
        mix="concreto_250")
     it(G, "Cimbra de madera en el contorno de zapatas y cimiento corrido", "m²",
        2 * 2 * (B + Lz) * hz + 2 * L_corrida * hc)
+    if ped:
+        hped = z["pedestal_height"]
+        it(G, f"Concreto f'c = 250 kg/cm² en dados de las zapatas Z-1 ({ped[0] * 100:.0f} x {ped[1] * 100:.0f} x {hped:.2f}), 2 piezas",
+           "m³", 2 * ped[0] * ped[1] * hped, mix="concreto_250")
+        it(G, "Cimbra de madera de los dados de las zapatas Z-1 (4 caras)", "m²", 2 * 2 * (ped[0] + ped[1]) * hped)
     if lg:
-        it(G, f"Concreto f'c = 250 kg/cm² en trabe de liga TL-1 ({lg['b'] * 100:.0f} x {lg['h'] * 100:.0f}), enterrada bajo el piso del acceso",
-           "m³", lg["b"] * lg["h"] * Ltl, mix="concreto_250")
+        if lg.get("a_lo_largo"):
+            txt_l = (f"Concreto f'c = 250 kg/cm² en trabe de liga TL-1 ({lg['b'] * 100:.0f} x {lg['h'] * 100:.0f}), entre dados "
+                     f"y sobre el cimiento corrido hasta la última pilastra de cada lado ({Ltl:.2f} m)")
+        else:
+            txt_l = (f"Concreto f'c = 250 kg/cm² en trabe de liga TL-1 ({lg['b'] * 100:.0f} x {lg['h'] * 100:.0f}), "
+                     "enterrada bajo el piso del acceso")
+        it(G, txt_l, "m³", lg["b"] * lg["h"] * Ltl, mix="concreto_250")
         it(G, "Cimbra de las caras de la trabe de liga TL-1", "m²", 2 * lg["h"] * Ltl)
-        add_acero(lg["bars"]["bar"], lg["bars"]["count"] * (g["L_ejes"] + 0.6))
+        add_acero(lg["bars"]["bar"], lg["bars"]["count"] * (Ltl + 0.6))
         add_acero(lg["stirrup"], math.ceil(Ltl / lg["stirrup_spacing"]) *
                   _est_len(lg["b"], lg["h"], 0.04, zap.VARILLAS[lg["stirrup"]][0]))
     bx, by = z["bars_x"], z["bars_y"]
@@ -111,8 +128,9 @@ def cantidades(d: dict[str, Any], f: dict[str, Any], r: dict[str, Any], depth_po
     # ---------------- estructura del pórtico
     G = "ESTRUCTURA DEL PÓRTICO"
     H1 = r["pil1"]["height_m"]
+    H_nucleo = H1 - (z.get("pedestal_height") or 0.0) if ped else H1     # el tramo del dado ya está contado arriba
     it(G, f"Concreto f'c = 250 kg/cm² en núcleos de pilastra P-1 ({c1 * 100:.0f} x {c1 * 100:.0f}), colado dentro de la caja de block",
-       "m³", 2 * c1 * c1 * H1, mix="concreto_250")
+       "m³", 2 * c1 * c1 * H_nucleo, mix="concreto_250")
     p1 = d["pilastra"]
     add_acero(p1["bars"]["bar"], 2 * p1["bars"]["count"] * r["pil1"]["bar_len_m"])
     add_acero(p1["stirrups"]["bar"], 2 * r["pil1"]["stirrupCount"] *

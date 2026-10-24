@@ -13,6 +13,7 @@ import materials
 import portico_arco as pa
 import prim
 import rebar
+import symbols as sym
 import zapatas as zap
 from portico_detalles import LAYER_ARMADO, LW_ARMADO, _r3, y_nucleo_top
 from portico_dibujo import (L_BLK, L_CON, L_EJE, L_OCU, L_TXT, _arco_cad, _capas, _db, _rect, _arco_sobre)
@@ -217,10 +218,19 @@ def planta_cimentacion(d: dict[str, Any], f: dict[str, Any], x: float, y: float,
             _rect(xc - B / 2, y - Lz / 2, xc + B / 2, y + Lz / 2, L_CON, 50)
             _rect(xc - P1 / 2, y - d["pilastra_prof"] / 2, xc + P1 / 2, y + d["pilastra_prof"] / 2, L_OCU, 13)
             _rect(xc - c1 / 2, y - c1 / 2, xc + c1 / 2, y + c1 / 2, L_CON, 35)
+            if z.get("pedestal"):
+                _rect(xc - z["pedestal"][0] / 2, y - z["pedestal"][1] / 2,
+                      xc + z["pedestal"][0] / 2, y + z["pedestal"][1] / 2, L_CON, 35)
         lg = d.get("liga")
+        ped = (z.get("pedestal") or [B])[0]
         if lg:
-            _rect(x - Lax + B / 2, y - lg["b"] / 2, x + Lax - B / 2, y + lg["b"] / 2, L_CON, 35)
-            prim.line((x - Lax + B / 2, y), (x + Lax - B / 2, y), L_OCU, 13)
+            # trabe de liga: entre los dados del portón y, si 'a_lo_largo', hasta cada pilastra de la barda
+            tramos = [(x - Lax + ped / 2, x + Lax - ped / 2)]
+            if lg.get("a_lo_largo"):
+                tramos += [(x + Lax + ped / 2, der[-1]), (izq[-1], x - Lax - ped / 2)]
+            for a, b in tramos:
+                _rect(a, y - lg["b"] / 2, b, y + lg["b"] / 2, L_CON, 35)
+                prim.line((a, y), (b, y), L_OCU, 13)
         # cimiento corrido
         x_ext_r = der[-1] + P2 / 2 + 0.4
         x_ext_l = izq[-1] - P2 / 2 - 0.4
@@ -237,7 +247,13 @@ def planta_cimentacion(d: dict[str, Any], f: dict[str, Any], x: float, y: float,
                                scale=upm)
     ann.create_dimension_chain(positions=[y - Lz / 2, y + Lz / 2], side="left", reference=x - Lax - B / 2 - 0.05, scale=upm)
     ann.create_dimension_chain(positions=[y - Bc / 2, y + Bc / 2], side="right", reference=x_ext_r + 0.05, scale=upm)
-    dt.text(f"Z-1   {B:.2f} x {Lz:.2f} x {z['h']:.2f}   {z['bars_x']['text']} A.D.", x - Lax - B / 2 + 0.1, y + Lz / 2 - 0.25, th, L_TXT)
+    if B < 1.8:      # zapata chica: el rótulo va en dos renglones dentro de la franja libre sobre el dado
+        yt = y + Lz / 2 - 0.14
+        dt.text(f"Z-1  h={z['h']:.2f}", x - Lax - B / 2 + 0.06, yt, th, L_TXT)
+        dt.text(f"{z['bars_x']['bar']}@{z['bars_x']['spacing'] * 100:.0f} A.D.", x - Lax - B / 2 + 0.06,
+                yt - 1.6 * th, th, L_TXT)
+    else:
+        dt.text(f"Z-1   {B:.2f} x {Lz:.2f} x {z['h']:.2f}   {z['bars_x']['text']} A.D.", x - Lax - B / 2 + 0.1, y + Lz / 2 - 0.25, th, L_TXT)
     if d.get("liga"):
         lg = d["liga"]
         dt.text(f"TL-1  {lg['b'] * 100:.0f}x{lg['h'] * 100:.0f}  {lg['bars']['count']} {lg['bars']['bar']}, E{lg['stirrup']} @ {lg['stirrup_spacing'] * 100:.0f}",
@@ -245,3 +261,33 @@ def planta_cimentacion(d: dict[str, Any], f: dict[str, Any], x: float, y: float,
     dt.text(f"ZC-1   B = {Bc:.2f}   h = {zc['h']:.2f}   TRANSV. {zc['bars_x']['text']}", x_ext_l + 0.1, y + Bc / 2 + 0.15, th, L_TXT)
     dt.text(f"P-2   NÚCLEO {c2 * 100:.0f}x{c2 * 100:.0f}   {f['pilastra']['bars']['text']}", der[-1] - 1.0, y - Bc / 2 - 0.35, th, L_TXT)
     return {"box": [x_ext_l - 0.6, y - Lz / 2 - 0.6 - 24 * upm, x_ext_r + 0.6, y + Lz / 2 + 0.7]}
+
+
+def seccion_trabe_liga(d: dict[str, Any], x: float, y: float, upm: float, nombre: str = "TL-1") -> dict[str, Any]:
+    """Sección de la trabe de liga: contorno de concreto, estribo cerrado y las varillas de punta, con sus
+    cotas rotuladas b (ancho) y h (peralte) y el armado."""
+    _capas()
+    lg = d["liga"]
+    b, h = lg["b"], lg["h"]
+    db_e = zap.VARILLAS[lg["stirrup"]][0]
+    db = zap.VARILLAS[lg["bars"]["bar"]][0]
+    th = 2.0 * upm
+    with acad.lote():
+        materials.draw_material([(x, y), (x + b, y), (x + b, y + h), (x, y + h)], "concreto", layer=L_CON, scale=upm)
+        prim.poly([(x, y), (x + b, y), (x + b, y + h), (x, y + h)], L_CON, True, 50)
+    sec = rebar.create_column_section(x=x, y=y, width=b, depth=h, bars_top_bottom=0, bars_left_right=0,
+                                      bar_diameter=db, cover=0.04, stirrup_diameter=db_e)
+    r = 0.04 + db_e + db / 2
+    with acad.lote():
+        for px, py in ((x + r, y + r), (x + b - r, y + r), (x + b - r, y + h - r), (x + r, y + h - r)):
+            dt.dot(px, py, db / 2, LAYER_ARMADO, 7)
+    ann.create_dimension_chain(positions=[x, x + b], side="bottom", reference=y - 0.05, scale=upm)
+    ann.create_dimension_chain(positions=[y, y + h], side="right", reference=x + b + 0.05, scale=upm)
+    dt.text(f"b = {b * 100:.0f} cm (ancho)", x - 0.02, y - 12 * th, th, L_TXT)
+    dt.text(f"h = {h * 100:.0f} cm (peralte)", x + b + 0.25, y + h / 2 - 3 * th, th, L_TXT)
+    items = [((x + b, y + h - r), f"{lg['bars']['count']} VARS. {lg['bars']['bar']} (DE PUNTA)"),
+             ((x + b, y + h / 2), f"EST. {lg['stirrup']} @ {lg['stirrup_spacing'] * 100:.0f} cm")]
+    dt.callouts(items, "right", x + b + 0.45, upm, text_mm=2.0)
+    t = sym.create_view_title(x - 0.05, y + h + 22 * upm, f"CORTE {nombre} - TRABE DE LIGA", scale_text=f"ESC. 1:{round(upm * 1000)}",
+                              height=3.5 * upm, spaced=False)
+    return {"box": [x - 0.3, y - 14 * th, x + b + 2.2, (t.get("box") or [0, 0, 0, y + h + 0.5])[3]], "section": sec}
