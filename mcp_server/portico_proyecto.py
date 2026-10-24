@@ -188,8 +188,16 @@ def imponer_cimentacion(proy: dict[str, Any], footing_width: float, footing_leng
 
 # --------------------------------------------------------------------------- dibujo del conjunto
 
+# Unidades de modelo por mm de papel con que se dimensiona el texto de cada vista (2 mm de papel = 2 * upm). Es la
+# escala del TEXTO; la del viewport se elige al componer la lámina y puede ser otra (las pilastras de barda, por
+# ejemplo, se ven a 1:15 con el texto de 1:20 para que se lea).
+UPM_VISTAS = {"alzado_general": 0.05, "planta_general": 0.05, "alzado_portico": 0.025, "alzado_estructural": 0.025,
+              "armado_trabe": 0.025, "corte_aa": 0.01, "pilastra_p1": 0.015, "pilastra_p2": 0.02,
+              "planta_cimentacion": 0.05, "z1": 0.025, "zc": 0.02, "tl1_seccion": 0.01}
+
+
 def dibujar_conjunto(proy: dict[str, Any], ox: float = 0.0, oy: float = 0.0, bays: int = 3, roca: bool = False,
-                     depth_barda: Optional[float] = None) -> dict[str, Any]:
+                     depth_barda: Optional[float] = None, upm: Optional[dict[str, float]] = None) -> dict[str, Any]:
     """Dibuja TODAS las vistas del proyecto en el modelo, cada una en su zona (sin pisarse), y devuelve la caja
     de cada una con su escala y lo que midieron los dibujos (largos de trabe y varillas, estribos, castillo y
     dala) que las cantidades necesitan."""
@@ -203,44 +211,48 @@ def dibujar_conjunto(proy: dict[str, Any], ox: float = 0.0, oy: float = 0.0, bay
     z, zc = d["zapata"], f["cimentacion"]
     depth_barda = depth_barda or zc["depth"]
     vistas: dict[str, dict[str, Any]] = {}
+    u = {**UPM_VISTAS, **(upm or {})}
+    malos = [k for k in (upm or {}) if k not in UPM_VISTAS]
+    if malos:
+        raise ValueError(f"upm: vistas desconocidas {malos}; las válidas son {sorted(UPM_VISTAS)}.")
 
-    def reg(nombre: str, caja: list[float], upm: float) -> None:
-        vistas[nombre] = {"box": [round(float(c), 3) for c in caja], "scale_denominator": round(upm * 1000)}
+    def reg(nombre: str, caja: list[float], upm_: float) -> None:
+        vistas[nombre] = {"box": [round(float(c), 3) for c in caja], "text_scale_denominator": round(upm_ * 1000)}
 
-    r_alz = pdi.alzado_general(d, f, ox, oy, 0.05, bays=bays)
-    reg("alzado_general", r_alz["box"], 0.05)
-    r_pl = pdi.planta_general(d, f, ox, oy - 15.0, 0.05, bays=bays)
-    reg("planta_general", r_pl["box"], 0.05)
-    r_ap = pdi.alzado_portico(d, ox + 60.0, oy, 0.035)
-    reg("alzado_portico", r_ap["box"], 0.035)
-    r_ae = pd2.alzado_estructural(d, ox + 84.0, oy, 0.035)
-    reg("alzado_estructural", r_ae["box"], 0.035)
-    r_tr = pd1.armado_trabe(d, ox + 59.5, oy - 37.0, 0.025)
-    reg("armado_trabe", r_tr["box"], 0.025)
-    r_cf = pd2.corte_fronton(d, ox + 81.8, oy - 41.0, 0.01)
-    reg("corte_aa", r_cf["box"], 0.01)
-    r_p1 = pd1.armado_pilastra(d, ox + 109.625, oy - 48.0, 0.015)
-    reg("pilastra_p1", r_p1["box"], 0.015)
-    r_p2 = pd2.pilastra_barda(f, ox + 134.65, oy - 47.7, 0.015, depth_barda)
-    reg("pilastra_p2", r_p2["box"], 0.015)
-    r_ci = pd2.planta_cimentacion(d, f, ox, oy - 60.0, 0.05, bays=bays)
-    reg("planta_cimentacion", r_ci["box"], 0.05)
+    r_alz = pdi.alzado_general(d, f, ox, oy, u["alzado_general"], bays=bays)
+    reg("alzado_general", r_alz["box"], u["alzado_general"])
+    r_pl = pdi.planta_general(d, f, ox, oy - 15.0, u["planta_general"], bays=bays)
+    reg("planta_general", r_pl["box"], u["planta_general"])
+    r_ap = pdi.alzado_portico(d, ox + 60.0, oy, u["alzado_portico"])
+    reg("alzado_portico", r_ap["box"], u["alzado_portico"])
+    r_ae = pd2.alzado_estructural(d, ox + 84.0, oy, u["alzado_estructural"])
+    reg("alzado_estructural", r_ae["box"], u["alzado_estructural"])
+    r_tr = pd1.armado_trabe(d, ox + 59.5, oy - 37.0, u["armado_trabe"])
+    reg("armado_trabe", r_tr["box"], u["armado_trabe"])
+    r_cf = pd2.corte_fronton(d, ox + 81.8, oy - 41.0, u["corte_aa"])
+    reg("corte_aa", r_cf["box"], u["corte_aa"])
+    r_p1 = pd1.armado_pilastra(d, ox + 109.625, oy - 48.0, u["pilastra_p1"])
+    reg("pilastra_p1", r_p1["box"], u["pilastra_p1"])
+    r_p2 = pd2.pilastra_barda(f, ox + 134.65, oy - 47.7, u["pilastra_p2"], depth_barda)
+    reg("pilastra_p2", r_p2["box"], u["pilastra_p2"])
+    r_ci = pd2.planta_cimentacion(d, f, ox, oy - 60.0, u["planta_cimentacion"], bays=bays)
+    reg("planta_cimentacion", r_ci["box"], u["planta_cimentacion"])
     # zapata Z-1: corte y planta
     X1, Y1 = ox + 62.0, oy - 70.0
-    r_z1 = zd.draw_footing_section(z, X1, Y1, 0.025, working_space=0.30, slope=0.5, mark="Z-1", roca=roca)
+    r_z1 = zd.draw_footing_section(z, X1, Y1, u["z1"], working_space=0.30, slope=0.5, mark="Z-1", roca=roca)
     izq = z["column_offsets"][0]
     a1 = (z.get("pedestal") or z["column"])[0]
-    r_z1p = zd.draw_footing_plan(z, r_z1["box"][2] + 3.0 + izq + a1 / 2, Y1 - 0.5, 0.025)
-    reg("z1_corte", r_z1["box"], 0.025)
-    reg("z1_planta", r_z1p["box"], 0.025)
+    r_z1p = zd.draw_footing_plan(z, r_z1["box"][2] + 3.0 + izq + a1 / 2, Y1 - 0.5, u["z1"])
+    reg("z1_corte", r_z1["box"], u["z1"])
+    reg("z1_planta", r_z1p["box"], u["z1"])
     # cimiento corrido ZC-1
-    r_zc = zd.draw_footing_section(zc, ox + 100.5, oy - 69.0, 0.02, working_space=0.30, slope=0.5, mark="ZC-1")
-    r_zcp = zd.draw_strip_plan(zc, r_zc["box"][2] + 3.0 + 1.2, oy - 70.2, 0.02, length=2.40)
-    reg("zc_corte", r_zc["box"], 0.02)
-    reg("zc_planta", r_zcp["box"], 0.02)
+    r_zc = zd.draw_footing_section(zc, ox + 100.5, oy - 69.0, u["zc"], working_space=0.30, slope=0.5, mark="ZC-1")
+    r_zcp = zd.draw_strip_plan(zc, r_zc["box"][2] + 3.0 + 1.2, oy - 70.2, u["zc"], length=2.40)
+    reg("zc_corte", r_zc["box"], u["zc"])
+    reg("zc_planta", r_zcp["box"], u["zc"])
     if d.get("liga"):
-        r_tl = pd2.seccion_trabe_liga(d, ox + 125.0, oy - 70.0, 0.01)
-        reg("tl1_seccion", r_tl["box"], 0.01)
+        r_tl = pd2.seccion_trabe_liga(d, ox + 125.0, oy - 70.0, u["tl1_seccion"])
+        reg("tl1_seccion", r_tl["box"], u["tl1_seccion"])
     solapes = []
     nombres = list(vistas)
     for i, a in enumerate(nombres):

@@ -4583,20 +4583,25 @@ def impose_gate_foundation(project_path: str, footing_width: float, footing_leng
 
 @mcp.tool()
 def draw_portico_set(project_path: str, origin_x: float = 0.0, origin_y: float = 0.0, bays: int = 3,
-                     on_rock: bool = False, fence_depth: Optional[float] = None) -> dict[str, Any]:
+                     on_rock: bool = False, fence_depth: Optional[float] = None,
+                     text_upm: Optional[dict[str, float]] = None) -> dict[str, Any]:
     """DIBUJA en el modelo todas las vistas del proyecto del pórtico y su barda, cada una en su zona sin pisarse:
     alzado general y planta, alzado del portón y estructural, armado de la trabe curva, corte A-A del frontón, pilastras
     P-1 (con su dado) y P-2, planta de cimentación (con la trabe de liga), corte y planta de la zapata Z-1, cimiento corrido
-    ZC-1 y sección de la trabe de liga. Devuelve la caja de cada vista con su escala (para compose_layout / refit_viewport),
+    ZC-1 y sección de la trabe de liga. Devuelve la caja de cada vista con la escala del TEXTO con que se dibujó
+    (text_scale_denominator; la del viewport se elige al componer la lámina y puede ser otra) para compose_layout / refit_viewport,
     los traslapes si los hay, y guarda en el proyecto lo que midieron los dibujos (largos de varilla, estribos, castillo y
     dala) que quantify_portico necesita. Antes: design_fence, design_gate_portal (y impose_gate_foundation si el proyecto
-    impone la cimentación). origin_x/origin_y: dónde queda el conjunto en el modelo. on_rock: el corte de Z-1 muestra la roca."""
+    impone la cimentación). origin_x/origin_y: dónde queda el conjunto en el modelo. on_rock: el corte de Z-1 muestra la roca.
+    text_upm: {vista: unidades de modelo por mm de papel} para cambiar el tamaño del texto de una vista (por omisión
+    las de portico_proyecto.UPM_VISTAS: alzado_general, planta_general, alzado_portico, alzado_estructural, armado_trabe,
+    corte_aa, pilastra_p1, pilastra_p2, planta_cimentacion, z1, zc, tl1_seccion)."""
     import portico_proyecto as portico_mod
     acad.call("set_current_layout", {"name": "Model"})
     proy = portico_mod.cargar(project_path)
-    r = portico_mod.dibujar_conjunto(proy, origin_x, origin_y, bays, on_rock, fence_depth)
+    r = portico_mod.dibujar_conjunto(proy, origin_x, origin_y, bays, on_rock, fence_depth, text_upm)
     cajas = {k: v["box"] for k, v in r["vistas"].items()}
-    portico_mod.guardar(project_path, r=r["r"], cajas=cajas, escalas={k: v["scale_denominator"] for k, v in r["vistas"].items()})
+    portico_mod.guardar(project_path, r=r["r"], cajas=cajas, escalas_de_texto={k: v["text_scale_denominator"] for k, v in r["vistas"].items()})
     return {"project_path": project_path, **r}
 
 
