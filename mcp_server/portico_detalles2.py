@@ -91,7 +91,11 @@ def alzado_estructural(d: dict[str, Any], x: float, y: float, upm: float) -> dic
              ((x + xk, yk), f"K-1  {t * 100:.0f}x{t * 100:.0f}  {fr['castillo']['text']}"),
              ((x - 1.0, ymd), f"DR-1  {t * 100:.0f}x{t * 100:.0f}  {fr['dala_remate']['text']}")]
     dt.callouts(items, "left", x - xo - 0.35, upm, text_mm=2.0, max_chars=34)
-    return {"box": [x - xo - 85 * upm, y - 0.4 - 36 * upm, x + xo + 22 * upm, y + g["top_crown_h"] + 0.5]}
+    xk0 = fr["castillos_x"][0]
+    fronton_h = (y + pa.y_top(g, xk0) - t) - (yc + math.sqrt((R + h) ** 2 - xk0 ** 2))
+    dala_len = sum(math.dist(p0, p1) for p0, p1 in zip(a_d0, a_d0[1:]))
+    return {"box": [x - xo - 85 * upm, y - 0.4 - 36 * upm, x + xo + 22 * upm, y + g["top_crown_h"] + 0.5],
+            "fronton_h": round(fronton_h, 4), "dala_len": round(dala_len, 4)}
 
 
 # ----------------------------------------------------------- corte del fronton (C-C)

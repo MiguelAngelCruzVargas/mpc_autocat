@@ -84,7 +84,7 @@ def main() -> int:
                  "acab_mod.",
                  # consulta, edición nativa y propiedades por reflexión: pasan por
                  # su módulo, que es quien llama al plugin.
-                 "consulta_mod.", "edicion_mod.", "prop_mod.", "met_mod.", "bd_mod.", "_prop(", "_met(", "_bd(", "_edicion(")
+                 "portico_mod.", "reporte_mod.", "portico_reporte.", "viewport_ajuste.", "consulta_mod.", "edicion_mod.", "prop_mod.", "met_mod.", "bd_mod.", "_prop(", "_met(", "_bd(", "_edicion(")
     patron = "|".join(re.escape(d) for d in delegados)
     silent = sorted(t for t in exposed if not re.search(
         r"def\s+" + t + r"\b[\s\S]{0,6000}?(acad\.call|" + patron + ")",

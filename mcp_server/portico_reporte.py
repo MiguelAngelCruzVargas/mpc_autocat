@@ -390,3 +390,30 @@ def exportar(design_path: str, quantities_path: str, out_dir: str, proyecto: str
             "no_cumplen": [a for a, _, _, res in rev if res == NO_CUMPLE],
             "acero_kg": q["acero_total_kg"], "concreto_250_m3": q["volumen_concreto_250"],
             "cemento_kg": q["materiales"]["cemento_kg"]}
+
+
+def exportar_proyecto(project_path: str, out_dir: str, proyecto: str = "", notas_proyecto: Optional[list[str]] = None,
+                      comparar: Optional[dict[str, str]] = None) -> dict[str, Any]:
+    """Igual que `exportar`, leyendo el diseño ('d', 'f') y las cantidades ('q') del archivo de proyecto que
+    dejaron design_gate_portal, design_fence, impose_gate_foundation y quantify_portico."""
+    with open(project_path, encoding="utf-8") as fh:
+        proy = json.load(fh)
+    faltan = [k for k in ("d", "f", "q") if k not in proy]
+    if faltan:
+        raise ValueError("El proyecto no tiene " + ", ".join(faltan) + ": corré design_gate_portal, design_fence y quantify_portico antes.")
+    d, f, q = proy["d"], proy["f"], proy["q"]
+    ref: list[tuple[str, dict[str, Any]]] = []
+    for etiqueta, ruta in (comparar or {}).items():
+        with open(ruta, encoding="utf-8") as fh:
+            ref.append((etiqueta, json.load(fh)))
+    os.makedirs(out_dir, exist_ok=True)
+    ruta_md = os.path.join(out_dir, "Memoria de calculo.md")
+    ruta_xlsx = os.path.join(out_dir, "Calculos y cantidades.xlsx")
+    with open(ruta_md, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(memoria_md(d, f, q, proyecto or "pórtico con arco y barda", notas_proyecto, ref))
+    excel(d, f, q, ruta_xlsx, proyecto)
+    rev = revision(d)
+    return {"memoria": ruta_md, "excel": ruta_xlsx, "revisiones": len(rev),
+            "no_cumplen": [a for a, _, _, res in rev if res == NO_CUMPLE],
+            "acero_kg": q["acero_total_kg"], "concreto_250_m3": q["volumen_concreto_250"],
+            "cemento_kg": q["materiales"]["cemento_kg"]}

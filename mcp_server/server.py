@@ -4485,7 +4485,142 @@ def export_concept_catalog(result: dict[str, Any], path: str,
 
 
 @mcp.tool()
-def export_portico_report(design_path: str, quantities_path: str, out_dir: str, project: str = "",
+def design_gate_portal(clear_span: float, spring_h: float, crown_h: float, fc: float, allowable_bearing: float,
+                       depth: float, soil_unit_weight: float, pilaster: float = 0.95, core: float = 0.40,
+                       pilaster_depth: float = 0.60, fy: float = 4200.0, beam_b: float = 0.20, beam_h: float = 0.50,
+                       cladding_kg_m: float = 0.0, gate_leaf_kg: float = 400.0, gate_leaf_width: float = 0.0,
+                       wind_kmh: float = 120.0, gate_solidity: float = 0.60, seismic_c: float = 0.30,
+                       base_depth: float = 0.30, stirrup_beam: str = "#3", fc_footing: Optional[float] = None,
+                       top_ends_h: Optional[float] = None, top_crown_h: Optional[float] = None,
+                       tymp_kg_m2: float = 400.0, cornisa_kg_m: float = 60.0, tymp_t: float = 0.20,
+                       core_options: Optional[list[float]] = None,
+                       extra_loads: Optional[list[list[float]]] = None,
+                       footing_max_L: Optional[float] = None, footing_max_B: Optional[float] = None,
+                       project_path: Optional[str] = None, include_fence_load: bool = True) -> dict[str, Any]:
+    """DISEÑO del pórtico de acceso con arco y frontón: marco plano por rigideces (base empotrada y articulada),
+    trabe curva, pilastra por interacción P-M, castillos y dala del frontón, trabe de liga y zapata RECTANGULAR de
+    menor volumen con contacto real sin tensión (ACI 318-19 / NTC). Sin capacidad del suelo (allowable_bearing, t/m²),
+    f'c, desplante (depth, m) o peso del relleno (soil_unit_weight, t/m³) RECHAZA: son datos del proyecto, no se suponen.
+
+    clear_span: claro libre, m. spring_h / crown_h: altura del arranque y de la clave del intradós, m. pilaster: ancho
+    de la pilastra terminada, m; core: núcleo de concreto, m (core_options: núcleos a probar si el primero no da).
+    footing_max_L / footing_max_B: espacio disponible para la zapata (L fuera del plano del pórtico, B en el sentido del
+    portón); si no cabe, lo dice y sugiere anclar a la roca. extra_loads: [[carga t, excentricidad m]] que llegan a la
+    zapata (la 1.a pilastra de la barda); con project_path y una barda ya diseñada se toma sola (include_fence_load).
+    project_path: archivo de proyecto (.json) donde se guarda el diseño ('d') para los pasos siguientes (impose_gate_foundation,
+    draw_portico_set, quantify_portico, export_portico_report). Con él devuelve un resumen; sin él, el diseño completo."""
+    import portico_proyecto as portico_mod
+    ex = [tuple(e) for e in extra_loads] if extra_loads else None
+    if ex is None and project_path and include_fence_load:
+        f = portico_mod.cargar(project_path).get("f")
+        if f:
+            ex = [(f["cargas"]["N_t_m"] * f["spacing"], (pilaster + f["pilastra_terminada"]) / 2.0)]
+    d = portico_mod.pa.design_gate_portal(
+        clear_span, spring_h, crown_h, fc, allowable_bearing, depth, soil_unit_weight, pilaster=pilaster, core=core,
+        pilaster_depth=pilaster_depth, fy=fy, beam_b=beam_b, beam_h=beam_h, cladding_kg_m=cladding_kg_m,
+        gate_leaf_kg=gate_leaf_kg, gate_leaf_width=gate_leaf_width, wind_kmh=wind_kmh, gate_solidity=gate_solidity,
+        seismic_c=seismic_c, base_depth=base_depth, stirrup_beam=stirrup_beam, fc_footing=fc_footing,
+        top_ends_h=top_ends_h, top_crown_h=top_crown_h, tymp_kg_m2=tymp_kg_m2, cornisa_kg_m=cornisa_kg_m, tymp_t=tymp_t,
+        core_options=tuple(core_options or ()), extra_loads=ex, footing_max_L=footing_max_L, footing_max_B=footing_max_B)
+    d = portico_mod.seguro(d)
+    if not project_path:
+        return {"design": d}
+    portico_mod.guardar(project_path, d=d)
+    return {"project_path": project_path, "resumen": portico_mod.resumen_portico(d),
+            "carga_de_la_barda_incluida": [list(e) for e in ex] if ex else []}
+
+
+@mcp.tool()
+def design_fence(fc: float, allowable_bearing: float, depth: float, soil_unit_weight: float, spacing: float = 3.0,
+                 total_h: float = 2.40, wall_h: float = 1.00, pilaster_h: float = 2.50, core: float = 0.20,
+                 cladding: float = 0.10, fy: float = 4200.0, wind_kmh: float = 120.0, reja_solidity: float = 0.30,
+                 reja_kg_m2: float = 25.0, seismic_c: float = 0.30, project_path: Optional[str] = None) -> dict[str, Any]:
+    """DISEÑO de la barda de block hueco 10x20x40 con pilastras de concreto cada `spacing` y cimiento corrido: viento y
+    sismo, pilastra (P-M), cadena de desplante y dala de cerramiento (NTC Mampostería) y cimiento corrido con momento.
+    Rechaza sin capacidad del suelo, f'c, desplante o peso del relleno. total_h: altura total con reja, m; wall_h: muro
+    bajo, m; pilaster_h: pilastra, m. project_path: archivo de proyecto (.json) donde se guarda ('f'); córrelo ANTES que
+    design_gate_portal para que la carga de la 1.a pilastra de la barda llegue sola a la zapata del portón."""
+    import portico_proyecto as portico_mod
+    f = portico_mod.seguro(portico_mod.pa.design_fence(fc, allowable_bearing, depth, soil_unit_weight, spacing=spacing, total_h=total_h,
+                                     wall_h=wall_h, pilaster_h=pilaster_h, core=core, cladding=cladding, fy=fy,
+                                     wind_kmh=wind_kmh, reja_solidity=reja_solidity, reja_kg_m2=reja_kg_m2,
+                                     seismic_c=seismic_c))
+    if not project_path:
+        return {"design": f}
+    portico_mod.guardar(project_path, f=f)
+    return {"project_path": project_path, "resumen": portico_mod.resumen_barda(f)}
+
+
+@mcp.tool()
+def impose_gate_foundation(project_path: str, footing_width: float, footing_length: float, footing_thickness: float,
+                           footing_bars: Optional[list[str]] = None, pedestal: Optional[list[float]] = None,
+                           pedestal_height: float = 0.0, pilaster_bar_count: Optional[int] = None,
+                           pilaster_bar: str = "#4", tie_beam: Optional[dict[str, Any]] = None,
+                           bearing_reference: Optional[float] = None) -> dict[str, Any]:
+    """APLICA al proyecto la cimentación y la pilastra que DEFINE el cliente o el proyectista, en vez de las que
+    dimensiona el cálculo, y las revisa con los mismos criterios. La zapata NO crece sola: se dibuja y se cuantifica
+    como se definió, y cada revisión que no cumple (volteo y contacto, cortante, flexión, peralte efectivo mínimo,
+    anclaje de arranques, interacción carga-momento de la pilastra) queda con su demanda, su capacidad y NO CUMPLE.
+    Nada se oculta ni se corrige en silencio.
+
+    footing_width/length/thickness: zapata B x L x h, m. footing_bars: barras de la parrilla, p. ej. ["#3"].
+    pedestal [a1, a2] y pedestal_height: dado, m. pilaster_bar_count / pilaster_bar: armado de la pilastra (p. ej. 8, "#4").
+    tie_beam: {"b":0.20,"h":0.40,"bars":{"count":4,"bar":"#3"},"stirrup":"#2","stirrup_spacing":0.20,"a_lo_largo":true}
+    (a_lo_largo: la liga corre entre los dados y hasta todas las pilastras de la barda). bearing_reference: capacidad de
+    referencia del suelo o roca, t/m² (por omisión la del diseño).
+    Lee y reescribe el proyecto (project_path); devuelve las revisiones y la lista 'no_cumplen'."""
+    import portico_proyecto as portico_mod
+    import portico_reporte as reporte_mod
+    proy = portico_mod.cargar(project_path)
+    d = portico_mod.imponer_cimentacion(proy, footing_width, footing_length, footing_thickness, tuple(footing_bars or ["#3"]),
+                               pedestal, pedestal_height, pilaster_bar_count, pilaster_bar, tie_beam, bearing_reference)
+    portico_mod.guardar(project_path, d=d)
+    rev = reporte_mod.revision(d)
+    return {"project_path": project_path, "no_cumplen": [a for a, _, _, res in rev if res == reporte_mod.NO_CUMPLE],
+            "revision": [{"revision": a, "demanda": b, "capacidad": c, "resultado": res} for a, b, c, res in rev],
+            "resumen": portico_mod.resumen_portico(d)}
+
+
+@mcp.tool()
+def draw_portico_set(project_path: str, origin_x: float = 0.0, origin_y: float = 0.0, bays: int = 3,
+                     on_rock: bool = False, fence_depth: Optional[float] = None) -> dict[str, Any]:
+    """DIBUJA en el modelo todas las vistas del proyecto del pórtico y su barda, cada una en su zona sin pisarse:
+    alzado general y planta, alzado del portón y estructural, armado de la trabe curva, corte A-A del frontón, pilastras
+    P-1 (con su dado) y P-2, planta de cimentación (con la trabe de liga), corte y planta de la zapata Z-1, cimiento corrido
+    ZC-1 y sección de la trabe de liga. Devuelve la caja de cada vista con su escala (para compose_layout / refit_viewport),
+    los traslapes si los hay, y guarda en el proyecto lo que midieron los dibujos (largos de varilla, estribos, castillo y
+    dala) que quantify_portico necesita. Antes: design_fence, design_gate_portal (y impose_gate_foundation si el proyecto
+    impone la cimentación). origin_x/origin_y: dónde queda el conjunto en el modelo. on_rock: el corte de Z-1 muestra la roca."""
+    import portico_proyecto as portico_mod
+    acad.call("set_current_layout", {"name": "Model"})
+    proy = portico_mod.cargar(project_path)
+    r = portico_mod.dibujar_conjunto(proy, origin_x, origin_y, bays, on_rock, fence_depth)
+    cajas = {k: v["box"] for k, v in r["vistas"].items()}
+    portico_mod.guardar(project_path, r=r["r"], cajas=cajas, escalas={k: v["scale_denominator"] for k, v in r["vistas"].items()})
+    return {"project_path": project_path, **r}
+
+
+@mcp.tool()
+def quantify_portico(project_path: str, bays: int = 3, on_rock: bool = False,
+                     portal_depth: Optional[float] = None, fence_depth: Optional[float] = None) -> dict[str, Any]:
+    """CANTIDADES de obra del pórtico y la barda (netas, sin desperdicio): concreto por elemento, acero por diámetro
+    (con estribos y ganchos), cimbra, excavación, block, mortero, cemento, arena, grava y agua, medidos de lo que
+    quedó dibujado (draw_portico_set) y del diseño. Con dado y trabe de liga las cuenta completas. Guarda el resultado
+    en el proyecto ('q') para export_portico_report y devuelve el resumen y los conceptos. on_rock: la excavación llega a
+    la roca y se agrega su limpieza."""
+    import portico_proyecto as portico_mod
+    proy = portico_mod.cargar(project_path)
+    q = portico_mod.cuantificar(proy, portal_depth, fence_depth, bays, on_rock)
+    portico_mod.guardar(project_path, q=q)
+    return {"project_path": project_path, "acero_total_kg": q["acero_total_kg"], "concreto_250_m3": q["volumen_concreto_250"],
+            "cemento_kg": q["materiales"]["cemento_kg"], "bultos_50kg": q["materiales"]["bultos_50kg"],
+            "conceptos": [{"grupo": i["group"], "concepto": i["concept"], "unidad": i["unit"], "cantidad": i["qty"]}
+                          for i in q["items"]]}
+
+
+@mcp.tool()
+def export_portico_report(out_dir: str, project_path: Optional[str] = None, design_path: Optional[str] = None,
+                          quantities_path: Optional[str] = None, project: str = "",
                           project_notes: Optional[list[str]] = None,
                           compare: Optional[dict[str, str]] = None) -> dict[str, Any]:
     """MEMORIA DE CÁLCULO (.md) y LIBRO DE CANTIDADES (.xlsx) del pórtico y la barda, generados DESDE el diseño:
@@ -4493,14 +4628,18 @@ def export_portico_report(design_path: str, quantities_path: str, out_dir: str, 
     y de las cantidades; cada revisión que no cumple (volteo, cortante, flexión, peralte mínimo, interacción
     carga-momento...) sale con su demanda, su capacidad y NO CUMPLE, y la memoria abre con el aviso.
 
-    design_path: JSON {"d": design_gate_portal, "f": design_fence} (el que dejan los scripts del proyecto).
-    quantities_path: JSON de portico_cuadros.cantidades.
     out_dir: carpeta de salida ('Memoria de calculo.md' y 'Calculos y cantidades.xlsx').
+    project_path: el archivo de proyecto que dejaron design_fence, design_gate_portal, quantify_portico (lo normal).
+    Alternativa con archivos sueltos: design_path ({"d":..., "f":...}) y quantities_path (JSON de cantidades).
     project: nombre para los títulos. project_notes: líneas extra para 'Supuestos' (datos del cliente).
     compare: {etiqueta: ruta de otras cantidades} para listar la alternativa en el resumen.
     El Excel trae Elementos, Cantidades (P.U. en celdas amarillas, importe y total formulados), Acero,
     Materiales, Diseño, Revisión y Supuestos. Devuelve las rutas y la lista 'no_cumplen'."""
     import portico_reporte
+    if project_path:
+        return portico_reporte.exportar_proyecto(project_path, out_dir, project, project_notes, compare)
+    if not (design_path and quantities_path):
+        raise ValueError("Pasá project_path, o design_path y quantities_path.")
     return portico_reporte.exportar(design_path, quantities_path, out_dir, project,
                                     notas_proyecto=project_notes, comparar=compare)
 

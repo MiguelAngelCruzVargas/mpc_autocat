@@ -247,6 +247,8 @@ _r("p_est", "design_frame_structure draw_structural_set design_two_way_slab pane
 _r("p_est", "design_lintel draw_lintel_detail draw_foundation_plan draw_framing_plan draw_footing_detail create_footing_plan create_footing_section")
 _r("p_est", "check_footing check_column check_slab_span check_retaining_wall check_roof_truss check_bridge_girder check_masonry_arch")
 _r("p_est", "design_pool")
+_r("p_est", "design_gate_portal design_fence impose_gate_foundation")
+_r("p_det", "draw_portico_set")
 
 # ---- proyecto: instalaciones
 _r("p_inst", "suggest_electrical suggest_hydraulic suggest_sanitary place_devices create_conduit create_installation_legend")
@@ -265,7 +267,7 @@ _r("p_3d", "create_3d_model dress_3d_model create_phone_3d")
 # ---- proyecto: cierre y entrega
 _r("p_entrega", "check_all check_sheet check_annotations check_view_titles check_drawing_hygiene check_office_standard")
 _r("p_entrega", "package_deliverables")
-_r("p_entrega", "export_portico_report")
+_r("p_entrega", "quantify_portico export_portico_report")
 
 
 # ------------------------------------------------------------------ flujos de trabajo por tipo de proyecto
@@ -331,6 +333,21 @@ FLUJOS: dict[str, dict] = {
             ("Combinar", "solid_boolean (union, subtract, intersect), fillet_solid_edges."),
             ("Medir", "call_object_method(handle, 'MassProperties') da el volumen REAL."),
             ("Mirar", "capture_viewport no sirve en perspectiva: traer AutoCAD al frente y tomar la pantalla."),
+        ],
+    },
+    "portico": {
+        "titulo": "Pórtico de acceso con arco y su barda (proyecto completo, sin scripts)",
+        "pasos": [
+            ("Datos del proyecto", "capacidad del suelo o roca (E.M.S.), f'c, desplante y peso del relleno: SON DEL PROYECTO, se preguntan."),
+            ("Guardar", "save_drawing(path=...) con nombre propio ANTES de dibujar. Elegir la ruta del proyecto (.json)."),
+            ("Barda", "design_fence(..., project_path=...): pilastras, cadena, cimiento corrido."),
+            ("Pórtico", "design_gate_portal(..., project_path=...): toma sola la carga de la 1.a pilastra de la barda."),
+            ("Si el proyecto IMPONE la cimentación", "impose_gate_foundation: zapata, dado, pilastra y trabe de liga como se definieron; lo que no cumple sale con su número, no se corrige en silencio."),
+            ("Dibujo", "draw_portico_set: todas las vistas en el modelo, sin pisarse; devuelve la caja y la escala de cada una."),
+            ("Cantidades", "quantify_portico (mide lo dibujado)."),
+            ("Memoria y Excel", "export_portico_report(project_path=...): siempre los mismos archivos para el mismo proyecto."),
+            ("Láminas", "compose_layout con las cajas devueltas; refit_viewport si un detalle se redibuja."),
+            ("Cierre", "check_all → export_pdf → save_drawing → package_deliverables."),
         ],
     },
     "laminas": {

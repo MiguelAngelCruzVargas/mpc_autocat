@@ -323,6 +323,8 @@ def disenar_pilastra(b: float, h: float, fc: float, fy: float, pu_kg: float,
                                  "conf_spacing": s_conf, "conf_length": _r(math.ceil(l_conf / 0.05) * 0.05, 2),
                                  "text": f"E{estribo} @ {s_est * 100:.0f}"},
                     "dprime": _r(dprima, 3), "ok": True,
+                    "demanda": {"Pu_kg": float(pu_kg), "combos": [[float(a), float(b)] for a, b in combos],
+                                "h_libre": float(h_libre)},
                     "refs": "ACI 318-19 22.2 / NTC-Concreto 5.1 (ρmín = 20/fy)"}
     raise ValueError(f"La pilastra {b:.2f}x{h:.2f} no da para Pu={pu_kg:.0f} kg y "
                      f"momentos {combos} t·m: hay que ensancharla.")
@@ -540,6 +542,9 @@ def design_gate_portal(clear_span: float, spring_h: float, crown_h: float,
     # enterrada bajo el paso de vehiculos
     ganadora = con_liga if opciones[con_liga]["indice"]["valor"] < 0.95 * opciones[simple]["indice"]["valor"] else simple
     r = opciones[ganadora]
+    r["extra_loads"] = [[float(p_), float(e_)] for p_, e_ in (extra_loads or [])]
+    r["datos"] = {"fc": fc, "allowable_bearing": allowable_bearing, "depth": depth, "soil_unit_weight": soil_unit_weight,
+                  "fy": fy, "footing_max_L": footing_max_L, "footing_max_B": footing_max_B}
     r["decisions"] = [o["_txt"] for o in opciones.values()] +         [f"Se eligió la opción '{ganadora}' (menor concreto + acero, con 1 m³ de concreto = 110 kg de acero como equivalencia de costo; la liga solo se elige si ahorra más de 5 %)."]         + r["decisions"]
     r["opciones"] = {k: o["indice"] for k, o in opciones.items()}
     return r
@@ -705,8 +710,8 @@ def _disenar_con(S, spring_h, crown_h, fc, fy, P, core, bb, hb_, cladding_kg_m, 
     Pu = max(col_N, 1.3 * n_izq) if col_N else 1.3 * n_izq
     M_out_s = 1.1 * M_s_out / 1000.0
     M_out_w = 1.1 * M_w / 1000.0
-    pil = disenar_pilastra(core, core, fc, fy, Pu, [(col_M_in / 1000.0, 0.3 * M_out_s),
-                                                    (0.3 * col_M_in / 1000.0, max(M_out_s, M_out_w))], H_pil)
+    combos_p = [(col_M_in / 1000.0, 0.3 * M_out_s), (0.3 * col_M_in / 1000.0, max(M_out_s, M_out_w))]
+    pil = disenar_pilastra(core, core, fc, fy, Pu, combos_p, H_pil)
     # castillos y dala de remate del fronton (NTC Mamposteria 5.1)
     cast = zap.dala(tymp_t, fc, fy)
     hmax = max(y_top(geo, x) - y_extrados(geo, x) for x in xs)
@@ -731,7 +736,7 @@ def _disenar_con(S, spring_h, crown_h, fc, fy, P, core, bb, hb_, cladding_kg_m, 
                            "M_in_D_tm": _r(M_in_D), "M_in_E_tm": _r(M_in_E),
                            "M_out_viento_tm": _r(M_w / 1000), "M_out_sismo_tm": _r(M_s_out / 1000),
                            "M_out_serv_tm": _r(M_out_serv / 1000),
-                           "H_serv_t": _r(H_D + H_E),
+                           "H_serv_t": _r(H_D + H_E), "H_D_t": _r(H_D), "H_E_t": _r(H_E),
                            "Pu_t": _r(Pu / 1000)}}
 
 
