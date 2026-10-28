@@ -86,6 +86,12 @@ def main() -> int:
     check("el panel ve los dos sentidos, en orden y con su tipo",
           [(m["de"], m["tipo"]) for m in d["mensajes"]] == [("usuario", "info"), ("claude", "listo")])
 
+    print("test_herramientas_por_especialidad")
+    web._NOMBRES_PERFIL["estructura"] = ["design_beam", "create_line"]       # sin levantar el servidor MCP real
+    d = json.loads(http_("GET", "/api/perfil_tools?perfil=estructura")[1])
+    check("el panel puede leer qué herramientas trae una especialidad", d == {"perfil": "estructura", "tools": ["design_beam", "create_line"]})
+    check("una especialidad que no existe es 404", http_("GET", "/api/perfil_tools?perfil=nada")[0] == 404)
+
     print("test_como_conectar")
     d = json.loads(http_("GET", "/api/vivo/info")[1])
     check("da el comando exacto para Claude Code, con la ruta real del servidor MCP",

@@ -203,6 +203,7 @@ CAPTURAS = os.path.join(os.environ.get("TEMP", "."), "autocad_mcp_ui")
 # catálogo real y se cachea — abrir el servidor MCP en cada request para
 # esto sería absurdo.
 _CONTEO: dict[str, int] = {}
+_NOMBRES_PERFIL: dict[str, list[str]] = {}      # perfil -> nombres de sus tools (se leen una vez)
 
 
 # ---------------------------------------------------------- estado del plugin
@@ -623,6 +624,25 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path.startswith("/api/vivo/"):
             self._vivo_get()
+            return
+
+        if self.path.startswith("/api/perfil_tools"):
+            # Qué herramientas ve el modelo con una especialidad (perfil): lo que puede y no puede hacer.
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            perfil = (q.get("perfil") or ["arquitectura"])[0]
+            patrones = PERFILES.get(perfil)
+            if patrones is None:
+                self._json({"error": f"Perfil desconocido: {perfil}"}, 404)
+                return
+            if perfil not in _NOMBRES_PERFIL:
+                async def trabajo(mcp: ConexionMcp) -> list[str]:
+                    return [t["function"]["name"] for t in mcp.catalogo(incluir=patrones or None)]
+                try:
+                    _NOMBRES_PERFIL[perfil] = MOTOR.usar(trabajo)
+                except Exception as exc:                    # noqa: BLE001
+                    self._json({"error": f"No se pudo leer el catálogo: {exc}"}, 500)
+                    return
+            self._json({"perfil": perfil, "tools": _NOMBRES_PERFIL[perfil]})
             return
 
         # Archivos estáticos en agent/web/
