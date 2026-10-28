@@ -1421,6 +1421,20 @@ Dos cosas que hacía un script distinto cada vez que cambiaba el diseño, y que 
 
 `zapatas.design_footing(fixed_thickness=True)` es la tercera pieza de lo mismo: cuando el proyecto IMPONE el peralte (y la parrilla, el dado, la pilastra) la zapata no crece sola: se dibuja y se cuantifica como se definió y cada revisión que no cumple queda con `ok=False` y su número.
 
+## 8.sexies Chat dentro de AutoCAD: comando `MCPCHAT` (prototipo)
+
+Un panel de chat con Claude dentro de AutoCAD, para trabajar sin salir del programa (lo que Autodesk llama Assistant, pero este SÍ dibuja y verifica con las herramientas de este proyecto). Son tres piezas:
+
+- **`plugin/.../Commands/ChatPaletteCommand.cs`** — el comando `MCPCHAT`. Solo pone el panel (`PaletteSet` por reflexión: vive en `acmgd.dll`, no en `AcWindows.dll`) y se asegura de que el servidor de chat esté corriendo (lo arranca con `pythonw` si hace falta, según `%LOCALAPPDATA%\AutoCadMcp\chat_launcher.json`). Si el panel no abre, cae al navegador.
+- **`mcp_server/chat_server.py`** — el servidor local (solo 127.0.0.1, token por arranque, rechaza otro `Host`) y el AGENTE: bucle Claude → herramientas → Claude, con streaming. Las herramientas son las del servidor MCP, llamadas en el mismo proceso. Claude NO recibe las ~300 de una vez (100 mil tokens por mensaje): recibe cuatro de oficio (`buscar_herramientas`, `describir_herramienta`, `ejecutar_herramienta`, `estado_del_dibujo`) y descubre las que necesita. `chat_ui/index.html` es la interfaz (sin dependencias, compatible con el navegador embebido de AutoCAD).
+- **`mcp_server/chat_prueba.py`** — un «Claude» de mentira (`python chat_server.py --demo`) para ver la interfaz sin clave ni gasto, y para las pruebas (`test_chat.py`, 34 comprobaciones sin AutoCAD ni red).
+
+**Permisos**: lo que consulta (`get_`, `list_`, `check_`, `query_`...) corre solo; lo que modifica el dibujo se le PIDE al usuario (Permitir / Rechazar / Permitir todo en esta conversación); lo destructivo (`delete_`, `purge_`, `undo`...) se pide SIEMPRE, también en modo auto; `run_code` está bloqueado en el chat. Un rechazo le llega al modelo como error, con la orden de no repetir la acción.
+
+**La clave es del usuario**: la API de Anthropic (consola), no una suscripción de Claude (Anthropic no permite usar la suscripción en apps de terceros). Se guarda cifrada con DPAPI en `%LOCALAPPDATA%\AutoCadMcp\chat.json`; el uso se cobra a su cuenta. `anthropic` está en `requirements.txt`; `tools/install_bundle.ps1` registra el servidor (`chat_server.py --registrar`).
+
+**Estado**: la interfaz y el agente están probados (navegador con el modelo de mentira, 34 pruebas, herramientas reales llamadas en proceso). El plugin compila en net48, net8 y net10 y carga en AutoCAD 2022. **Sin verificar todavía**: el panel abierto DENTRO de AutoCAD y una conversación con Claude de verdad (hace falta una clave). Cosas a saber: AutoCAD pregunta «Security - Unsigned Executable File» cuando el DLL cambia (Always Load / Load Once) y mientras esté abierto el plugin no contesta: lo cierra una persona. El chat corre en su propio proceso de Python, aparte del servidor MCP de Claude Desktop: la memoria de sesión de `space.py` no se comparte entre los dos.
+
 ## 9. Verificar antes de dar por terminado
 
 `check_all` corre todos los checks de cierre en una llamada, incluidos los

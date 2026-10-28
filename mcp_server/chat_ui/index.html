@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asistente AutoCAD</title>
+<style>
+  :root {
+    --fondo: #1f2124; --panel: #2a2d31; --borde: #3b3f44; --texto: #e6e8ea; --suave: #9aa1a8;
+    --acento: #4da3ff; --usuario: #2f4b6b; --ok: #4cc38a; --mal: #ff6b6b; --aviso: #f2b84b; --codigo: #17181a;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --fondo: #f6f7f8; --panel: #ffffff; --borde: #d5d9dd; --texto: #1c2024; --suave: #5f6872;
+      --acento: #0b63c5; --usuario: #dbeafe; --ok: #1a8f5a; --mal: #c0392b; --aviso: #9a6b00; --codigo: #eef0f2;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--fondo); color: var(--texto); font: 13px/1.45 "Segoe UI", system-ui, sans-serif; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--borde); background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 13px; margin: 0; font-weight: 600; flex: 1; min-width: 120px; }
+  select, button, textarea, input { font: inherit; color: var(--texto); background: var(--fondo); border: 1px solid var(--borde); border-radius: 6px; }
+  select, button { padding: 4px 8px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--acento); }
+  button.primario { background: var(--acento); border-color: var(--acento); color: #fff; }
+  button.peligro { border-color: var(--mal); color: var(--mal); }
+  label.auto { color: var(--suave); display: flex; align-items: center; gap: 4px; font-size: 12px; }
+  #mensajes { flex: 1; overflow-y: auto; padding: 12px 10px; }
+  .burbuja { max-width: 100%; margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; word-wrap: break-word; overflow-wrap: anywhere; }
+  .usuario { background: var(--usuario); margin-left: 24px; white-space: pre-wrap; }
+  .asistente { background: var(--panel); border: 1px solid var(--borde); margin-right: 8px; }
+  .asistente p { margin: 0 0 6px; } .asistente p:last-child { margin: 0; }
+  .asistente ul { margin: 4px 0 6px 18px; padding: 0; }
+  .asistente code { background: var(--codigo); padding: 0 4px; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; }
+  .asistente pre { background: var(--codigo); padding: 8px; border-radius: 6px; overflow-x: auto; margin: 6px 0; }
+  .asistente pre code { padding: 0; background: none; }
+  .error { border: 1px solid var(--mal); color: var(--mal); background: transparent; }
+  .tarjeta { border: 1px solid var(--borde); border-left: 3px solid var(--suave); background: var(--panel); border-radius: 6px; margin: 0 8px 10px 0; padding: 6px 10px; font-size: 12px; }
+  .tarjeta.ok { border-left-color: var(--ok); } .tarjeta.mal { border-left-color: var(--mal); } .tarjeta.pide { border-left-color: var(--aviso); }
+  .tarjeta .nombre { font-family: Consolas, monospace; font-weight: 600; }
+  .tarjeta .detalle { color: var(--suave); font-family: Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; max-height: 160px; overflow: auto; }
+  .tarjeta .acciones { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tarjeta summary { cursor: pointer; color: var(--suave); }
+  #vacio { color: var(--suave); text-align: center; margin-top: 8vh; padding: 0 16px; }
+  #vacio .chips { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  #vacio .chips button { background: var(--panel); max-width: 100%; }
+  #clave { padding: 12px 10px; border-bottom: 1px solid var(--borde); background: var(--panel); display: none; }
+  #clave p { margin: 0 0 8px; color: var(--suave); }
+  #clave input { width: 100%; padding: 6px 8px; margin-bottom: 6px; }
+  footer { border-top: 1px solid var(--borde); background: var(--panel); padding: 8px 10px; }
+  #fila { display: flex; gap: 6px; align-items: flex-end; }
+  textarea { flex: 1; resize: none; padding: 6px 8px; min-height: 34px; max-height: 120px; }
+  #uso { color: var(--suave); font-size: 11px; margin-top: 4px; display: flex; justify-content: space-between; }
+  .girando::after { content: " ⟳"; display: inline-block; animation: gira 1s linear infinite; }
+  @keyframes gira { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Asistente AutoCAD</h1>
+  <select id="modelo" title="Modelo"></select>
+  <label class="auto" title="Con esto activado solo se pide permiso para lo destructivo (borrar, purgar...)"><input type="checkbox" id="auto"> auto</label>
+  <button id="nueva" title="Empezar una conversación nueva">Nueva</button>
+  <button id="ajustes" title="Clave de API">⚙</button>
+</header>
+<div id="clave">
+  <p>Para hablar con Claude hace falta una <b>clave de la API de Anthropic</b> (console.anthropic.com). Es tuya, se guarda cifrada en este equipo y el uso se cobra a tu cuenta de la API.</p>
+  <input type="password" id="campoClave" placeholder="sk-ant-..." autocomplete="off">
+  <button class="primario" id="guardarClave">Guardar</button> <span id="msgClave" style="color:var(--mal)"></span>
+</div>
+<div id="mensajes">
+  <div id="vacio">
+    <div><b>¿En qué te ayudo con este dibujo?</b></div>
+    <div style="margin-top:4px">Puedo consultar, dibujar, revisar y cuantificar. Lo que modifique el dibujo te lo pido antes.</div>
+    <div class="chips" id="chips"></div>
+  </div>
+</div>
+<footer>
+  <div id="fila">
+    <textarea id="entrada" rows="1" placeholder="Escribe aquí…  (Enter envía, Mayús+Enter salto de línea)"></textarea>
+    <button class="primario" id="enviar">Enviar</button>
+    <button class="peligro" id="parar" style="display:none">Detener</button>
+  </div>
+  <div id="uso"><span id="estado"></span><span id="tokens"></span></div>
+</footer>
+<script>
+(function () {
+  var TOKEN = "__TOKEN__";
+  var sesion = "";
+  var ocupado = false;
+  var burbuja = null, textoBurbuja = "";
+  var tarjetas = {};
+  var $ = function (id) { return document.getElementById(id); };
+
+  function api(ruta, cuerpo, cb) {
+    var x = new XMLHttpRequest();
+    x.open(cuerpo === undefined ? "GET" : "POST", ruta, true);
+    x.setRequestHeader("X-Chat-Token", TOKEN);
+    if (cuerpo !== undefined) x.setRequestHeader("Content-Type", "application/json");
+    x.onload = function () { var d = {}; try { d = JSON.parse(x.responseText); } catch (e) {} cb(x.status, d); };
+    x.onerror = function () { cb(0, {}); };
+    x.send(cuerpo === undefined ? null : JSON.stringify(cuerpo));
+  }
+
+  function esc(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  function markdown(t) {
+    var trozos = t.split("```");
+    var html = "";
+    for (var i = 0; i < trozos.length; i++) {
+      if (i % 2 === 1) { html += "<pre><code>" + esc(trozos[i].replace(/^[a-z]*\n/, "")) + "</code></pre>"; continue; }
+      var lineas = esc(trozos[i]).split("\n"), enLista = false, parrafo = [];
+      var cierra = function () { if (parrafo.length) { html += "<p>" + parrafo.join("<br>") + "</p>"; parrafo = []; } };
+      for (var j = 0; j < lineas.length; j++) {
+        var l = lineas[j].replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+        var m = /^\s*[-*]\s+(.*)$/.exec(l);
+        if (m) { cierra(); if (!enLista) { html += "<ul>"; enLista = true; } html += "<li>" + m[1] + "</li>"; }
+        else { if (enLista) { html += "</ul>"; enLista = false; } if (l.trim() === "") cierra(); else parrafo.push(l); }
+      }
+      if (enLista) html += "</ul>"; cierra();
+    }
+    return html;
+  }
+
+  function abajo() { var m = $("mensajes"); m.scrollTop = m.scrollHeight; }
+  function quitaVacio() { var v = $("vacio"); if (v) v.parentNode.removeChild(v); }
+
+  function mensajeUsuario(t) {
+    quitaVacio();
+    var d = document.createElement("div"); d.className = "burbuja usuario"; d.textContent = t; $("mensajes").appendChild(d); abajo();
+  }
+  function escribe(t) {
+    if (!burbuja) { burbuja = document.createElement("div"); burbuja.className = "burbuja asistente"; textoBurbuja = ""; $("mensajes").appendChild(burbuja); }
+    textoBurbuja += t; burbuja.innerHTML = markdown(textoBurbuja); abajo();
+  }
+  function aviso(t) {
+    var d = document.createElement("div"); d.className = "burbuja asistente error"; d.textContent = t; $("mensajes").appendChild(d); burbuja = null; abajo();
+  }
+  function resumen(args) {
+    var s = ""; try { s = JSON.stringify(args); } catch (e) {}
+    return s.length > 140 ? s.substring(0, 140) + "…" : s;
+  }
+  function tarjeta(id, nombre, args) {
+    burbuja = null;
+    var d = document.createElement("div"); d.className = "tarjeta";
+    d.innerHTML = '<span class="nombre girando"></span><div class="detalle"></div>';
+    d.querySelector(".nombre").textContent = nombre;
+    d.querySelector(".detalle").textContent = resumen(args);
+    $("mensajes").appendChild(d); tarjetas[id] = d; abajo();
+  }
+  function resultado(id, ok, texto) {
+    var d = tarjetas[id]; if (!d) return;
+    d.className = "tarjeta " + (ok ? "ok" : "mal");
+    var n = d.querySelector(".nombre"); n.className = "nombre"; n.textContent = (ok ? "✓ " : "✗ ") + n.textContent.replace(/^[✓✗] /, "");
+    var det = document.createElement("details"); det.innerHTML = "<summary>resultado</summary><div class='detalle'></div>";
+    det.querySelector(".detalle").textContent = texto; d.appendChild(det); abajo();
+  }
+  function aprobar(ev) {
+    var d = tarjetas[ev.id_uso] || null;
+    var c = document.createElement("div"); c.className = "tarjeta pide";
+    c.innerHTML = '<div><b>' + (ev.destructiva ? "Acción destructiva: " : "Permiso: ") + '</b><span class="nombre"></span></div><div class="detalle"></div><div class="acciones"></div>';
+    c.querySelector(".nombre").textContent = ev.nombre;
+    c.querySelector(".detalle").textContent = JSON.stringify(ev.args, null, 1);
+    var acc = c.querySelector(".acciones");
+    function responde(ok, siempre) {
+      api("/api/aprobar", { sesion: sesion, id: ev.id, ok: ok, siempre: siempre }, function () {});
+      c.parentNode.removeChild(c);
+    }
+    var b1 = document.createElement("button"); b1.className = "primario"; b1.textContent = "Permitir"; b1.onclick = function () { responde(true, false); };
+    var b2 = document.createElement("button"); b2.textContent = "Rechazar"; b2.onclick = function () { responde(false, false); };
+    acc.appendChild(b1); acc.appendChild(b2);
+    if (!ev.destructiva) { var b3 = document.createElement("button"); b3.textContent = "Permitir todo en esta conversación"; b3.onclick = function () { responde(true, true); }; acc.appendChild(b3); }
+    $("mensajes").appendChild(c); abajo();
+  }
+
+  function ocupa(si) {
+    ocupado = si; $("enviar").style.display = si ? "none" : ""; $("parar").style.display = si ? "" : "none";
+    $("estado").textContent = si ? "Claude está trabajando…" : ""; $("entrada").disabled = si; if (!si) $("entrada").focus();
+  }
+
+  function evento(ev) {
+    if (ev.sesion) sesion = ev.sesion;
+    if (ev.t === "texto") escribe(ev.d);
+    else if (ev.t === "herramienta") { ultimoId = ev.id; tarjeta(ev.id, ev.nombre, ev.args); }
+    else if (ev.t === "resultado") resultado(ev.id, ev.ok, ev.texto);
+    else if (ev.t === "aprobar") aprobar(ev);
+    else if (ev.t === "error") aviso(ev.d);
+    else if (ev.t === "fin") { var t = ev.tokens || {}; $("tokens").textContent = "tokens: " + (t.entrada || 0) + " entrada · " + (t.salida || 0) + " salida" + (t.cache ? " · " + t.cache + " en caché" : ""); }
+  }
+  var ultimoId = "";
+
+  function envia(texto) {
+    texto = (texto || "").replace(/^\s+|\s+$/g, ""); if (!texto || ocupado) return;
+    mensajeUsuario(texto); burbuja = null; $("entrada").value = ""; ocupa(true);
+    var x = new XMLHttpRequest(), leido = 0, resto = "";
+    x.open("POST", "/api/chat", true);
+    x.setRequestHeader("X-Chat-Token", TOKEN); x.setRequestHeader("Content-Type", "application/json");
+    function procesa() {
+      var nuevo = x.responseText.substring(leido); leido = x.responseText.length; resto += nuevo;
+      var partes = resto.split("\n\n"); resto = partes.pop();
+      for (var i = 0; i < partes.length; i++) {
+        var l = partes[i].replace(/^data: /, ""); if (!l) continue;
+        try { evento(JSON.parse(l)); } catch (e) {}
+      }
+    }
+    x.onprogress = procesa;
+    x.onload = function () { procesa(); if (x.status !== 200) aviso("El servidor del chat respondió " + x.status + "."); ocupa(false); };
+    x.onerror = function () { aviso("Se perdió la conexión con el servidor del chat."); ocupa(false); };
+    x.send(JSON.stringify({ sesion: sesion, texto: texto }));
+  }
+
+  function estado() {
+    api("/api/estado", undefined, function (st, d) {
+      if (st !== 200) { aviso("No pude hablar con el servidor del chat (" + st + ")."); return; }
+      var sel = $("modelo"); sel.innerHTML = "";
+      for (var i = 0; i < d.modelos.length; i++) { var o = document.createElement("option"); o.value = d.modelos[i].id; o.textContent = d.modelos[i].nombre; sel.appendChild(o); }
+      sel.value = d.modelo; $("auto").checked = d.auto;
+      $("clave").style.display = d.clave ? "none" : "block";
+      var sugerencias = ["¿Qué hay en el dibujo abierto?", "Lista las capas del dibujo", "¿Cómo es el flujo de trabajo del pórtico?"];
+      var ch = $("chips"); if (ch && !ch.childNodes.length) for (var k = 0; k < sugerencias.length; k++) (function (s) {
+        var b = document.createElement("button"); b.textContent = s; b.onclick = function () { envia(s); }; ch.appendChild(b); })(sugerencias[k]);
+    });
+  }
+
+  $("enviar").onclick = function () { envia($("entrada").value); };
+  $("entrada").onkeydown = function (e) { if (e.keyCode === 13 && !e.shiftKey) { e.preventDefault(); envia($("entrada").value); } };
+  $("entrada").oninput = function () { this.style.height = "auto"; this.style.height = Math.min(this.scrollHeight, 120) + "px"; };
+  $("parar").onclick = function () { api("/api/parar", { sesion: sesion }, function () {}); };
+  $("nueva").onclick = function () { if (ocupado) return; api("/api/nueva", {}, function (st, d) { sesion = d.sesion || ""; location.reload(); }); };
+  $("ajustes").onclick = function () { var c = $("clave"); c.style.display = c.style.display === "block" ? "none" : "block"; };
+  $("guardarClave").onclick = function () {
+    api("/api/config", { clave: $("campoClave").value }, function (st, d) {
+      if (st !== 200) { $("msgClave").textContent = d.error || "No se pudo guardar."; return; }
+      $("msgClave").textContent = ""; $("campoClave").value = ""; estado(); });
+  };
+  $("modelo").onchange = function () { api("/api/config", { modelo: this.value }, function () {}); };
+  $("auto").onchange = function () { api("/api/config", { auto: this.checked }, function () {}); };
+  estado();
+})();
+</script>
+</body>
+</html>

@@ -46,6 +46,7 @@
          PlotHelper.cs) — ya está cargada en el proceso de acad.exe, esto
          solo trae la referencia de compilación. -->
     <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
   </ItemGroup>
 
   <!-- AutoCAD 2025+ (.NET 8) -->
