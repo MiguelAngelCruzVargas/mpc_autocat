@@ -1176,7 +1176,7 @@ function despacharEvento(ev) {
     if (!ev.error && REGEX_DIBUJO.test(ev.nombre)) {
       return true;
     }
-  } else if (ev.tipo === 'aviso') {
+  } else if (ev.tipo === 'aviso' || ev.tipo === 'nota') {
     agregarAvisoChat(ev.texto);
   }
   return false;

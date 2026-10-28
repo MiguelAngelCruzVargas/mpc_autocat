@@ -99,6 +99,9 @@ PERFILES: dict[str, list[str]] = {
     # Lista vacía = TODAS las tools (ver mcp_link.catalogo): ya incluye las
     # de acceso a la API, y agregarlas acá la convertiría en "solo esas".
     "todo": [],
+    # Las mismas ~300 pero BAJO DEMANDA: el modelo recibe 3 herramientas (buscar, describir, ejecutar) y descubre las
+    # que necesita (descubrir.py). Cuesta ~1 mil tokens por vuelta en vez de ~100 mil y cabe en cualquier proveedor.
+    "descubrir": [],
 }
 
 # Donde el agente deja lo que se entrega (PDF, catalogo .xlsx, CSV): el

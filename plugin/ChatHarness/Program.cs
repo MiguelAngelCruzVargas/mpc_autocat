@@ -56,6 +56,8 @@ namespace ChatHarness
                     await Task.Delay(300);
                     await panel.Inicio;
                     if (proveedor != null) await panel.ElegirProveedorPorIdAsync(proveedor);
+                    var perfil = Arg(args, "--perfil");
+                    if (perfil != null) panel.ElegirPerfil(perfil);
                     if (args.Contains("--ajustes")) panel.AbrirAjustes();
                     if (enviar != null)
                     {

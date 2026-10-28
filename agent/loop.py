@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Optional
 
+from . import descubrir
 from .mcp_link import ConexionMcp
 from .providers import ErrorProveedor, ToolInvalida
 
@@ -70,7 +71,9 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
                     tools: list[dict[str, Any]],
                     al_evento: Optional[Callable[[str, dict], None]] = None,
                     vueltas_max: int = VUELTAS_MAX,
-                    cancelado: Optional[Callable[[], bool]] = None
+                    cancelado: Optional[Callable[[], bool]] = None,
+                    limite_tools: Optional[int] = None,
+                    bajo_demanda: bool = False
                     ) -> list[dict[str, Any]]:
     """Corre el ciclo hasta que el modelo deja de pedir tools.
 
@@ -89,6 +92,27 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
         return bool(cancelado and cancelado())
 
     invalidas = 0        # veces seguidas que pidió una tool inexistente
+
+    # Modo «bajo demanda» (descubrir.py): el modelo recibe 3 herramientas y descubre las demás. Se activa si el
+    # catálogo no cabe en un pedido de este proveedor (límite conocido) o si el proveedor se queja de la cantidad.
+    descubridor = descubrir.Descubridor(conexion) if hasattr(conexion, "catalogo") else None
+
+    def pasar_a_bajo_demanda(motivo: str) -> None:
+        nonlocal tools
+        tools = descubrir.META
+        if mensajes and mensajes[0].get("role") == "system":
+            if descubrir.TEXTO_SISTEMA not in str(mensajes[0].get("content", "")):
+                mensajes[0]["content"] = str(mensajes[0]["content"]) + "\n\n" + descubrir.TEXTO_SISTEMA
+        else:
+            mensajes.insert(0, {"role": "system", "content": descubrir.TEXTO_SISTEMA})
+        avisar("nota", {"texto": motivo})
+
+    if bajo_demanda:
+        pasar_a_bajo_demanda(f"Herramientas bajo demanda: el agente busca y usa las que necesita (todas siguen disponibles; "
+                             f"cada pedido manda 3 herramientas en vez de {len(tools)}).")
+    elif limite_tools and len(tools) > limite_tools:
+        pasar_a_bajo_demanda(f"Este proveedor acepta {limite_tools} herramientas por pedido y la especialidad trae {len(tools)}: "
+                             "el agente busca y usa las herramientas bajo demanda (todas siguen disponibles).")
 
     for vuelta in range(vueltas_max):
         if se_corto():
@@ -111,6 +135,17 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
                                  f"{exc} Insistió {invalidas} veces con tools "
                                  "que no tiene; se corta."})
                 break
+            real = exc.tool or ""
+            if descubridor is not None and tools is descubrir.META and real in descubridor._catalogo():
+                # Modo bajo demanda: pidió una herramienta REAL por su nombre en vez de pasar por ejecutar_herramienta.
+                avisar("nota", {"texto": f"El modelo llamó '{real}' directo; se le indica que use ejecutar_herramienta."})
+                mensajes.append({
+                    "role": "user",
+                    "content": (f"ERROR: '{real}' NO se llama directamente: la llamada no se ejecutó. Hazlo así: "
+                                f"ejecutar_herramienta con nombre='{real}' y sus parámetros dentro de `argumentos` "
+                                "(un objeto JSON). Si no sabes sus parámetros, antes llama describir_herramienta "
+                                f"con nombre='{real}'. Vuelve a intentarlo ahora.")})
+                continue
             avisar("aviso", {"texto": f"{exc} Se le avisa y sigue."})
             disponibles = ", ".join(
                 t.get("function", {}).get("name", "") for t in tools)
@@ -123,6 +158,11 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
                             "resto del trabajo.")})
             continue
         except ErrorProveedor as exc:
+            if (descubridor is not None and tools is not descubrir.META
+                    and descubrir.PATRON_DEMASIADAS.search(str(exc))):
+                pasar_a_bajo_demanda("El proveedor rechazó la cantidad de herramientas: el agente las busca y usa "
+                                     "bajo demanda (todas siguen disponibles).")
+                continue
             avisar("aviso", {"texto": str(exc)})
             break
         invalidas = 0
@@ -149,12 +189,18 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
                                  "Cancelado. La tool en curso terminó; las "
                                  "que faltaban no se ejecutaron."})
                 return mensajes
-            avisar("tool", {"nombre": llamada["nombre"],
-                            "args": llamada["args"]})
-            salida, hubo_error = await conexion.ejecutar(llamada["nombre"],
-                                                         llamada["args"])
-            avisar("resultado", {"nombre": llamada["nombre"],
-                                 "texto": salida, "error": hubo_error})
+            if descubridor is not None and tools is descubrir.META and llamada["nombre"] in descubrir.NOMBRES:
+                visible, args_visibles = descubridor.visible(llamada["nombre"], llamada["args"])
+                avisar("tool", {"nombre": visible, "args": args_visibles})
+                salida, hubo_error = await descubridor.atender(llamada["nombre"], llamada["args"])
+                avisar("resultado", {"nombre": visible, "texto": salida, "error": hubo_error})
+            else:
+                avisar("tool", {"nombre": llamada["nombre"],
+                                "args": llamada["args"]})
+                salida, hubo_error = await conexion.ejecutar(llamada["nombre"],
+                                                             llamada["args"])
+                avisar("resultado", {"nombre": llamada["nombre"],
+                                     "texto": salida, "error": hubo_error})
             resultados.append((llamada, salida))
 
         mensajes.extend(_como_mensajes_resultado(resultados, formato))

@@ -109,6 +109,7 @@ namespace AutoCadMcpPlugin.Chat
         // Ganchos para el programa de prueba (plugin/ChatHarness): mismas rutas que usa la persona, sin teclear.
         internal Task Inicio = Task.CompletedTask;
         internal bool Trabajando => _trabajando;
+        internal void ElegirPerfil(string id) { _perfil = id; }
         internal bool AdjuntarSeleccion { set { _adjSel.IsChecked = value; } }
         internal Task EnviarTextoAsync(string texto) { _entrada.Text = texto; return EnviarAsync(); }
         internal Task ElegirProveedorPorIdAsync(string id)
@@ -432,7 +433,7 @@ namespace AutoCadMcpPlugin.Chat
             foreach (var pf in _perfiles)
             {
                 var item = pf;
-                _listaPerfiles.Children.Add(Fila(item.id, item.tools + " herramientas" + (item.id == "todo" ? " (las 300; gasta muchos tokens por mensaje)" : item.id == "basico" ? " (dibujo simple)" : ""), item.id == _perfil, async () =>
+                _listaPerfiles.Children.Add(Fila(item.id, item.tools + " herramientas" + (item.id == "todo" ? " (las ~300 a la vez: gasta ~100 mil tokens por mensaje y Groq/OpenAI aceptan máximo 128)" : item.id == "descubrir" ? " (las ~300, bajo demanda: el agente busca y usa las que necesita; la que conviene con una IA de API)" : item.id == "basico" ? " (dibujo simple)" : ""), item.id == _perfil, async () =>
                 {
                     _perfil = item.id; RefrescarPerfiles(); ActualizarChip();
                     try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { perfil = _perfil } }).ConfigureAwait(true)) { } } catch { }
@@ -817,6 +818,9 @@ namespace AutoCadMcpPlugin.Chat
                     }
                 case "aviso":
                     AgregarAviso(Texto(ev, "texto"));
+                    break;
+                case "nota":
+                    AgregarNota("ℹ " + Texto(ev, "texto"));
                     break;
                 case "uso":
                     if (ev.TryGetProperty("total", out var tot) && tot.ValueKind == JsonValueKind.Number) _tokens = tot.GetInt32();

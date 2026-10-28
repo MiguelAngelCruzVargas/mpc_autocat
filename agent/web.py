@@ -21,7 +21,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
-from . import credenciales, providers, puentes
+from . import credenciales, descubrir, providers, puentes
 from .cli import ENTREGABLES, PERFILES, _system_prompt
 from .loop import conversar
 from .mcp_link import ConexionMcp, SERVIDOR_DEFECTO
@@ -125,7 +125,7 @@ class Sesion:
             pass
 
     def anotar(self, evento: dict[str, Any]) -> None:
-        if evento.get("tipo") in ("usuario", "texto", "tool", "resultado", "aviso"):
+        if evento.get("tipo") in ("usuario", "texto", "tool", "resultado", "aviso", "nota"):
             # Lo que la pantalla muestra de una tool son ~200 caracteres:
             # guardar el resultado entero (listas de handles, rooms...)
             # inflaba el archivo sin que nadie lo fuera a ver.
@@ -1155,7 +1155,9 @@ class Handler(BaseHTTPRequestHandler):
             await conversar(mcp, proveedor, mensajes, tools,
                             lambda t, d: emitir(t, d),
                             vueltas_max=int(datos.get("vueltas") or 40),
-                            cancelado=SESION.cancelar.is_set)
+                            cancelado=SESION.cancelar.is_set,
+                            limite_tools=descubrir.LIMITES.get(str(datos.get("proveedor", ""))),
+                            bajo_demanda=str(datos.get("perfil", "")) == "descubrir")
 
         SESION.cancelar.clear()
         try:
