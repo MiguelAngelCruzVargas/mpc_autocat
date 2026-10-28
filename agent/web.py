@@ -59,6 +59,9 @@ def _estado_licencia() -> dict[str, Any]:
                         "o empieza la prueba gratis de 7 dias.")
     return e
 
+# Dentro de AutoCAD (comando MCPCHAT, arrancado por agent/en_autocad.py) la misma interfaz se muestra en un panel del
+# programa: sin visor del plano y sin chequeo de conexión, porque el dibujo se ve en AutoCAD y el plugin está ahí.
+EN_AUTOCAD = False
 _WEB_DIR = os.path.join(_AQUI, "web")
 _HTML = os.path.join(_WEB_DIR, "index.html")
 
@@ -509,7 +512,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/ping":
             # Liviano a propósito: no toca el MCP ni AutoCAD. Lo usa un
             # segundo arranque para saber si el puerto lo tiene este panel.
-            self._json({"app": "autocad-ia"})
+            self._json({"app": "autocad-ia", "modo": "autocad" if EN_AUTOCAD else "web"})
             return
 
         if self.path == "/api/historial":
@@ -600,6 +603,8 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self.send_error(500, f"Error leyendo {ruta_rel}")
                 return
+            if EN_AUTOCAD and ruta_rel == "index.html":
+                cuerpo = cuerpo.replace(b'<html lang="es">', b'<html lang="es" class="en-autocad">', 1)
 
             self.send_response(200)
             self.send_header("Content-Type", mime)
@@ -726,6 +731,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/api/chat":
             self._chat(datos)
+            return
+
+        if self.path == "/api/jslog":
+            # El navegador embebido de AutoCAD no tiene consola a la vista: la página manda aquí sus errores
+            # de JavaScript y su versión de Chromium, para poder ver por qué algo no corre dentro del panel.
+            try:
+                os.makedirs(_ESTADO_AUTOCAD, exist_ok=True)
+                ruta = os.path.join(_ESTADO_AUTOCAD, "panel_js.log")
+                if os.path.exists(ruta) and os.path.getsize(ruta) > 200_000:
+                    os.remove(ruta)
+                import time
+                with open(ruta, "a", encoding="utf-8") as fh:
+                    fh.write(f"{time.strftime('%H:%M:%S')} {str(datos.get('m', ''))[:500]} | {str(datos.get('ua', ''))[:200]}
+")
+            except OSError:
+                pass
+            self._json({"ok": True})
             return
 
         self.send_error(404)
@@ -1037,17 +1059,41 @@ def _precio_manual(datos: dict[str, Any]) -> Optional[dict[str, float]]:
 
 
 def _es_este_panel(puerto: int) -> bool:
+    """¿Ese puerto ya tiene este panel, y en el mismo modo (navegador o dentro de AutoCAD)?"""
     try:
         import urllib.request
         with urllib.request.urlopen(f"http://127.0.0.1:{puerto}/api/ping",
                                     timeout=3) as r:
-            return json.loads(r.read().decode("utf-8")).get("app") == "autocad-ia"
+            d = json.loads(r.read().decode("utf-8"))
+            return d.get("app") == "autocad-ia" and d.get("modo", "web") == ("autocad" if EN_AUTOCAD else "web")
     except Exception:                                   # noqa: BLE001
         return False
 
 
-def iniciar(puerto: int = 8770, abrir: bool = True) -> None:
-    global _SERVIDOR
+_ESTADO_AUTOCAD = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "AutoCadMcp")
+_URL_PANEL = os.path.join(_ESTADO_AUTOCAD, "chat_url.txt")
+
+
+def _vigilar_autocad() -> None:
+    """Dentro de AutoCAD: si el programa se cierra (el plugin deja de contestar) el panel se apaga solo."""
+    import time
+    fallas = 0
+    while True:
+        time.sleep(20)
+        if _verificar_autocad().get("conectado"):
+            fallas = 0
+            continue
+        fallas += 1
+        if fallas >= 3:
+            _apagar_en_hilo_aparte()
+            return
+
+
+def iniciar(puerto: int = 8770, abrir: bool = True, en_autocad: bool = False) -> None:
+    global _SERVIDOR, EN_AUTOCAD
+    EN_AUTOCAD = en_autocad
+    if en_autocad:
+        puerto, abrir = max(puerto, 8775), False       # otro puerto que el del navegador, y nunca abre uno
     # 127.0.0.1 y no 0.0.0.0: nadie más en la red puede llegar acá, que es
     # lo que corresponde para algo que tiene tus API keys.
     servidor = None
@@ -1077,9 +1123,19 @@ def iniciar(puerto: int = 8770, abrir: bool = True) -> None:
     print("  (Ctrl+C para cerrar)\n")
     if abrir:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    if en_autocad:      # el comando MCPCHAT del plugin lee esta URL para poner el panel
+        os.makedirs(_ESTADO_AUTOCAD, exist_ok=True)
+        with open(_URL_PANEL, "w", encoding="utf-8") as fh:
+            fh.write(url)
+        threading.Thread(target=_vigilar_autocad, daemon=True).start()
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:
         print("\n  Cerrando.\n")
     finally:
         servidor.server_close()
+        if en_autocad:
+            try:
+                os.remove(_URL_PANEL)
+            except OSError:
+                pass

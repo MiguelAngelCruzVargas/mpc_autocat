@@ -11,6 +11,29 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   
   <link rel="stylesheet" href="style.css">
+  <script>
+  // Errores de JavaScript -> servidor (agent/web.py /api/jslog) y un aviso visible: dentro de AutoCAD no hay consola.
+  (function () {
+    function enviar(m) {
+      try {
+        var x = new XMLHttpRequest(); x.open('POST', '/api/jslog', true);
+        x.setRequestHeader('Content-Type', 'application/json');
+        x.send(JSON.stringify({ m: String(m).slice(0, 500), ua: navigator.userAgent }));
+      } catch (e) {}
+    }
+    function aviso(m) {
+      try {
+        var d = document.getElementById('js-error') || document.createElement('div');
+        d.id = 'js-error'; d.textContent = 'Error de la página: ' + m;
+        d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#7f1d1d;color:#fff;font:11px/1.3 Consolas,monospace;padding:4px 6px;';
+        if (!d.parentNode && document.body) document.body.appendChild(d);
+      } catch (e) {}
+    }
+    window.onerror = function (m, u, l, c) { var t = m + ' @' + String(u || '').split('/').pop() + ':' + l + ':' + c; enviar(t); aviso(t); };
+    window.addEventListener('unhandledrejection', function (e) { var t = 'rechazo: ' + ((e.reason && e.reason.message) || e.reason); enviar(t); aviso(t); });
+    enviar('cargó la página');
+  })();
+  </script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -169,7 +192,7 @@
             </div>
           </div>
 
-          <div class="diagnostic-item">
+          <div class="diagnostic-item" id="diag-cad">
             <span class="status-light" id="diag-light-cad"></span>
             <div class="diagnostic-content">
               <b>3. Plugin de AutoCAD (MCP)</b>
@@ -393,7 +416,8 @@
             </div>
           </div>
           <h2>¿Qué vamos a diseñar hoy?</h2>
-          <p>Asegúrate de tener AutoCAD abierto con el plugin cargado. Puedes pedirme distribuciones completas, cotas, muebles, el modelo 3D o el catálogo de conceptos para el presupuesto.</p>
+          <p class="solo-web">Asegúrate de tener AutoCAD abierto con el plugin cargado.</p>
+          <p>Puedes pedirme distribuciones completas, cotas, muebles, el modelo 3D o el catálogo de conceptos para el presupuesto.</p>
           
           <div class="preset-cards-grid">
             <button class="preset-card" data-perfil="arquitectura">
@@ -403,7 +427,7 @@
               </div>
             </button>
 
-            <button class="preset-card" data-perfil="basico">
+            <button class="preset-card solo-web" data-perfil="basico">
               <div class="preset-info">
                 <strong>Diagnóstico y Capas</strong>
                 <span class="preset-text">Haz ping al plugin de AutoCAD y dime qué versión y capas están cargadas</span>

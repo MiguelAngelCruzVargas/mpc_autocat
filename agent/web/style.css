@@ -1633,3 +1633,38 @@ main.chat-main {
 .pp-pie small { opacity: .8; }
 .pp-pie small a { color: #8fb3ff; text-decoration: underline; }
 @media (max-width: 520px) { .pp-paso { grid-template-columns: 30px 1fr; } .pp-estado { grid-column: 2; } }
+
+/* Dentro de AutoCAD (<html class="en-autocad">, ver agent/web.py): sin visor del plano ni chequeo de conexion. */
+.en-autocad #acad-status,
+.en-autocad #btn-toggle-plan,
+.en-autocad #plan-viewer-pane,
+.en-autocad #pp-1,
+.en-autocad #diag-cad,
+.en-autocad .solo-web { display: none !important; }
+
+/* Modo compacto del panel de AutoCAD: un panel angosto (~300-450 px) no puede gastar su ancho en margenes. */
+html.en-autocad, .en-autocad body { font-size: 12.5px; }
+.en-autocad .chat-header { padding: 4px 8px; gap: 6px; }
+.en-autocad .header-left { gap: 6px; }
+.en-autocad .chat-header-info { gap: 0; }
+.en-autocad .chat-header-title { font-size: 13px; gap: 6px; flex-wrap: wrap; }
+.en-autocad .chat-header-subtitle { font-size: 10.5px; }
+.en-autocad .chat-header-actions { gap: 4px; }
+.en-autocad .chat-messages { padding: 6px 4px; gap: 8px; }
+.en-autocad .message-row { max-width: 100%; }
+.en-autocad .message-bubble { padding: 6px 8px; font-size: 12.5px; line-height: 1.45; }
+.en-autocad .empty-state { max-width: none; width: 100%; margin: 0; padding: 4px 0; gap: 6px; align-items: stretch; text-align: left; }
+.en-autocad .empty-icon-wrapper { display: none; }
+.en-autocad .empty-state h2 { font-size: 15px; letter-spacing: 0; }
+.en-autocad .empty-state p { font-size: 12px; line-height: 1.4; }
+.en-autocad .preset-cards-grid { gap: 5px; margin-top: 2px; }
+.en-autocad .preset-card { padding: 6px 8px; }
+.en-autocad .preset-info strong { font-size: 12px; }
+.en-autocad .preset-text { font-size: 11px; }
+.en-autocad .chat-footer { padding: 5px 4px; }
+.en-autocad .input-container { max-width: none; gap: 3px; }
+.en-autocad .input-box-wrapper { padding: 3px 4px; gap: 4px; }
+.en-autocad .input-box-wrapper textarea { min-height: 30px; padding: 3px 4px; }
+.en-autocad .btn-send { padding: 6px 10px; }
+.en-autocad .input-meta-bar { display: none; }
+.en-autocad .tool-card, .en-autocad .tool-call { font-size: 11.5px; }

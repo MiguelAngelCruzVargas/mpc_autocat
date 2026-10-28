@@ -51,6 +51,7 @@ def _dependencias_ok(interprete: str) -> bool:
 
 def main() -> int:
     puerto = 8770
+    en_autocad = "--en-autocad" in sys.argv        # dentro del panel de AutoCAD (ver iniciar_en_autocad.py)
     for i, a in enumerate(sys.argv):
         if a in ("--puerto", "-p") and i + 1 < len(sys.argv):
             puerto = int(sys.argv[i + 1])
@@ -68,14 +69,15 @@ def main() -> int:
                   f"    {interprete} -m pip install mcp httpx\n")
             return 2
 
-    if not _ya_en_venv():
+    # (Sin venv —un checkout nuevo— el intérprete elegido es el que ya corre: relanzarse con él sería un bucle infinito.)
+    if not _ya_en_venv() and os.path.abspath(interprete) != os.path.abspath(sys.executable):
         # Relanzarse con el intérprete correcto en vez de fallar.
-        return subprocess.call([interprete, os.path.abspath(__file__),
-                                "--puerto", str(puerto)])
+        return subprocess.call([interprete, os.path.abspath(__file__), "--puerto", str(puerto)]
+                               + (["--en-autocad"] if en_autocad else []))
 
     sys.path.insert(0, RAIZ)
     from agent.web import iniciar
-    iniciar(puerto=puerto)
+    iniciar(puerto=puerto, en_autocad=en_autocad)
     return 0
 
 

@@ -3,10 +3,15 @@
  * Inicialización segura y comunicación SSE con el agente
  */
 
+// Dentro de AutoCAD (comando MCPCHAT) el servidor marca <html class="en-autocad">: ya se está viendo el dibujo
+// en AutoCAD y la conexión con el plugin es un hecho, así que no hay visor del plano ni chequeo de conexión.
+// Todo lo demás —modelos, claves, perfiles de tools, presets, costo, entregables— es lo mismo que en el navegador.
+const EN_AUTOCAD = document.documentElement.classList.contains('en-autocad');
+
 let AppState = {
   servidor: null,
   trabajando: false,
-  autoPlano: true,
+  autoPlano: !EN_AUTOCAD,
   zoomNivel: 1,
   planUrlActual: null,
   isPanning: false,
@@ -86,6 +91,7 @@ function guardarPref(clave, valor) {
 // un token a nadie y contesta en ~1.5s como mucho aunque AutoCAD esté
 // cerrado.
 async function actualizarEstadoAutoCAD() {
+  if (EN_AUTOCAD) return;
   const badge = $('#acad-status');
   if (!badge) return;
   try {
@@ -391,6 +397,10 @@ function conectarCostoYPresets() {
 }
 
 async function init() {
+  if (EN_AUTOCAD) {
+    const caja = document.getElementById('chat-input');
+    if (caja) caja.placeholder = 'Escribe tu instrucción…';
+  }
   try {
     const res = await fetch('/api/estado');
     if (!res.ok) throw new Error('No se pudo comunicar con el backend local');
@@ -440,7 +450,7 @@ async function init() {
   if (btnPlano) btnPlano.addEventListener('click', cargarLaminas);
   const btnEntregables = document.getElementById('btn-refrescar-entregables');
   if (btnEntregables) btnEntregables.onclick = actualizarEntregables;
-  setInterval(actualizarEstadoAutoCAD, 15000);
+  if (!EN_AUTOCAD) setInterval(actualizarEstadoAutoCAD, 15000);
 }
 
 function poblarOpciones() {
@@ -1118,6 +1128,7 @@ function pararCronometro() {
 }
 
 async function capturarPlano(zona = null) {
+  if (EN_AUTOCAD) return;      // sin visor: el dibujo se ve en AutoCAD mismo
   const layout = $('#app-layout');
   const canvas = $('#plan-canvas-wrapper');
   if (layout) layout.classList.add('con-plano');
@@ -1304,7 +1315,8 @@ async function ejecutarDiagnosticos() {
     setDiag('diag-light-model', false, 'diag-text-model', 'Requiere clave primero');
   }
 
-  // 3. AutoCAD MCP
+  // 3. AutoCAD MCP (dentro de AutoCAD no hay nada que verificar: la fila ni se muestra)
+  if (EN_AUTOCAD) return;
   setDiag('diag-light-cad', null, 'diag-text-cad', 'Verificando plugin de AutoCAD…');
   try {
     // Un ping (~1 s), no una captura: plotear la vista para saber si el
@@ -1663,7 +1675,7 @@ async function refrescarPrimerosPasos() {
   } catch (e) {
     return null;
   }
-  const ac = d.autocad || {};
+  const ac = EN_AUTOCAD ? { conectado: true } : (d.autocad || {});
   ppMarcar(1, ac.conectado, ac.conectado
     ? 'AutoCAD está conectado' + ((ac.pluginVersion || ac.version) ? ' (plugin ' + (ac.pluginVersion || ac.version) + ')' : '') + '.'
     : 'No veo AutoCAD. Ábrelo y espera a que cargue el plugin; esto se actualiza solo.');
