@@ -31,6 +31,7 @@
     }
     window.onerror = function (m, u, l, c) { var t = m + ' @' + String(u || '').split('/').pop() + ':' + l + ':' + c; enviar(t); aviso(t); };
     window.addEventListener('unhandledrejection', function (e) { var t = 'rechazo: ' + ((e.reason && e.reason.message) || e.reason); enviar(t); aviso(t); });
+    window.__log = enviar;
     enviar('cargó la página');
   })();
   </script>

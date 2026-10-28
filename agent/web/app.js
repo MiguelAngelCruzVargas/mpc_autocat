@@ -1028,9 +1028,11 @@ async function agregarArchivos(archivos) {
 async function enviarMensaje() {
   const inChat = $('#chat-input');
   const texto = inChat ? inChat.value.trim() : '';
+  if (window.__log) window.__log('enviar: texto=' + texto.length + ' trabajando=' + AppState.trabajando + ' proveedor=' + (($('#select-provider') || {}).value || '?'));
   if ((!texto && !AppState.adjuntos.length) || AppState.trabajando) return;
 
   const p = getProveedorActual();
+  if (window.__log) window.__log('enviar: clave=' + !!(p && p.clave) + ' puente=' + !!(p && p.puente));
   if (!p.clave && p.id !== 'local') {
     showToast(p.puente ? p.detalle : `Configura tu API key de ${p.id} antes de continuar`, 'error');
     return;
@@ -1079,6 +1081,7 @@ async function enviarMensaje() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      if (window.__log) window.__log('enviar: el servidor respondió ' + res.status);
       agregarAvisoChat(err.error || `El servidor respondió con código ${res.status}`);
     } else {
       AppState.costoPedido = 0;
@@ -1089,6 +1092,7 @@ async function enviarMensaje() {
       actualizarEntregables();
     }
   } catch (err) {
+    if (window.__log) window.__log('enviar: se cortó: ' + err.message);
     agregarAvisoChat('Se cortó la conexión: ' + err.message);
   } finally {
     AppState.trabajando = false;
