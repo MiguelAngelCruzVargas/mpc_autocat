@@ -56,6 +56,7 @@ namespace ChatHarness
                     await Task.Delay(300);
                     await panel.Inicio;
                     if (proveedor != null) await panel.ElegirProveedorPorIdAsync(proveedor);
+                    if (args.Contains("--ajustes")) panel.AbrirAjustes();
                     if (enviar != null)
                     {
                         if (adjuntar) { ctx.Disparar(); panel.AdjuntarSeleccion = true; }

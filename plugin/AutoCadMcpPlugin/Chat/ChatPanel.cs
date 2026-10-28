@@ -64,7 +64,11 @@ namespace AutoCadMcpPlugin.Chat
         private readonly TextBlock _claveEstado = new TextBlock();
         private readonly CheckBox _reglas = new CheckBox();
         private readonly Slider _temp = new Slider();
-        private readonly Button _perfilBtn = new Button();
+        private readonly StackPanel _listaProv = new StackPanel(), _listaModelos = new StackPanel(), _listaPerfiles = new StackPanel(), _seccionApi = new StackPanel();
+        private readonly Grid _entradaFila = new Grid();
+        private Border _vivoAviso;
+        private readonly Button _notaBtn = new Button();
+        private bool _notaAbierta;
 
         // estado
         private readonly List<ProveedorItem> _provs = new List<ProveedorItem>();
@@ -120,31 +124,23 @@ namespace AutoCadMcpPlugin.Chat
             var raiz = new Grid { Background = _t.Fondo };
             for (int i = 0; i < 5; i++) raiz.RowDefinitions.Add(new RowDefinition { Height = i == 2 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
 
-            // cabecera: proveedor, modelo, ajustes, nueva
-            var cab = new Grid { Margin = new Thickness(6, 6, 6, 4) };
-            cab.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 90 });
-            cab.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 90 });
+            // cabecera: qué IA está activa (nombre y modelo COMPLETOS), ajustes y conversación nueva.
+            // No hay menús desplegables: los menús emergentes de WPF no se abren bien dentro de una paleta de AutoCAD,
+            // así que todo lo que se elige vive en la pantalla de configuración (el botón de la tuerca).
+            var cab = new Grid { Margin = new Thickness(6, 6, 6, 6) };
+            cab.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             cab.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             cab.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            _provBtn.Content = "Proveedor ▾"; _provBtn.HorizontalContentAlignment = HorizontalAlignment.Left;
-            _provBtn.Click += (s, e) => MenuProveedores();
-            var modeloFila = new Grid { Margin = new Thickness(4, 0, 0, 0) };
-            modeloFila.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            modeloFila.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            EstilizarTexto(_modelo); _modelo.ToolTip = "Modelo (se puede escribir)";
-            _modelo.LostFocus += async (s, e) => await GuardarModeloAsync().ConfigureAwait(true);
-            _modeloBtn.Content = "▾"; _modeloBtn.ToolTip = "Listar los modelos del proveedor";
-            _modeloBtn.Click += async (s, e) => await MenuModelosAsync().ConfigureAwait(true);
-            Grid.SetColumn(_modeloBtn, 1);
-            modeloFila.Children.Add(_modelo); modeloFila.Children.Add(_modeloBtn);
-            Grid.SetColumn(modeloFila, 1);
-            _ajustesBtn.Content = "⚙"; _ajustesBtn.ToolTip = "Ajustes"; _ajustesBtn.Margin = new Thickness(4, 0, 0, 0);
-            _ajustesBtn.Click += (s, e) => _ajustes.Visibility = _ajustes.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-            Grid.SetColumn(_ajustesBtn, 2);
-            _nuevaBtn.Content = "＋"; _nuevaBtn.ToolTip = "Conversación nueva"; _nuevaBtn.Margin = new Thickness(4, 0, 0, 0);
+            _provBtn.HorizontalContentAlignment = HorizontalAlignment.Stretch; _provBtn.Padding = new Thickness(8, 5, 8, 5);
+            _provBtn.Click += (s, e) => AbrirAjustes();
+            ActualizarChip();
+            _ajustesBtn.Content = Icono("\uE713"); _ajustesBtn.ToolTip = "Configuración"; _ajustesBtn.Margin = new Thickness(4, 0, 0, 0); _ajustesBtn.Width = 32;
+            _ajustesBtn.Click += (s, e) => { if (_ajustes.Visibility == Visibility.Visible) _ajustes.Visibility = Visibility.Collapsed; else AbrirAjustes(); };
+            Grid.SetColumn(_ajustesBtn, 1);
+            _nuevaBtn.Content = Icono("\uE710"); _nuevaBtn.ToolTip = "Conversación nueva"; _nuevaBtn.Margin = new Thickness(4, 0, 0, 0); _nuevaBtn.Width = 32;
             _nuevaBtn.Click += async (s, e) => await NuevaAsync().ConfigureAwait(true);
-            Grid.SetColumn(_nuevaBtn, 3);
-            cab.Children.Add(_provBtn); cab.Children.Add(modeloFila); cab.Children.Add(_ajustesBtn); cab.Children.Add(_nuevaBtn);
+            Grid.SetColumn(_nuevaBtn, 2);
+            cab.Children.Add(_provBtn); cab.Children.Add(_ajustesBtn); cab.Children.Add(_nuevaBtn);
             var cabBorde = new Border { Background = _t.Panel, BorderBrush = _t.Borde, BorderThickness = new Thickness(0, 0, 0, 1), Child = cab };
             Grid.SetRow(cabBorde, 0); raiz.Children.Add(cabBorde);
 
@@ -184,7 +180,6 @@ namespace AutoCadMcpPlugin.Chat
             contenido.Children.Add(vivo);
 
             ConstruirAjustes();
-            contenido.Children.Add(_ajustes);
             Grid.SetRow(contenido, 2); raiz.Children.Add(contenido);
 
             // estado
@@ -192,7 +187,8 @@ namespace AutoCadMcpPlugin.Chat
 
 
             // entrada
-            var ent = new Grid { Margin = new Thickness(6, 4, 6, 6) };
+            ConstruirAvisoVivo();
+            var ent = _entradaFila; ent.Margin = new Thickness(6, 4, 6, 6);
             ent.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             ent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var caja = new Grid();
@@ -212,8 +208,10 @@ namespace AutoCadMcpPlugin.Chat
             _enviar.Click += async (s, e) => { if (_trabajando) Detener(); else await EnviarAsync().ConfigureAwait(true); };
             Grid.SetColumn(_enviar, 1);
             ent.Children.Add(caja); ent.Children.Add(_enviar);
-            var pie = new Border { BorderBrush = _t.Borde, BorderThickness = new Thickness(0, 1, 0, 0), Background = _t.Panel, Child = new StackPanel { Children = { _estado, ent } } };
+            var pie = new Border { BorderBrush = _t.Borde, BorderThickness = new Thickness(0, 1, 0, 0), Background = _t.Panel, Child = new StackPanel { Children = { _estado, _vivoAviso, ent } } };
             Grid.SetRow(pie, 3); Grid.SetRowSpan(pie, 2); raiz.Children.Add(pie);
+            // la configuración cubre todo el panel (dibujo, conversación y caja de escribir): es una pantalla aparte
+            Grid.SetRow(_ajustes, 1); Grid.SetRowSpan(_ajustes, 4); Panel.SetZIndex(_ajustes, 10); raiz.Children.Add(_ajustes);
 
             MostrarSugerencias();
             ActualizarContexto();
@@ -226,52 +224,214 @@ namespace AutoCadMcpPlugin.Chat
             tb.Padding = new Thickness(4, 3, 4, 3); tb.VerticalContentAlignment = VerticalAlignment.Center;
         }
 
+        // Un glifo de la fuente de iconos de Windows (el ⚙ de texto sale como una flor).
+        private static TextBlock Icono(string glifo, double tam = 15) =>
+            new TextBlock { Text = glifo, FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = tam, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+
+        private void ActualizarChip()
+        {
+            string texto;
+            if (_prov == null) texto = "Elegir con qué IA trabajar";
+            else if (_prov.Vivo) texto = "En vivo · tu agente";
+            else
+            {
+                var m = _modelo.Text.Trim();
+                texto = _prov.Nombre.Replace(" · sin clave", "") + (m.Length > 0 ? "  ·  " + m : "");
+            }
+            var g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.Children.Add(new TextBlock { Text = texto, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+            var flecha = Icono("\uE70D", 10); flecha.Margin = new Thickness(6, 0, 0, 0); Grid.SetColumn(flecha, 1);
+            g.Children.Add(flecha);
+            _provBtn.Content = g;
+            _provBtn.ToolTip = texto + "\n(clic para cambiar de IA, de modelo o la clave)";
+        }
+
+        private void ConstruirAvisoVivo()
+        {
+            var pila = new StackPanel();
+            pila.Children.Add(new TextBlock { Text = "Modo en vivo", FontWeight = FontWeights.SemiBold, Foreground = _t.Texto });
+            pila.Children.Add(new TextBlock
+            {
+                Text = "Tu agente (Claude Code, Codex, OpenCode…) trabaja en su propio programa, con su suscripción. Este chat no se usa con él: " +
+                       "aquí solo ves lo que hace y lo que te responde. Pídele las cosas en su programa.",
+                Foreground = _t.Suave, FontSize = 11.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 6),
+            });
+            _notaBtn.Content = "Dejarle una nota"; _notaBtn.HorizontalAlignment = HorizontalAlignment.Left;
+            _notaBtn.ToolTip = "Una nota que tu agente lee en su siguiente acción (si está quieto, no se entera hasta que lo llames)";
+            _notaBtn.Click += (s, e) => { _notaAbierta = !_notaAbierta; ActualizarModoEntrada(); };
+            pila.Children.Add(_notaBtn);
+            _vivoAviso = new Border
+            {
+                Background = _t.Tarjeta, BorderBrush = _t.Borde, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(8), Margin = new Thickness(6, 6, 6, 0), Child = pila, Visibility = Visibility.Collapsed,
+            };
+        }
+
+        // Con un agente por suscripción el chat se bloquea (el agente corre en su programa): solo queda la nota opcional.
+        private void ActualizarModoEntrada()
+        {
+            bool vivo = _prov != null && _prov.Vivo;
+            _seccionApi.Visibility = vivo ? Visibility.Collapsed : Visibility.Visible;
+            _vivoAviso.Visibility = vivo ? Visibility.Visible : Visibility.Collapsed;
+            _entradaFila.Visibility = (!vivo || _notaAbierta) ? Visibility.Visible : Visibility.Collapsed;
+            _notaBtn.Content = _notaAbierta ? "Ocultar la nota" : "Dejarle una nota";
+            _adjSel.IsEnabled = !vivo;
+        }
+
+        internal void AbrirAjustes()
+        {
+            RefrescarProveedores();
+            RefrescarPerfiles();
+            _listaModelos.Children.Clear();
+            _ajustes.Visibility = Visibility.Visible;
+        }
+
         private void ConstruirAjustes()
         {
             _ajustes.Visibility = Visibility.Collapsed;
             _ajustes.Background = _t.Fondo;
-            var sv = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            var p = new StackPanel { Margin = new Thickness(10) };
+            var sv = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            var p = new StackPanel { Margin = new Thickness(10, 8, 10, 12) };
+
             var titulo = new Grid();
             titulo.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             titulo.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            titulo.Children.Add(new TextBlock { Text = "Ajustes", FontWeight = FontWeights.SemiBold, FontSize = 14, Foreground = _t.Texto });
-            var cerrar = new Button { Content = "✕" };
+            titulo.Children.Add(new TextBlock { Text = "Configuración", FontWeight = FontWeights.SemiBold, FontSize = 15, Foreground = _t.Texto, VerticalAlignment = VerticalAlignment.Center });
+            var cerrar = new Button { Content = Icono("\uE711", 12), Width = 30, ToolTip = "Cerrar" };
             cerrar.Click += (s, e) => _ajustes.Visibility = Visibility.Collapsed;
             Grid.SetColumn(cerrar, 1); titulo.Children.Add(cerrar);
             p.Children.Add(titulo);
 
-            p.Children.Add(Etiqueta("Clave de API del proveedor"));
+            p.Children.Add(Etiqueta("Con qué IA quieres trabajar"));
+            p.Children.Add(_listaProv);
+            p.Children.Add(new TextBlock
+            {
+                Text = "Con una IA de API (Groq, Anthropic, OpenRouter…) el chat de este panel es el agente. Con «En vivo» (Claude Code, Codex, OpenCode…) " +
+                       "el agente trabaja en su propio programa y aquí solo ves sus resultados.",
+                Foreground = _t.Suave, FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0),
+            });
+
+            // lo que solo aplica a una IA de API
+            _seccionApi.Children.Add(Etiqueta("Modelo"));
+            EstilizarTexto(_modelo);
+            _modelo.ToolTip = "Se puede escribir cualquier modelo del proveedor";
+            _modelo.LostFocus += async (s, e) => await GuardarModeloAsync().ConfigureAwait(true);
+            _seccionApi.Children.Add(_modelo);
+            _modeloBtn.Content = "Ver los modelos disponibles"; _modeloBtn.Margin = new Thickness(0, 6, 0, 0); _modeloBtn.HorizontalAlignment = HorizontalAlignment.Left;
+            _modeloBtn.Click += async (s, e) => await ListarModelosAsync().ConfigureAwait(true);
+            _seccionApi.Children.Add(_modeloBtn);
+            _seccionApi.Children.Add(_listaModelos);
+
+            _seccionApi.Children.Add(Etiqueta("Clave de API"));
             _claveEstado.Foreground = _t.Suave; _claveEstado.Margin = new Thickness(0, 0, 0, 4); _claveEstado.TextWrapping = TextWrapping.Wrap;
-            p.Children.Add(_claveEstado);
+            _seccionApi.Children.Add(_claveEstado);
             _clave.Background = _t.Tarjeta; _clave.Foreground = _t.Texto; _clave.BorderBrush = _t.Borde; _clave.Padding = new Thickness(4, 4, 4, 4);
-            p.Children.Add(_clave);
+            _seccionApi.Children.Add(_clave);
             var botones = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
             var guardar = new Button { Content = "Guardar", Background = _t.Acento, Foreground = _t.AcentoTexto };
             guardar.Click += async (s, e) => await GuardarClaveAsync(false).ConfigureAwait(true);
             var borrar = new Button { Content = "Borrar", Margin = new Thickness(6, 0, 0, 0) };
             borrar.Click += async (s, e) => await GuardarClaveAsync(true).ConfigureAwait(true);
             botones.Children.Add(guardar); botones.Children.Add(borrar);
-            p.Children.Add(botones);
+            _seccionApi.Children.Add(botones);
 
-            p.Children.Add(Etiqueta("Especialidad (qué herramientas ve el modelo)"));
-            _perfilBtn.Content = "arquitectura ▾"; _perfilBtn.HorizontalContentAlignment = HorizontalAlignment.Left;
-            _perfilBtn.Click += (s, e) => MenuPerfiles();
-            p.Children.Add(_perfilBtn);
+            _seccionApi.Children.Add(Etiqueta("Especialidad (qué herramientas ve el modelo)"));
+            _seccionApi.Children.Add(_listaPerfiles);
 
             _reglas.Content = "Reglas de dibujo del proyecto (gasta más tokens)"; _reglas.IsChecked = true; _reglas.Foreground = _t.Texto;
             _reglas.Margin = new Thickness(0, 10, 0, 0);
-            p.Children.Add(_reglas);
+            _seccionApi.Children.Add(_reglas);
 
-            p.Children.Add(Etiqueta("Temperatura"));
+            _seccionApi.Children.Add(Etiqueta("Temperatura"));
             _temp.Minimum = 0; _temp.Maximum = 1; _temp.Value = 0.2; _temp.TickFrequency = 0.1; _temp.IsSnapToTickEnabled = true;
-            p.Children.Add(_temp);
+            _seccionApi.Children.Add(_temp);
+            p.Children.Add(_seccionApi);
 
             var web = new Button { Content = "Abrir todas las opciones en el navegador", Margin = new Thickness(0, 14, 0, 0) };
             web.Click += (s, e) => { if (_cli != null) try { Process.Start(new ProcessStartInfo(_cli.Base + "/") { UseShellExecute = true }); } catch { } };
             p.Children.Add(web);
+            var listo = new Button { Content = "Listo", Margin = new Thickness(0, 8, 0, 0), Background = _t.Acento, Foreground = _t.AcentoTexto, Padding = new Thickness(8, 6, 8, 6) };
+            listo.Click += (s, e) => _ajustes.Visibility = Visibility.Collapsed;
+            p.Children.Add(listo);
             sv.Content = p;
             _ajustes.Children.Add(sv);
+        }
+
+        // Una fila elegible, a lo ancho y con el nombre completo (sin menús emergentes).
+        private Button Fila(string titulo, string detalle, bool elegida, Action alElegir)
+        {
+            var pila = new StackPanel();
+            pila.Children.Add(new TextBlock { Text = titulo, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            if (!string.IsNullOrEmpty(detalle))
+                pila.Children.Add(new TextBlock { Text = detalle, Foreground = _t.Suave, FontSize = 11, TextWrapping = TextWrapping.Wrap });
+            var b = new Button
+            {
+                Content = pila, HorizontalContentAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 4), Padding = new Thickness(8, 6, 8, 6),
+                BorderBrush = elegida ? _t.Acento : _t.Borde, BorderThickness = new Thickness(elegida ? 2 : 1),
+            };
+            b.Click += (s, e) => alElegir();
+            return b;
+        }
+
+        private void RefrescarProveedores()
+        {
+            _listaProv.Children.Clear();
+            foreach (var p in _provs)
+            {
+                var item = p;
+                string detalle = item.Vivo ? "Claude Code, Codex, OpenCode…: trabajan en su programa; aquí ves lo que hacen"
+                               : item.Puente ? "usa tu sesión"
+                               : item.Clave ? "con clave guardada" : "falta la clave";
+                _listaProv.Children.Add(Fila(item.Nombre.Replace(" · sin clave", ""), detalle, _prov != null && _prov.Id == item.Id,
+                    async () => await ElegirProveedorAsync(item, true).ConfigureAwait(true)));
+            }
+        }
+
+        private void RefrescarPerfiles()
+        {
+            _listaPerfiles.Children.Clear();
+            foreach (var pf in _perfiles)
+            {
+                var item = pf;
+                _listaPerfiles.Children.Add(Fila(item.id, item.tools + " herramientas", item.id == _perfil, async () =>
+                {
+                    _perfil = item.id; RefrescarPerfiles();
+                    try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { perfil = _perfil } }).ConfigureAwait(true)) { } } catch { }
+                }));
+            }
+        }
+
+        private async Task ListarModelosAsync()
+        {
+            if (_prov == null || _prov.Vivo || _cli == null) return;
+            _listaModelos.Children.Clear();
+            _listaModelos.Children.Add(new TextBlock { Text = "Pidiendo la lista de modelos…", Foreground = _t.Suave, Margin = new Thickness(0, 6, 0, 0) });
+            try
+            {
+                using (var doc = await _cli.PostAsync("/api/modelos", new { proveedor = _prov.Id }).ConfigureAwait(true))
+                {
+                    _listaModelos.Children.Clear();
+                    foreach (var m in doc.RootElement.GetProperty("modelos").EnumerateArray().Take(80))
+                    {
+                        var nombre = m.GetProperty("modelo").GetString();
+                        var estado = m.TryGetProperty("estado", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : "";
+                        var b = Fila(nombre, estado == "?" ? "" : estado, nombre == _modelo.Text.Trim(), async () =>
+                        {
+                            _modelo.Text = nombre; await GuardarModeloAsync().ConfigureAwait(true);
+                            await ListarModelosAsync().ConfigureAwait(true);
+                        });
+                        b.Margin = new Thickness(0, 4, 0, 0);
+                        _listaModelos.Children.Add(b);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _listaModelos.Children.Clear();
+                _listaModelos.Children.Add(new TextBlock { Text = ex.Message, Foreground = _t.Mal, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) });
+            }
         }
 
         private TextBlock Etiqueta(string texto) =>
@@ -332,7 +492,7 @@ namespace AutoCadMcpPlugin.Chat
                             if (m.Value.ValueKind == JsonValueKind.String) _modelos[m.Name] = m.Value.GetString();
                 }
                 var elegido = _provs.FirstOrDefault(x => x.Id == prefProv) ?? _provs.FirstOrDefault(x => x.Clave && !x.Vivo) ?? _provs.FirstOrDefault();
-                _perfilBtn.Content = _perfil + " ▾";
+                RefrescarPerfiles();
                 if (elegido != null) await ElegirProveedorAsync(elegido, false).ConfigureAwait(true);
             }
         }
@@ -340,7 +500,6 @@ namespace AutoCadMcpPlugin.Chat
         private async Task ElegirProveedorAsync(ProveedorItem p, bool guardar)
         {
             _prov = p;
-            _provBtn.Content = p.Nombre + " ▾";
             _modelo.Text = _modelos.TryGetValue(p.Id, out var m) && m.Length > 0 ? m : p.ModeloSugerido;
             _modelo.IsEnabled = !p.Vivo;
             _modeloBtn.IsEnabled = !p.Vivo;
@@ -351,6 +510,7 @@ namespace AutoCadMcpPlugin.Chat
             var vivoGrid = (UIElement)_vivoScroll.Parent;
             vivoGrid.Visibility = vivo ? Visibility.Visible : Visibility.Collapsed;
             if (vivo) VivoIniciar(); else VivoDetener();
+            ActualizarChip(); RefrescarProveedores(); ActualizarModoEntrada();
             if (guardar)
             {
                 try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { proveedor = p.Id } }).ConfigureAwait(true)) { } }
@@ -364,6 +524,7 @@ namespace AutoCadMcpPlugin.Chat
             var m = _modelo.Text.Trim();
             if (m == (_modelos.TryGetValue(_prov.Id, out var antes) ? antes : "")) return;
             _modelos[_prov.Id] = m;
+            ActualizarChip();
             try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { modelos = _modelos } }).ConfigureAwait(true)) { } }
             catch { }
         }
@@ -388,48 +549,6 @@ namespace AutoCadMcpPlugin.Chat
                 _claveEstado.Text = borrar ? "Clave borrada." : "Clave guardada (cifrada en tu usuario de Windows).";
             }
             catch (Exception ex) { _claveEstado.Text = ex.Message; }
-        }
-
-        // ------------------------------------------------------------------------------------------ menús
-
-        private void Menu(Button ancla, IEnumerable<(string texto, Action accion)> items)
-        {
-            var m = new ContextMenu { Background = _t.Tarjeta, Foreground = _t.Texto, BorderBrush = _t.Borde, PlacementTarget = ancla, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
-            foreach (var (texto, accion) in items)
-            {
-                var it = new MenuItem { Header = texto, Foreground = _t.Texto, Background = _t.Tarjeta };
-                var a = accion;
-                it.Click += (s, e) => a();
-                m.Items.Add(it);
-            }
-            m.IsOpen = true;
-        }
-
-        private void MenuProveedores() =>
-            Menu(_provBtn, _provs.Select(p => (p.Nombre, (Action)(async () => await ElegirProveedorAsync(p, true).ConfigureAwait(true)))));
-
-        private void MenuPerfiles() =>
-            Menu(_perfilBtn, _perfiles.Select(pf => (pf.id + "  (" + pf.tools + " herramientas)", (Action)(async () =>
-            {
-                _perfil = pf.id; _perfilBtn.Content = _perfil + " ▾";
-                try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { perfil = _perfil } }).ConfigureAwait(true)) { } } catch { }
-            }))));
-
-        private async Task MenuModelosAsync()
-        {
-            if (_prov == null || _prov.Vivo || _cli == null) return;
-            _estado.Text = "Pidiendo la lista de modelos…";
-            try
-            {
-                using (var doc = await _cli.PostAsync("/api/modelos", new { proveedor = _prov.Id }).ConfigureAwait(true))
-                {
-                    var nombres = doc.RootElement.GetProperty("modelos").EnumerateArray()
-                        .Select(m => m.GetProperty("modelo").GetString()).Take(60).ToList();
-                    _estado.Text = "";
-                    Menu(_modeloBtn, nombres.Select(n => (n, (Action)(async () => { _modelo.Text = n; await GuardarModeloAsync().ConfigureAwait(true); }))));
-                }
-            }
-            catch (Exception ex) { _estado.Text = ""; AgregarAviso(ex.Message); }
         }
 
         // ------------------------------------------------------------------------------------------ conversación

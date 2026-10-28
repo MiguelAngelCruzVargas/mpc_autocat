@@ -50,7 +50,7 @@ namespace AutoCadMcpPlugin.Chat
                 "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='Button'>" +
                 "<Border x:Name='b' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' " +
                 "BorderThickness='{TemplateBinding BorderThickness}' CornerRadius='5' Padding='{TemplateBinding Padding}'>" +
-                "<ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border>" +
+                "<ContentPresenter HorizontalAlignment='{TemplateBinding HorizontalContentAlignment}' VerticalAlignment='Center'/></Border>" +
                 "<ControlTemplate.Triggers>" +
                 "<Trigger Property='IsMouseOver' Value='True'><Setter TargetName='b' Property='Background' Value='" + HoverHex + "'/></Trigger>" +
                 "<Trigger Property='IsEnabled' Value='False'><Setter Property='Opacity' Value='0.45'/></Trigger>" +
