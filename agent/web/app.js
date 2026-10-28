@@ -635,7 +635,7 @@ function renderizarConfiguracion() {
     if (p.clave) {
       const modo = p.proteccion === 'dpapi' ? 'cifrada' : 'almacenada';
       chip.className = 'chip-status encrypted';
-      chip.innerHTML = p.puente ? `<span>${p.clave}</span>` : `<span>${p.clave} (${modo})</span>`;
+      chip.innerHTML = (p.puente || p.vivo) ? `<span>${p.clave}</span>` : `<span>${p.clave} (${modo})</span>`;
     } else if (p.puente) {
       chip.className = 'chip-status warning';
       chip.innerHTML = `<span>${p.detalle}</span>`;
@@ -651,10 +651,11 @@ function renderizarConfiguracion() {
   // Un puente usa la sesión de la persona: no hay clave que guardar ni borrar.
   ['input-api-key', 'btn-save-key', 'btn-delete-key', 'btn-toggle-key-visibility'].forEach(id => {
     const e = $('#' + id);
-    if (e) e.disabled = !!p.puente;
+    if (e) e.disabled = !!(p.puente || p.vivo);
   });
   const campoClave = $('#input-api-key');
-  if (campoClave) campoClave.placeholder = p.puente ? 'No necesita clave: usa tu sesión' : 'Nueva API Key';
+  if (campoClave) campoClave.placeholder = (p.puente || p.vivo) ? 'No necesita clave: usa tu sesión' : 'Nueva API Key';
+  aplicarModoVivo(p);
 
   const inModel = $('#input-model');
   if (inModel) {
@@ -1032,6 +1033,7 @@ async function enviarMensaje() {
   if ((!texto && !AppState.adjuntos.length) || AppState.trabajando) return;
 
   const p = getProveedorActual();
+  if (p && p.vivo) { vivoEnviar(texto); return; }
   if (window.__log) window.__log('enviar: clave=' + !!(p && p.clave) + ' puente=' + !!(p && p.puente));
   if (!p.clave && p.id !== 'local') {
     showToast(p.puente ? p.detalle : `Configura tu API key de ${p.id} antes de continuar`, 'error');
@@ -1350,7 +1352,9 @@ function actualizarHintWizard() {
   const hint = $('#wizard-provider-hint');
   if (!hint || !p) return;
 
-  if (p.puente) {
+  if (p.vivo) {
+    hint.textContent = p.detalle;
+  } else if (p.puente) {
     hint.textContent = 'Usa tu Claude Code instalado y su sesión (sin clave de API). ' + (p.clave ? '' : p.detalle);
   } else if (p.id === 'local') {
     hint.textContent = 'Servidor local (LM Studio / Ollama). No requiere clave de API.';
@@ -1828,6 +1832,157 @@ async function abrirPrimerosPasosSiHaceFalta() {
   // Al abrir el panel: si la copia exige licencia y no hay una valida, esta pantalla va primero.
   const r = await refrescarPrimerosPasos();
   if (r && r.d && r.d.licencia && r.d.licencia.obligatoria && !r.d.licencia.valida) abrirPrimerosPasos();
+}
+
+// ==========================================================================
+// MODO «EN VIVO»: un agente con su propia suscripción (Claude Code, OpenCode...) trabaja en SU programa y
+// llama a las tools de AutoCAD por MCP. Aquí se ve cada llamada mientras pasa y se le dejan mensajes.
+// (Sin ?. ni ??: el navegador embebido de AutoCAD 2022 es Chromium 77.)
+// ==========================================================================
+const Vivo = { timer: null, posAct: 0, posBan: 0, primera: true, tarjetas: {}, abiertas: 0, hayActividad: false,
+               ultima: 0, ocupado: false };
+
+function aplicarModoVivo(p) {
+  const vivo = !!(p && p.vivo);
+  document.body.classList.toggle('modo-vivo', vivo);
+  const caja = $('#chat-input');
+  if (caja && vivo) caja.placeholder = 'Mensaje para tu agente…';
+  if (caja && !vivo) caja.placeholder = EN_AUTOCAD ? 'Escribe tu instrucción…' : 'Describe lo que quieres que dibuje en AutoCAD…';
+  if (vivo) vivoIniciar(); else vivoDetener();
+}
+
+function vivoIniciar() {
+  if (Vivo.timer) return;
+  Vivo.timer = setInterval(vivoSondear, 1200);
+  vivoSondear();
+  fetch('/api/vivo/info').then(r => r.json()).then(i => {
+    const a = $('#vivo-cmd-claude'); if (a) a.textContent = i.claude;
+    const b = $('#vivo-cmd-otro'); if (b) b.textContent = 'comando: ' + i.python + '\nargumentos: ' + i.servidor;
+  }).catch(() => {});
+}
+
+function vivoDetener() {
+  clearInterval(Vivo.timer);
+  Vivo.timer = null;
+}
+
+function vivoEscapar(t) {
+  return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function vivoAgregar(el) {
+  const lista = $('#vivo-lista');
+  if (!lista) return;
+  const alFinal = lista.scrollHeight - lista.scrollTop - lista.clientHeight < 60;
+  lista.appendChild(el);
+  while (lista.childNodes.length > 400) lista.removeChild(lista.firstChild);
+  if (alFinal || Vivo.primera) lista.scrollTop = lista.scrollHeight;
+}
+
+function vivoResumenArgs(args) {
+  let t = '';
+  try { t = Object.keys(args || {}).map(k => k + '=' + (typeof args[k] === 'string' ? args[k] : JSON.stringify(args[k]))).join(', '); } catch (e) { t = ''; }
+  return t.length > 110 ? t.substring(0, 107) + '…' : t;
+}
+
+function vivoPintarEvento(e) {
+  Vivo.hayActividad = true;
+  Vivo.ultima = Math.max(Vivo.ultima, e.ts || 0);
+  if (e.t === 'inicio') {
+    const d = document.createElement('div');
+    d.className = 'vivo-tool corriendo';
+    d.innerHTML = '<div class="vivo-tool-fila"><span class="vivo-ico">⏳</span><span class="vivo-nombre"></span><span class="vivo-ms"></span></div>' +
+                  '<div class="vivo-args"></div><div class="vivo-detalle"></div>';
+    d.querySelector('.vivo-nombre').textContent = e.tool;
+    d.querySelector('.vivo-args').textContent = vivoResumenArgs(e.args);
+    d.onclick = () => d.classList.toggle('abierta');
+    Vivo.tarjetas[e.id] = d;
+    Vivo.abiertas++;
+    vivoAgregar(d);
+  } else if (e.t === 'fin') {
+    let d = Vivo.tarjetas[e.id];
+    if (!d) {                       // el inicio quedó fuera de lo que se cargó: se muestra solo el final
+      d = document.createElement('div');
+      d.className = 'vivo-tool';
+      d.innerHTML = '<div class="vivo-tool-fila"><span class="vivo-ico"></span><span class="vivo-nombre"></span><span class="vivo-ms"></span></div><div class="vivo-args"></div><div class="vivo-detalle"></div>';
+      d.querySelector('.vivo-nombre').textContent = e.tool;
+      d.onclick = () => d.classList.toggle('abierta');
+      vivoAgregar(d);
+    } else {
+      Vivo.abiertas = Math.max(0, Vivo.abiertas - 1);
+      delete Vivo.tarjetas[e.id];
+    }
+    d.classList.remove('corriendo');
+    d.classList.add(e.ok ? 'ok' : 'mal');
+    d.querySelector('.vivo-ico').textContent = e.ok ? '✓' : '✗';
+    d.querySelector('.vivo-ms').textContent = e.ms >= 1000 ? (e.ms / 1000).toFixed(1) + ' s' : (e.ms || 0) + ' ms';
+    d.querySelector('.vivo-detalle').textContent = e.texto || '';
+  }
+}
+
+function vivoPintarMensaje(m) {
+  const d = document.createElement('div');
+  d.className = 'vivo-msg ' + (m.de === 'usuario' ? 'usuario' : 'claude') + ' tipo-' + (m.tipo || 'info');
+  const quien = m.de === 'usuario' ? 'Tú' : 'Tu agente';
+  d.innerHTML = '<div class="vivo-quien"></div><div class="vivo-texto"></div>';
+  d.querySelector('.vivo-quien').textContent = quien + (m.tipo && m.tipo !== 'info' && m.de !== 'usuario' ? ' · ' + m.tipo : '');
+  d.querySelector('.vivo-texto').textContent = m.texto;
+  vivoAgregar(d);
+}
+
+function vivoEstado() {
+  const el = $('#vivo-estado');
+  if (!el) return;
+  const hace = Vivo.ultima ? Math.round(Date.now() / 1000 - Vivo.ultima) : null;
+  if (Vivo.abiertas > 0) {
+    el.className = 'vivo-estado trabajando';
+    el.textContent = 'Tu agente está trabajando…';
+  } else if (hace !== null && hace < 120) {
+    el.className = 'vivo-estado';
+    el.textContent = 'Tu agente está en espera (última acción hace ' + hace + ' s)';
+  } else {
+    el.className = 'vivo-estado';
+    el.textContent = Vivo.hayActividad ? 'Sin actividad reciente' : 'Esperando a tu agente…';
+  }
+  const ayuda = $('#vivo-ayuda');
+  if (ayuda) ayuda.style.display = Vivo.hayActividad ? 'none' : '';
+}
+
+async function vivoSondear() {
+  if (Vivo.ocupado) return;
+  Vivo.ocupado = true;
+  try {
+    const limite = Vivo.primera ? 40 : 0;
+    const r = await Promise.all([
+      fetch('/api/vivo/actividad?desde=' + Vivo.posAct + '&limite=' + limite).then(x => x.json()),
+      fetch('/api/vivo/bandeja?desde=' + Vivo.posBan).then(x => x.json()),
+    ]);
+    Vivo.posAct = r[0].pos;
+    Vivo.posBan = r[1].pos;
+    const items = r[0].eventos.map(e => ({ ts: e.ts, e: e })).concat(r[1].mensajes.map(m => ({ ts: m.ts, m: m })));
+    items.sort((a, b) => a.ts - b.ts);
+    items.forEach(it => { if (it.e) vivoPintarEvento(it.e); else vivoPintarMensaje(it.m); });
+    Vivo.primera = false;
+    vivoEstado();
+  } catch (e) {
+    const el = $('#vivo-estado');
+    if (el) { el.className = 'vivo-estado'; el.textContent = 'Sin conexión con el panel'; }
+  } finally {
+    Vivo.ocupado = false;
+  }
+}
+
+async function vivoEnviar(texto) {
+  const caja = $('#chat-input');
+  if (caja) { caja.value = ''; caja.style.height = 'auto'; }
+  try {
+    const res = await fetch('/api/vivo/mensaje', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                   body: JSON.stringify({ texto: texto }) });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); showToast(j.error || 'No se pudo enviar el mensaje', 'error'); return; }
+    vivoSondear();
+  } catch (e) {
+    showToast('No se pudo enviar el mensaje: ' + e.message, 'error');
+  }
 }
 
 // Iniciar cuando el DOM esté listo

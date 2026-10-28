@@ -256,7 +256,7 @@
         </section>
 
         <!-- MODELO -->
-        <section class="sidebar-section">
+        <section class="sidebar-section solo-api">
           <div class="section-title">Modelo & Parámetros</div>
           <div class="form-group">
             <input id="input-model" placeholder="ej. anthropic/claude-sonnet-5.5" autocomplete="off">
@@ -285,7 +285,7 @@
         </section>
 
         <!-- PRESETS -->
-        <section class="sidebar-section">
+        <section class="sidebar-section solo-api">
           <div class="section-title">Presets</div>
           <div class="form-group">
             <select id="select-preset" class="custom-select"><option value="">— Sin preset —</option></select>
@@ -298,7 +298,7 @@
         </section>
 
         <!-- HERRAMIENTAS -->
-        <section class="sidebar-section">
+        <section class="sidebar-section solo-api">
           <div class="section-title">Especialidad & Reglas</div>
           <div class="form-group">
             <select id="select-profile" class="custom-select"></select>
@@ -333,7 +333,7 @@
         </section>
 
         <!-- PLANTILLAS -->
-        <section class="sidebar-section">
+        <section class="sidebar-section solo-api">
           <div class="section-title">Plantillas Rápidas</div>
           <div class="quick-prompts-list">
             <button class="quick-prompt-btn" data-perfil="arquitectura" data-prompt="Cuantifica lo que está dibujado en el plano abierto (agrupado por partida) y genera el catálogo de conceptos para el presupuesto en .xlsx, sin precios. Lo que la obra necesite y el plano no mida, ponlo POR CUANTIFICAR.">Presupuesto (Catálogo de Conceptos)</button>
@@ -442,6 +442,21 @@
               </div>
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- MODO «EN VIVO»: un agente con su propia suscripción trabaja en su programa; aquí se ve lo que hace -->
+      <div id="vivo-pane" class="vivo-pane">
+        <div id="vivo-estado" class="vivo-estado">Esperando a tu agente…</div>
+        <div id="vivo-lista" class="vivo-lista"></div>
+        <div id="vivo-ayuda" class="vivo-ayuda">
+          <p><b>Conecta tu agente una sola vez</b> a este servidor de AutoCAD:</p>
+          <p>Claude Code (en una terminal):</p>
+          <pre id="vivo-cmd-claude"></pre>
+          <p>Otro agente (OpenCode, etc.): un servidor MCP local con</p>
+          <pre id="vivo-cmd-otro"></pre>
+          <p>Después trabaja con él en su programa de siempre: aquí verás cada herramienta que use, y lo que
+          escribas abajo le llega en su siguiente acción (si está quieto, escríbele en su programa).</p>
         </div>
       </div>
 

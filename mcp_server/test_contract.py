@@ -77,7 +77,7 @@ def main() -> int:
                  # revisar_juego (lee el dibujo).
                  "exam_mod.",
                  # entregables: carpeta del proyecto y juego en un PDF (sin AutoCAD).
-                 "ent_mod.",
+                 "ent_mod.", "panel_mod.",
                  # vistas: check_view_titles (list_entities con cajas).
                  "vistas_mod.",
                  # acabados del 3D (run_code): dress_3d_model y set_3d_view.

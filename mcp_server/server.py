@@ -38,6 +38,7 @@ import estructura as est_mod
 import planta_estructural as pe_mod
 import arcos as arc_mod
 import alberca as alb_mod
+import canal_panel as panel_mod
 import conjunto_estructural as conj_mod
 import detalles_estructura as dest_mod
 import phone3d as phone3d_mod
@@ -7388,6 +7389,37 @@ def set_3d_view(camera: list[float], target: list[float], lens: float = 35.0,
     import model3d_acabados as acab_mod
     return acab_mod.set_3d_view(camera=camera, target=target, lens=lens, perspective=perspective,
                                 roof_visible=roof_visible, isolate_3d=isolate_3d)
+
+
+# ---------------------------------------------------------------------------------------------- canal con el panel
+
+@mcp.tool()
+def panel_decir(texto: str, tipo: str = "info") -> dict[str, Any]:
+    """Le ESCRIBE A LA PERSONA en el panel de AutoCAD (pestaña «En vivo»), sin que tenga que mirar tu terminal.
+    Úsalo para lo que conviene ver en AutoCAD mismo: qué vas a hacer, qué falló, una pregunta, o que terminaste.
+
+    texto: el mensaje, corto y concreto.
+    tipo: 'info' (por defecto), 'pregunta' (espera su respuesta: la leerás con panel_leer_mensajes),
+          'aviso' (algo que no cumple o falló) o 'listo' (terminaste)."""
+    if tipo not in ("info", "pregunta", "aviso", "listo"):
+        raise ValueError("tipo: 'info', 'pregunta', 'aviso' o 'listo'.")
+    msg = panel_mod.enviar("claude", texto, tipo)
+    return {"ok": True, "id": msg["id"]}
+
+
+@mcp.tool()
+def panel_leer_mensajes(marcar_leidos: bool = True) -> dict[str, Any]:
+    """Lee lo que LA PERSONA escribió en el panel de AutoCAD y todavía no leíste. Si hay mensajes sin leer, el
+    resultado de cualquier otra tool te lo avisa («La persona dejó N mensaje(s)...»): ahí es cuando se llama.
+    Si estás quieto no te enteras de nada: la persona tiene que escribirte en tu propio programa para despertarte.
+
+    marcar_leidos: False deja los mensajes pendientes (solo mirar)."""
+    msgs = panel_mod.mensajes_pendientes(marcar_leidos)
+    return {"count": len(msgs), "mensajes": [{"texto": m["texto"], "ts": m["ts"]} for m in msgs],
+            "nota": "Contesta con panel_decir." if msgs else "No hay mensajes nuevos."}
+
+
+panel_mod.instalar(mcp)        # registra la actividad de TODA tool (y avisa de la bandeja) para el panel «En vivo»
 
 
 if __name__ == "__main__":

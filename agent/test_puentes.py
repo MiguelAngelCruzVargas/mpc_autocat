@@ -214,6 +214,7 @@ def test_correr_con_cli_falso() -> None:
 def test_en_la_interfaz_web() -> None:
     from . import web
     from .cli import PERFILES
+    os.environ["AUTOCAD_IA_PUENTES"] = "1"      # los puentes están ocultos por defecto (ver _proveedores_puente)
     with tempfile.TemporaryDirectory() as d:
         registro, cli = preparar_stub(d)
         web.Sesion.ARCHIVO = os.path.join(d, "conversacion.json")

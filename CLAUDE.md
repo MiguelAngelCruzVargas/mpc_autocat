@@ -1448,6 +1448,19 @@ Lo de arriba (`chat_server.py`) fue el primer prototipo. **Lo que abre `MCPCHAT`
 - **Gemini CLI** (instalado aquí) contesta «This client is no longer supported for Gemini Code Assist for individuals»; **Codex** no está instalado: sin puente.
 - El camino con un modelo real SÍ se probó por Groq (`openai/gpt-oss-120b`, clave guardada del usuario, una llamada de 131 tokens).
 
+### 8.sexies-ter Modo «En vivo»: el agente con suscripción trabaja en SU programa y el panel lo muestra y es el canal
+
+Lo de lanzar `claude -p` desde el panel (puentes) es frágil: las suscripciones suelen bloquear ese uso (en la máquina del autor, «Your organization has disabled Claude subscription access»). Lo que SÍ funciona con una suscripción es lo que ya ocurre con Claude Code: el agente corre en su propio programa, con su permiso y su modelo, y llama a las tools por MCP. Por eso hay dos modos, y el chat de API ya no es el único:
+
+- **Proveedor con API (Groq, Anthropic, OpenRouter...)**: el chat del panel ES el agente (como siempre).
+- **«En vivo» (proveedor `en-vivo`, sin clave)**: el panel muestra EN VIVO cada tool que llama el agente (⏳ corriendo → ✓/✗ con duración; clic para ver el resultado) y es el canal de mensajes con él. Los puentes de `puentes.py` siguen existiendo pero ocultos salvo `AUTOCAD_IA_PUENTES=1`.
+
+**Cómo funciona (`mcp_server/canal_panel.py`, sin AutoCAD, dos archivos en `%LOCALAPPDATA%\AutoCadMcp`)**: `canal_panel.instalar(mcp)` (una línea al final de `server.py`) envuelve la ejecución de TODA tool y anota su inicio y fin en `actividad.jsonl` (argumentos acortados, duración, 300 caracteres del resultado; de `run_code` solo el tamaño del código). El panel lee ese archivo (`/api/vivo/actividad?desde=<byte>`, cada 1,2 s) y `bandeja.jsonl` (`/api/vivo/bandeja`). La persona escribe en el panel (`POST /api/vivo/mensaje`); el agente lo recibe de dos formas: la tool `panel_leer_mensajes`, y **un aviso que se agrega al resultado de CUALQUIER tool que ejecute** mientras haya mensajes sin leer («📬 La persona dejó N mensaje(s)...»). El agente le contesta con `panel_decir(texto, tipo)` (`info`, `pregunta`, `aviso`, `listo`). **Límite**: si el agente está quieto nadie lo despierta desde aquí; el mensaje espera a su próxima acción (hay que escribirle en su programa). `AUTOCAD_IA_SIN_CANAL=1` apaga todo el envoltorio. El registro nunca puede tumbar una tool (falla en silencio) y no cambia sus resultados: lo único que se agrega es el bloque de aviso.
+
+**Conectar el agente** (una vez; el panel lo muestra con la ruta real, `/api/vivo/info`): Claude Code: `claude mcp add autocad -s user -- "<python.exe>" "<mcp_server\server.py>"`; cualquier otro agente MCP: comando `python.exe` con argumento `server.py`. Con esto el agente tiene las 295 tools (no un perfil recortado) y el panel solo observa.
+
+**Probado**: `mcp_server/test_canal_panel.py` (42), `agent/test_vivo.py` (16, el panel por HTTP) y, a mano en el navegador a 340 px de ancho, el modo con actividad de mentira. **Sin verificar**: dentro del panel de AutoCAD 2022 (Chromium 77), ni con un agente real (Claude Code) llamando al servidor y leyendo el aviso de la bandeja.
+
 ## 9. Verificar antes de dar por terminado
 
 `check_all` corre todos los checks de cierre en una llamada, incluidos los

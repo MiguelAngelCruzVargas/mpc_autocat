@@ -49,6 +49,26 @@ def _licencia_mod() -> Any:
     return licencia
 
 
+def _canal_mod() -> Any:
+    """canal_panel.py vive con el servidor MCP (él escribe la actividad y la bandeja): el panel lee de ahí."""
+    import sys
+    if _MCP_DIR not in sys.path:
+        sys.path.insert(0, _MCP_DIR)
+    import canal_panel
+    return canal_panel
+
+
+def _python_mcp() -> str:
+    """El python.exe con que se lanza el servidor MCP (aunque este proceso corra con pythonw)."""
+    import sys
+    exe = sys.executable
+    if os.path.basename(exe).lower() == "pythonw.exe":
+        c = os.path.join(os.path.dirname(exe), "python.exe")
+        if os.path.exists(c):
+            return c
+    return exe
+
+
 def _estado_licencia() -> dict[str, Any]:
     lic = _licencia_mod()
     e = dict(lic.estado(tocar_reloj=False))
@@ -153,8 +173,18 @@ SESION = Sesion()
 
 
 def _proveedores_puente() -> list[dict[str, Any]]:
-    """Los puentes (Claude Code...) como proveedores más: sin clave, 'disponibles' si el CLI está instalado."""
-    filas = []
+    """Los proveedores que NO son una API con clave.
+
+    'en-vivo': el agente (Claude Code, OpenCode...) corre en su propio programa con su propia suscripción; el panel
+    muestra en vivo lo que hace y es el canal de mensajes con él (canal_panel.py). Va siempre.
+    Los puentes (puentes.py: lanzar `claude -p` desde aquí) quedan ocultos salvo AUTOCAD_IA_PUENTES=1: las
+    suscripciones suelen bloquear ese uso y es más confiable dejar al agente trabajar en lo suyo."""
+    filas = [{"id": "en-vivo", "modeloSugerido": "", "variable": "", "clave": "Tu agente (Claude Code, OpenCode…)",
+              "proteccion": "sesion", "puente": False, "vivo": True,
+              "detalle": "Tu agente trabaja en su propio programa con su suscripción; aquí ves lo que hace en vivo "
+                         "y le dejas mensajes."}]
+    if not os.environ.get("AUTOCAD_IA_PUENTES"):
+        return filas
     for pid, cfg in puentes.PUENTES.items():
         e = puentes.estado(pid)
         filas.append({"id": pid, "modeloSugerido": "", "variable": "",
@@ -591,6 +621,10 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if self.path.startswith("/api/vivo/"):
+            self._vivo_get()
+            return
+
         # Archivos estáticos en agent/web/
         ruta_rel = self.path.split("?")[0].lstrip("/")
         if ruta_rel in ("", "index.html"):
@@ -747,6 +781,14 @@ class Handler(BaseHTTPRequestHandler):
             self._captura(datos)
             return
 
+        if self.path == "/api/vivo/mensaje":
+            texto = str(datos.get("texto", "")).strip()
+            if not texto:
+                self._json({"error": "El mensaje está vacío."}, 400)
+                return
+            self._json({"ok": True, "id": _canal_mod().enviar("usuario", texto)["id"]})
+            return
+
         if self.path == "/api/chat":
             self._chat(datos)
             return
@@ -768,6 +810,36 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self.send_error(404)
+
+    # ------------------------------------------------------ modo «en vivo»
+
+    def _vivo_get(self) -> None:
+        """Lo que el panel muestra del agente que trabaja en su propio programa: su actividad (cada tool, en vivo),
+        la bandeja de mensajes en los dos sentidos y cómo conectarlo si todavía no está conectado."""
+        url = urllib.parse.urlsplit(self.path)
+        q = urllib.parse.parse_qs(url.query)
+
+        def entero(nombre: str, defecto: int) -> int:
+            try:
+                return max(0, int((q.get(nombre) or [defecto])[0]))
+            except (TypeError, ValueError):
+                return defecto
+        canal = _canal_mod()
+        if url.path == "/api/vivo/actividad":
+            ev, pos = canal.leer_actividad(entero("desde", 0))
+            limite = entero("limite", 200)
+            self._json({"eventos": ev[-limite:] if limite else ev, "pos": pos})
+        elif url.path == "/api/vivo/bandeja":
+            msgs, pos = canal.leer_bandeja(entero("desde", 0))
+            self._json({"mensajes": msgs, "pos": pos})
+        elif url.path == "/api/vivo/info":
+            servidor = os.path.join(_MCP_DIR, "server.py")
+            py = _python_mcp()
+            self._json({"servidor": servidor, "python": py,
+                        "claude": f'claude mcp add autocad -s user -- "{py}" "{servidor}"',
+                        "carpeta": canal.carpeta()})
+        else:
+            self.send_error(404)
 
     # --------------------------------------------------------- captura
 
@@ -893,6 +965,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         puente = str(datos.get("proveedor", ""))
+        if puente == "en-vivo":
+            self._json({"error": "El modo «En vivo» no usa el chat: tu agente trabaja en su propio programa. "
+                                 "Escríbele desde el panel y le llega en su siguiente acción."}, 400)
+            return
         if puentes.es_puente(puente):
             # Un puente no usa clave ni el bucle de este programa: el agente (Claude Code) trae lo suyo.
             if imagenes:

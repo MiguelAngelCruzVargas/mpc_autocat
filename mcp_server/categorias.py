@@ -269,6 +269,9 @@ _r("p_entrega", "check_all check_sheet check_annotations check_view_titles check
 _r("p_entrega", "package_deliverables")
 _r("p_entrega", "quantify_portico export_portico_report")
 
+# ---- canal con el panel de AutoCAD (agente con su propia sesión: Claude Code, OpenCode...)
+_r("sistema", "panel_decir panel_leer_mensajes")
+
 
 # ------------------------------------------------------------------ flujos de trabajo por tipo de proyecto
 

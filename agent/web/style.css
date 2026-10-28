@@ -1675,3 +1675,39 @@ html.en-autocad, .en-autocad body { font-size: 12.5px; }
 .en-autocad aside.sidebar { width: 100%; max-width: 100%; left: -100%; box-shadow: none; }
 .en-autocad aside.sidebar.mobile-open { left: 0; }
 .en-autocad .sidebar-backdrop { display: none !important; }
+
+/* ---- Modo «En vivo»: lo que hace un agente con su propia suscripción, mientras lo hace ---- */
+.vivo-pane { display: none; flex: 1; flex-direction: column; min-height: 0; padding: 6px 6px 0; }
+.modo-vivo .vivo-pane { display: flex; }
+.modo-vivo #chat-messages, .modo-vivo .solo-api { display: none !important; }
+.vivo-estado { font-size: 12px; color: var(--text-muted); padding: 4px 6px; border-bottom: 1px solid var(--border-subtle); }
+.vivo-estado.trabajando { color: var(--primary-light); }
+.vivo-estado.trabajando::after { content: " ⟳"; display: inline-block; animation: vivoGira 1s linear infinite; }
+@keyframes vivoGira { to { transform: rotate(360deg); } }
+.vivo-lista { flex: 1; overflow-y: auto; padding: 6px 0; }
+.vivo-lista > * + * { margin-top: 5px; }
+.vivo-tool { background: var(--bg-card); border: 1px solid var(--border-default); border-left: 3px solid var(--text-dim);
+  border-radius: var(--radius-md); padding: 5px 8px; cursor: pointer; }
+.vivo-tool.corriendo { border-left-color: var(--primary-light); }
+.vivo-tool.ok { border-left-color: var(--success); }
+.vivo-tool.mal { border-left-color: var(--error); }
+.vivo-tool-fila { display: flex; align-items: baseline; }
+.vivo-tool-fila > * + * { margin-left: 6px; }
+.vivo-nombre { font-family: var(--font-mono); font-weight: 600; font-size: 12px; flex: 1; word-break: break-all; }
+.vivo-ms { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+.vivo-args { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; word-break: break-all; }
+.vivo-args:empty { display: none; }
+.vivo-detalle { display: none; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap;
+  word-break: break-all; margin-top: 4px; max-height: 160px; overflow: auto; }
+.vivo-tool.abierta .vivo-detalle { display: block; }
+.vivo-msg { border-radius: var(--radius-md); padding: 6px 8px; border: 1px solid var(--border-default); background: var(--bg-card); }
+.vivo-msg.usuario { background: rgba(37, 99, 235, 0.12); border-color: rgba(37, 99, 235, 0.35); margin-left: 24px; }
+.vivo-msg.tipo-pregunta { border-color: var(--warning); }
+.vivo-msg.tipo-aviso { border-color: var(--error); }
+.vivo-msg.tipo-listo { border-color: var(--success); }
+.vivo-quien { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+.vivo-texto { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; }
+.vivo-ayuda { color: var(--text-muted); font-size: 12px; padding: 6px; }
+.vivo-ayuda p { margin: 0 0 6px; }
+.vivo-ayuda pre { background: var(--bg-main); border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  padding: 6px; margin: 0 0 8px; font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; word-break: break-all; user-select: all; }
