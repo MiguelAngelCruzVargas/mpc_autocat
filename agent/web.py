@@ -14,6 +14,7 @@ import asyncio
 import json
 import mimetypes
 import os
+import re
 import socket
 import threading
 import urllib.parse
@@ -203,6 +204,8 @@ CAPTURAS = os.path.join(os.environ.get("TEMP", "."), "autocad_mcp_ui")
 # catálogo real y se cachea — abrir el servidor MCP en cada request para
 # esto sería absurdo.
 _CONTEO: dict[str, int] = {}
+# Qué tools cuentan como «dibujar»: la misma lista que usa la interfaz (REGEX_DIBUJO en app.js).
+REGEX_DIBUJO = re.compile(r"^(create_|draw_|place_|suggest_furniture|dimension_|label_|union_|compose_|move_|offset_|mirror_|array_|copy_|rotate_|scale_)")
 _NOMBRES_PERFIL: dict[str, list[str]] = {}      # perfil -> nombres de sus tools (se leen una vez)
 
 
@@ -1152,12 +1155,24 @@ class Handler(BaseHTTPRequestHandler):
                     SESION.mensajes.append({"role": "user",
                                             "content": pedido})
                 mensajes = SESION.mensajes
+            dibujo = {"hubo": False}
+
+            def al_evento(tipo: str, cuerpo: dict) -> None:
+                if tipo == "resultado" and not cuerpo.get("error") and REGEX_DIBUJO.match(str(cuerpo.get("nombre", ""))):
+                    dibujo["hubo"] = True
+                emitir(tipo, cuerpo)
+
             await conversar(mcp, proveedor, mensajes, tools,
-                            lambda t, d: emitir(t, d),
+                            al_evento,
                             vueltas_max=int(datos.get("vueltas") or 40),
                             cancelado=SESION.cancelar.is_set,
                             limite_tools=descubrir.LIMITES.get(str(datos.get("proveedor", ""))),
                             bajo_demanda=str(datos.get("perfil", "")) == "descubrir")
+            if dibujo["hubo"] and EN_AUTOCAD:
+                # Dentro de AutoCAD no hay visor: lo que se dibujó tiene que VERSE. Una línea de 5 unidades en una
+                # vista de cientos queda escondida bajo el ícono de ejes y parece que no pasó nada.
+                salida, error = await mcp.ejecutar("zoom_extents", {})
+                emitir("nota", {"texto": "Vista ajustada para mostrar lo dibujado." if not error else "No pude ajustar la vista: " + salida[:120]})
 
         SESION.cancelar.clear()
         try:

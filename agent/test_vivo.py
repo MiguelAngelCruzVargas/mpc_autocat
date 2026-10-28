@@ -92,6 +92,48 @@ def main() -> int:
     check("el panel puede leer qué herramientas trae una especialidad", d == {"perfil": "estructura", "tools": ["design_beam", "create_line"]})
     check("una especialidad que no existe es 404", http_("GET", "/api/perfil_tools?perfil=nada")[0] == 404)
 
+    print("test_la_vista_se_ajusta_sola_al_dibujar")
+    import asyncio
+
+    class McpFalso:
+        def __init__(self):
+            self.ejecutadas = []
+
+        def catalogo(self, incluir=None, limite_descripcion=0):
+            return [{"type": "function", "function": {"name": n, "description": "x", "parameters": {"type": "object", "properties": {}}}}
+                    for n in ("create_line", "list_layers", "zoom_extents")]
+
+        async def ejecutar(self, nombre, argumentos):
+            self.ejecutadas.append(nombre)
+            return ('{"handle": "2A0"}', False)
+
+    class ProveedorGuion:
+        formato, modelo = "openai", "falso"
+
+        def __init__(self, herramienta):
+            self.herramienta, self.n = herramienta, 0
+
+        def completar(self, mensajes, tools):
+            self.n += 1
+            if self.n == 1:
+                return {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": self.herramienta, "arguments": "{}"}}]}
+            return {"role": "assistant", "content": "Listo."}
+
+    def pedir(herramienta):
+        mcp = McpFalso()
+        web.MOTOR.usar = lambda trabajo: asyncio.run(trabajo(mcp))
+        web.providers.construir = lambda *a, **k: ProveedorGuion(herramienta)
+        web.EN_AUTOCAD = True
+        st, cuerpo = http_("POST", "/api/chat", {"mensaje": "hazlo", "proveedor": "groq", "perfil": "arquitectura"})
+        web.EN_AUTOCAD = False
+        return mcp, [json.loads(l[6:]) for l in cuerpo.split("\n\n") if l.startswith("data: ")]
+    mcp, ev = pedir("create_line")
+    check("dentro de AutoCAD, tras dibujar se ajusta la vista (zoom_extents)", mcp.ejecutadas == ["create_line", "zoom_extents"], str(mcp.ejecutadas))
+    check("y lo cuenta con una nota", any(e["tipo"] == "nota" and "Vista ajustada" in e["texto"] for e in ev))
+    mcp, ev = pedir("list_layers")
+    check("una consulta que no dibuja NO mueve la vista", mcp.ejecutadas == ["list_layers"], str(mcp.ejecutadas))
+
     print("test_como_conectar")
     d = json.loads(http_("GET", "/api/vivo/info")[1])
     check("da el comando exacto para Claude Code, con la ruta real del servidor MCP",
