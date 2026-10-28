@@ -1182,7 +1182,10 @@ def iniciar(puerto: int = 8770, abrir: bool = True, en_autocad: bool = False) ->
     if en_autocad:      # el comando MCPCHAT del plugin lee esta URL para poner el panel
         os.makedirs(_ESTADO_AUTOCAD, exist_ok=True)
         with open(_URL_PANEL, "w", encoding="utf-8") as fh:
-            fh.write(url)
+            # Un `?v=` distinto en cada arranque: el comando MCPCHAT crea el panel de nuevo solo si la URL cambió, así
+            # nunca se queda mostrando la página de un servidor anterior (el plugin la sigue pidiendo a /api/ping).
+            import time as _t
+            fh.write(url + "?v=" + str(int(_t.time())))
         threading.Thread(target=_vigilar_autocad, daemon=True).start()
     try:
         servidor.serve_forever()

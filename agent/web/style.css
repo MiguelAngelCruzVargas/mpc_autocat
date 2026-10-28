@@ -242,7 +242,7 @@ input::placeholder, textarea::placeholder {
 .sidebar-backdrop {
   display: none;
   position: fixed;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   background: rgba(0, 0, 0, 0.6);
   z-index: 40;
 }
@@ -297,7 +297,7 @@ input::placeholder, textarea::placeholder {
   
   .app-layout.con-plano #plan-viewer-pane {
     position: fixed;
-    inset: 0;
+    top: 0; right: 0; bottom: 0; left: 0;
     z-index: 30;
   }
 
@@ -1188,7 +1188,7 @@ main.chat-main {
    ========================================================================== */
 .modal-overlay {
   position: fixed;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   z-index: 100;
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(8px);
@@ -1202,7 +1202,8 @@ main.chat-main {
 }
 
 .modal-card {
-  width: min(500px, 100%);
+  width: 100%;
+  max-width: 500px;
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
@@ -1612,7 +1613,7 @@ main.chat-main {
 }
 
 /* Primeros pasos */
-.pp-card { width: min(640px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; }
+.pp-card { width: calc(100vw - 24px); max-width: 640px; max-height: calc(100vh - 24px); overflow-y: auto; }
 .pp-lista { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 12px; }
 .pp-paso { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: start; padding: 14px; border: 1px solid var(--border, rgba(255,255,255,.12)); border-radius: 12px; background: rgba(255,255,255,.03); }
 .pp-paso.ok { border-color: rgba(61,220,132,.55); }
@@ -1668,3 +1669,9 @@ html.en-autocad, .en-autocad body { font-size: 12.5px; }
 .en-autocad .btn-send { padding: 6px 10px; }
 .en-autocad .input-meta-bar { display: none; }
 .en-autocad .tool-card, .en-autocad .tool-call { font-size: 11.5px; }
+
+/* Las opciones (el panel lateral) ocupan TODO el panel de AutoCAD, como una pantalla aparte: en un panel angosto un
+   cajón de 310 px tapa casi todo igual, y así se aprovecha el espacio. Se abre con la hamburguesa y se cierra con la X. */
+.en-autocad aside.sidebar { width: 100%; max-width: 100%; left: -100%; box-shadow: none; }
+.en-autocad aside.sidebar.mobile-open { left: 0; }
+.en-autocad .sidebar-backdrop { display: none !important; }

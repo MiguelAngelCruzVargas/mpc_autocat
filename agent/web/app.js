@@ -396,7 +396,65 @@ function conectarCostoYPresets() {
   if (btnB) btnB.onclick = borrarPreset;
 }
 
+// Chromium 77 (el navegador embebido de AutoCAD 2022) acepta `gap` solo en grid: en flexbox lo ignora y todo queda
+// pegado. Si no se soporta, por cada regla del CSS con `gap` que se use en un contenedor flex se agrega su
+// equivalente con margen entre hijos (`> * + *`). Es CSS generado una vez: sirve también para lo que se agregue luego.
+function compatFlexGap() {
+  const prueba = document.createElement('div');
+  prueba.style.cssText = 'display:flex;flex-direction:column;row-gap:1px;position:absolute;visibility:hidden';
+  prueba.appendChild(document.createElement('div'));
+  prueba.appendChild(document.createElement('div'));
+  document.body.appendChild(prueba);
+  const soportado = prueba.scrollHeight === 1;
+  document.body.removeChild(prueba);
+  if (soportado) return;
+
+  const valores = (r) => {
+    const g = (r.style.getPropertyValue('gap') || '').trim().split(/\s+/).filter(Boolean);
+    return {
+      fila: r.style.getPropertyValue('row-gap') || g[0] || '',
+      col: r.style.getPropertyValue('column-gap') || g[1] || g[0] || '',
+    };
+  };
+  const generar = (regla) => {
+    const v = valores(regla);
+    if (!v.fila && !v.col) return '';
+    const sel = regla.selectorText;
+    if (!sel || sel.indexOf('::') >= 0) return '';
+    let ejemplo = null;
+    try { ejemplo = document.querySelector(sel); } catch (e) { return ''; }
+    let display = regla.style.getPropertyValue('display');
+    let dir = regla.style.getPropertyValue('flex-direction') || 'row';
+    if (ejemplo) {
+      const cs = getComputedStyle(ejemplo);
+      display = cs.display;
+      dir = cs.flexDirection;
+    }
+    if (display.indexOf('flex') < 0) return '';
+    const hijos = sel.split(',').map(x => x.trim() + ' > * + *').join(',');
+    if (dir.indexOf('column') === 0) return v.fila ? hijos + '{margin-top:' + v.fila + '}\n' : '';
+    return v.col ? hijos + '{margin-left:' + v.col + '}\n' : '';
+  };
+  let css = '';
+  for (const hoja of Array.from(document.styleSheets)) {
+    let reglas;
+    try { reglas = Array.from(hoja.cssRules); } catch (e) { continue; }     // hojas de otro origen (fuentes)
+    for (const r of reglas) {
+      if (r.type === 1) css += generar(r);
+      else if (r.type === 4) {
+        const dentro = Array.from(r.cssRules).filter(x => x.type === 1).map(generar).join('');
+        if (dentro) css += '@media ' + r.conditionText + '{' + dentro + '}\n';
+      }
+    }
+  }
+  const estilo = document.createElement('style');
+  estilo.id = 'compat-flex-gap';
+  estilo.textContent = css;
+  document.head.appendChild(estilo);
+}
+
 async function init() {
+  try { compatFlexGap(); } catch (e) { console.error('compatFlexGap', e); }
   if (EN_AUTOCAD) {
     const caja = document.getElementById('chat-input');
     if (caja) caja.placeholder = 'Escribe tu instrucción…';
@@ -422,7 +480,7 @@ async function init() {
       // en uno cualquiera y que después no entienda por qué está usando
       // ese. Se pregunta UNA vez; después queda recordado.
       preguntarCualProveedor(varios);
-    } else if (!p?.clave && !configurado && p?.id !== 'local' && !saltar) {
+    } else if (!(p && p.clave) && !configurado && !(p && p.id === 'local') && !saltar) {
       abrirWizard(0);
     }
   } catch (err) {
@@ -500,7 +558,7 @@ function aplicarPreferencias() {
 
 function cargarConfiguracionGuardada() {
   const prov = pref('proveedor');
-  if (prov && AppState.servidor?.proveedores?.some(p => p.id === prov)) {
+  if (prov && ((AppState.servidor && AppState.servidor.proveedores) || []).some(p => p.id === prov)) {
     const selProv = $('#select-provider');
     const wizProv = $('#wizard-provider');
     if (selProv) selProv.value = prov;
@@ -518,7 +576,7 @@ function cargarConfiguracionGuardada() {
  */
 function elegirProveedorInicial() {
   if (pref('proveedor')) return null;
-  const listos = (AppState.servidor?.proveedores || [])
+  const listos = ((AppState.servidor && AppState.servidor.proveedores) || [])
     .filter(p => p.clave);
   if (!listos.length) return null;
 
@@ -562,8 +620,8 @@ function preguntarCualProveedor(listos) {
 
 function getProveedorActual() {
   const selProv = $('#select-provider');
-  const id = selProv ? selProv.value : (AppState.servidor?.proveedores?.[0]?.id || 'anthropic');
-  return AppState.servidor?.proveedores?.find(p => p.id === id);
+  const id = selProv ? selProv.value : (((((AppState.servidor && AppState.servidor.proveedores) || [])[0]) || {}).id || 'anthropic');
+  return ((AppState.servidor && AppState.servidor.proveedores) || []).find(p => p.id === id);
 }
 
 function renderizarConfiguracion() {
@@ -693,7 +751,7 @@ async function listarModelos(probar = false) {
       return;
     }
 
-    if (!data.modelos?.length) {
+    if (!(data.modelos && data.modelos.length)) {
       c.innerHTML = `<div style="font-size:11px;color:var(--text-dim);padding:4px;">No se encontraron modelos.</div>`;
       return;
     }
@@ -1268,7 +1326,7 @@ function irPasoWizard(paso) {
     const p = getProveedorActual();
     const wChip = $('#wizard-key-status-chip');
     if (wChip) {
-      if (p?.clave) {
+      if (p && p.clave) {
         wChip.className = 'chip-status encrypted';
         wChip.innerHTML = `🔒 Ya configurada (${p.clave})`;
       } else {
@@ -1284,7 +1342,7 @@ function irPasoWizard(paso) {
 function actualizarHintWizard() {
   const wizProv = $('#wizard-provider');
   const val = wizProv ? wizProv.value : 'anthropic';
-  const p = AppState.servidor?.proveedores?.find(x => x.id === val);
+  const p = ((AppState.servidor && AppState.servidor.proveedores) || []).find(x => x.id === val);
   const hint = $('#wizard-provider-hint');
   if (!hint || !p) return;
 
@@ -1301,7 +1359,7 @@ async function ejecutarDiagnosticos() {
   const p = getProveedorActual();
 
   // 1. Clave
-  const okClave = !!p?.clave || p?.id === 'local';
+  const okClave = !!(p && p.clave) || !!(p && p.id === 'local');
   setDiag('diag-light-key', okClave, 'diag-text-key', 
     okClave ? (p.clave || 'No requerida (local)') : 'Falta guardar la clave');
 
@@ -1490,7 +1548,7 @@ function registrarEventos() {
   const areaPegar = $('#chat-input');
   if (areaPegar) {
     areaPegar.addEventListener('paste', (e) => {
-      const files = Array.from(e.clipboardData?.files || []);
+      const files = Array.from((e.clipboardData && e.clipboardData.files) || []);
       if (files.length) { e.preventDefault(); agregarArchivos(files); }
     });
   }
@@ -1500,7 +1558,7 @@ function registrarEventos() {
       zonaChat.addEventListener(ev, (e) => {
         e.preventDefault();
         if (ev === 'drop') {
-          agregarArchivos(Array.from(e.dataTransfer?.files || []));
+          agregarArchivos(Array.from((e.dataTransfer && e.dataTransfer.files) || []));
         }
         zonaChat.classList.toggle('drag-over', ev === 'dragover');
       }));
@@ -1581,7 +1639,7 @@ function registrarEventos() {
   document.addEventListener('click', (e) => {
     const preset = e.target.closest('.preset-card') || e.target.closest('.quick-prompt-btn');
     if (preset) {
-      const texto = preset.dataset.prompt || preset.querySelector('.preset-text')?.textContent.trim();
+      const texto = preset.dataset.prompt || ((preset.querySelector('.preset-text') || {}).textContent || '').trim();
       if (texto && inChat) {
         inChat.value = texto;
         inChat.focus();
