@@ -13,8 +13,10 @@ programa. Acá vive todo lo demás:
 Claude no recibe las ~300 herramientas de una vez (serían 100 mil tokens por mensaje): recibe tres de oficio
 —buscar, describir, ejecutar— y descubre las que necesita, igual que se usa list_tool_categories.
 
-La clave de API es del USUARIO (consola de Anthropic) y se guarda cifrada con DPAPI de Windows en
-%LOCALAPPDATA%\\AutoCadMcp\\chat.json. Una suscripción de Claude no sirve para esto: la API es aparte.
+El modelo puede ser Claude (API de Anthropic) o uno abierto en Groq (chat_proveedores.py): las herramientas, los
+permisos y el bucle son los mismos. La clave de API es del USUARIO, una por proveedor (console.anthropic.com,
+console.groq.com), y se guarda cifrada con DPAPI de Windows en %LOCALAPPDATA%\\AutoCadMcp\\chat.json. Una suscripción
+de Claude no sirve para esto: la API es aparte.
 
 Uso:  python chat_server.py            (lo arranca el comando MCPCHAT si hace falta)
       python chat_server.py --demo     (modelo de mentira: para ver la interfaz sin clave ni gasto)
@@ -26,6 +28,7 @@ import base64
 import ctypes
 import json
 import os
+import re
 import secrets
 import socket
 import sys
@@ -34,6 +37,8 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Optional
+
+import chat_proveedores as prov
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 ESTADO = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "AutoCadMcp")
@@ -64,6 +69,14 @@ dice NO CUMPLE se dice tal cual, con su número; nunca lo escondas ni lo corrija
 - Lo que modifica el dibujo se le pide permiso al usuario antes de ejecutarse: explica en una frase qué vas a hacer y \
 por qué, y luego llama la herramienta. Si el usuario rechaza una acción, no la repitas: pregunta qué prefiere.
 - Responde en español, corto y concreto: qué hiciste, con qué números y qué falta. Sin relleno ni adornos.
+"""
+
+# Los modelos abiertos fallan más al elegir herramientas y al armar argumentos: se les dice el procedimiento sin rodeos.
+EXTRA_ABIERTOS = """
+Procedimiento obligatorio con las herramientas:
+1. Antes de `ejecutar_herramienta`, llama `describir_herramienta` con ese nombre y copia los nombres de parámetros tal cual.
+2. `argumentos` es SIEMPRE un objeto JSON con esos nombres; no inventes parámetros ni valores que el usuario no dio.
+3. Una herramienta por vez; lee su resultado antes de la siguiente. Si un resultado trae un error, léelo y corrige; no repitas igual.
 """
 
 
@@ -100,15 +113,28 @@ def desproteger(datos: bytes) -> bytes:
         ctypes.windll.kernel32.LocalFree(salida.pbData)
 
 
+VARIABLE_CLAVE = {"anthropic": "ANTHROPIC_API_KEY", "groq": "GROQ_API_KEY"}
+MODELO_VALIDO = re.compile(r"^[A-Za-z0-9_./:\-]{1,80}$")       # ids de modelo de Groq: la lista la da su API, no una constante
+
+
 class Config:
-    """clave (cifrada en disco), modelo y modo automático. `ruta` se puede cambiar para las pruebas."""
+    """proveedor, clave (cifrada en disco) y modelo de cada uno, y modo automático. `ruta` se cambia en las pruebas."""
 
     def __init__(self, ruta: str = CONFIG):
         self.ruta = ruta
-        self.modelo = MODELOS[0][0]
+        self.proveedor = "anthropic"
+        self.modelos: dict[str, str] = {"anthropic": MODELOS[0][0], "groq": prov.MODELOS_GROQ[0][0]}
         self.auto = False
-        self._clave: str = ""
+        self._claves: dict[str, str] = {i: "" for i in prov.PROVEEDORES}
         self.cargar()
+
+    @property
+    def modelo(self) -> str:
+        return self.modelos[self.proveedor]
+
+    @modelo.setter
+    def modelo(self, valor: str) -> None:
+        self.modelos[self.proveedor] = valor
 
     def cargar(self) -> None:
         try:
@@ -116,31 +142,50 @@ class Config:
                 d = json.load(fh)
         except (OSError, ValueError):
             return
-        self.modelo = d.get("modelo") or self.modelo
+        if d.get("proveedor") in prov.PROVEEDORES:
+            self.proveedor = d["proveedor"]
+        if isinstance(d.get("modelos"), dict):
+            for i, m in d["modelos"].items():
+                if i in self.modelos and isinstance(m, str) and MODELO_VALIDO.match(m):
+                    self.modelos[i] = m
+        elif d.get("modelo"):                                # formato anterior: un solo modelo, de Anthropic
+            self.modelos["anthropic"] = d["modelo"]
         self.auto = bool(d.get("auto", False))
-        if d.get("clave_dpapi"):
-            try:
-                self._clave = desproteger(base64.b64decode(d["clave_dpapi"])).decode("utf-8")
-            except (OSError, ValueError):
-                self._clave = ""
+        claves = dict(d.get("claves_dpapi") or {})
+        if d.get("clave_dpapi"):                             # formato anterior: una sola clave, de Anthropic
+            claves.setdefault("anthropic", d["clave_dpapi"])
+        for i, cifrada in claves.items():
+            if i in self._claves and cifrada:
+                try:
+                    self._claves[i] = desproteger(base64.b64decode(cifrada)).decode("utf-8")
+                except (OSError, ValueError):
+                    self._claves[i] = ""
 
     def guardar(self) -> None:
         os.makedirs(os.path.dirname(self.ruta), exist_ok=True)
-        d = {"modelo": self.modelo, "auto": self.auto}
-        if self._clave:
-            d["clave_dpapi"] = base64.b64encode(proteger(self._clave.encode("utf-8"))).decode("ascii")
+        d: dict[str, Any] = {"proveedor": self.proveedor, "modelos": self.modelos, "auto": self.auto}
+        cifradas = {i: base64.b64encode(proteger(k.encode("utf-8"))).decode("ascii") for i, k in self._claves.items() if k}
+        if cifradas:
+            d["claves_dpapi"] = cifradas
         with open(self.ruta, "w", encoding="utf-8") as fh:
             json.dump(d, fh, indent=1)
 
+    def clave_de(self, proveedor: str) -> str:
+        return self._claves.get(proveedor, "") or os.environ.get(VARIABLE_CLAVE.get(proveedor, ""), "")
+
     @property
     def clave(self) -> str:
-        return self._clave or os.environ.get("ANTHROPIC_API_KEY", "")
+        return self.clave_de(self.proveedor)
 
-    def poner_clave(self, clave: str) -> None:
+    def poner_clave(self, clave: str, proveedor: Optional[str] = None) -> None:
+        proveedor = proveedor or self.proveedor
+        if proveedor not in prov.PROVEEDORES:
+            raise ValueError(f"Proveedor desconocido: {proveedor}.")
         clave = (clave or "").strip()
-        if clave and not clave.startswith("sk-ant-"):
-            raise ValueError("Esa no parece una clave de la API de Anthropic (empieza con sk-ant-).")
-        self._clave = clave
+        cls = prov.PROVEEDORES[proveedor]
+        if clave and not clave.startswith(cls.prefijo_clave):
+            raise ValueError(f"Esa no parece una clave de {cls.nombre} (empieza con {cls.prefijo_clave}).")
+        self._claves[proveedor] = clave
         self.guardar()
 
 
@@ -246,52 +291,27 @@ def _texto_de(resultado: Any) -> str:
 
 # ---------------------------------------------------------------------------------------------- el agente
 
-def _bloques(contenido: Any) -> list[dict[str, Any]]:
-    """Los bloques de la respuesta del modelo como dicts que se pueden volver a enviar."""
-    out = []
-    for b in contenido:
-        tipo = getattr(b, "type", None)
-        if tipo == "text":
-            out.append({"type": "text", "text": b.text})
-        elif tipo == "tool_use":
-            out.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
-    return out
-
-
-def _error_amable(e: Exception) -> str:
-    estado = getattr(e, "status_code", None)
-    if estado == 401:
-        return "La clave de API no es válida. Revísala en Ajustes."
-    if estado == 403:
-        return "La clave de API no tiene permiso para este modelo."
-    if estado == 429:
-        return "Se alcanzó el límite de uso de la API. Espera un momento e inténtalo de nuevo."
-    if estado in (500, 502, 503, 529):
-        return "El servicio de Claude está saturado. Inténtalo de nuevo en un momento."
-    if estado == 400 and "credit" in str(e).lower():
-        return "La cuenta de la API se quedó sin saldo."
-    return f"Error al hablar con Claude: {e}"
-
-
 class Sesion:
     """Una conversación: su historial y su bucle de agente."""
 
-    def __init__(self, config: Config, herramientas: Herramientas, crear_cliente: Optional[Callable[[str], Any]] = None):
+    def __init__(self, config: Config, herramientas: Herramientas, crear_cliente: Optional[Callable[[str], Any]] = None,
+                 transporte_groq: Any = None):
         self.id = uuid.uuid4().hex[:8]
         self.config = config
         self.herr = herramientas
-        self.mensajes: list[dict[str, Any]] = []
-        self.crear_cliente = crear_cliente or self._cliente_real
+        self.mensajes: list[dict[str, Any]] = []        # formato neutro, ver chat_proveedores
+        self.crear_cliente = crear_cliente              # solo pruebas y demo: el cliente de Anthropic de mentira
+        self.transporte_groq = transporte_groq          # solo pruebas: httpx.MockTransport
         self.parar = threading.Event()
         self.aprobaciones: dict[str, dict[str, Any]] = {}
         self.permitir_todo = False
         self.tokens = {"entrada": 0, "salida": 0, "cache": 0}
         self.ocupada = threading.Lock()
 
-    @staticmethod
-    def _cliente_real(clave: str) -> Any:
-        import anthropic
-        return anthropic.Anthropic(api_key=clave, max_retries=2)
+    def _proveedor(self, clave: str) -> prov.Proveedor:
+        if self.config.proveedor == "groq":
+            return prov.ProvGroq(clave, transporte=self.transporte_groq)
+        return prov.ProvAnthropic(clave, cliente=self.crear_cliente(clave) if self.crear_cliente else None)
 
     # --- aprobación
     def resolver(self, id_: str, ok: bool, siempre: bool = False) -> bool:
@@ -318,10 +338,13 @@ class Sesion:
         return bool(a["ok"])
 
     # --- una herramienta del modelo
-    def _atender(self, bloque: Any, emitir: Callable[[dict], None]) -> tuple[str, bool]:
-        nombre, entrada = bloque.name, bloque.input or {}
+    def _atender(self, llamada: dict[str, Any], emitir: Callable[[dict], None]) -> tuple[str, bool]:
+        id_, nombre, entrada = llamada["id"], llamada["nombre"], llamada["entrada"] or {}
+        if llamada.get("error"):        # un modelo abierto puede armar mal el JSON de los argumentos: no se ejecuta a medias
+            return (f"Los argumentos de '{nombre}' no son un objeto JSON válido (llegó: {llamada.get('crudo', '')!r}). "
+                    "Vuelve a llamarla con un objeto JSON correcto."), True
         if nombre in ("buscar_herramientas", "describir_herramienta", "estado_del_dibujo"):
-            emitir({"t": "herramienta", "id": bloque.id, "nombre": nombre, "args": entrada})
+            emitir({"t": "herramienta", "id": id_, "nombre": nombre, "args": entrada})
             if nombre == "buscar_herramientas":
                 texto = self.herr.buscar(entrada.get("texto", ""), entrada.get("categoria", ""), entrada.get("flujo", ""))
             elif nombre == "describir_herramienta":
@@ -334,7 +357,7 @@ class Sesion:
                     except Exception as e:                   # noqa: BLE001
                         partes.append(f"{t}: {e}")
                 texto = "\n".join(partes)
-            emitir({"t": "resultado", "id": bloque.id, "ok": True, "texto": _recortar(texto, 700)})
+            emitir({"t": "resultado", "id": id_, "ok": True, "texto": _recortar(texto, 700)})
             return texto, False
         if nombre != "ejecutar_herramienta":
             return f"Herramienta desconocida: {nombre}", True
@@ -345,28 +368,26 @@ class Sesion:
             return "run_code está apagado en el chat: usa las herramientas de oficio.", True
         if not self.herr.existe(real):
             return f"No existe la herramienta '{real}'. Usa buscar_herramientas.", True
-        emitir({"t": "herramienta", "id": bloque.id, "nombre": real, "args": args})
+        emitir({"t": "herramienta", "id": id_, "nombre": real, "args": args})
         if not self._pedir_permiso(real, args, emitir):
-            emitir({"t": "resultado", "id": bloque.id, "ok": False, "texto": "Rechazada por el usuario."})
+            emitir({"t": "resultado", "id": id_, "ok": False, "texto": "Rechazada por el usuario."})
             return "El usuario NO autorizó esta acción. No la repitas: pregúntale qué prefiere.", True
         try:
             texto = self.herr.ejecutar(real, args)
             ok = True
         except Exception as e:                               # noqa: BLE001
             texto, ok = f"Error de la herramienta: {e}", False
-        emitir({"t": "resultado", "id": bloque.id, "ok": ok, "texto": _recortar(texto, 700)})
+        emitir({"t": "resultado", "id": id_, "ok": ok, "texto": _recortar(texto, 700)})
         return texto, not ok
 
     def _podar(self) -> None:
         """Si el historial crece demasiado, los resultados viejos de herramientas se reducen a una línea."""
         total = 0
         for m in reversed(self.mensajes):
-            if isinstance(m["content"], list):
-                for b in m["content"]:
-                    if b.get("type") == "tool_result":
-                        total += len(str(b["content"]))
-                        if total > 120_000:
-                            b["content"] = "[resultado anterior recortado para ahorrar contexto]"
+            if m["role"] == "herramienta":
+                total += len(m["contenido"])
+                if total > 120_000:
+                    m["contenido"] = "[resultado anterior recortado para ahorrar contexto]"
 
     # --- el bucle
     def correr(self, texto: str, emitir: Callable[[dict], None]) -> None:
@@ -377,45 +398,33 @@ class Sesion:
             self.parar.clear()
             clave = self.config.clave
             if not clave:
-                emitir({"t": "error", "d": "Falta la clave de API. Ponla en Ajustes."})
+                emitir({"t": "error", "d": f"Falta la clave de {prov.PROVEEDORES[self.config.proveedor].nombre}. Ponla en Ajustes."})
                 return
-            cliente = self.crear_cliente(clave)
-            self.mensajes.append({"role": "user", "content": texto})
+            proveedor = self._proveedor(clave)
+            sistema = SISTEMA + (EXTRA_ABIERTOS if self.config.proveedor != "anthropic" else "")
+            self.mensajes.append({"role": "user", "texto": texto})
             for _ in range(MAX_PASOS):
                 if self.parar.is_set():
                     emitir({"t": "texto", "d": "\n(detenido)"})
                     break
                 self._podar()
                 try:
-                    with cliente.messages.stream(
-                            model=self.config.modelo, max_tokens=8192,
-                            system=[{"type": "text", "text": SISTEMA, "cache_control": {"type": "ephemeral"}}],
-                            tools=HERRAMIENTAS, messages=self.mensajes) as flujo:
-                        for trozo in flujo.text_stream:
-                            emitir({"t": "texto", "d": trozo})
-                            if self.parar.is_set():
-                                break
-                        final = flujo.get_final_message()
+                    turno = proveedor.turno(self.config.modelo, sistema, HERRAMIENTAS, self.mensajes,
+                                            lambda t: emitir({"t": "texto", "d": t}), self.parar.is_set)
                 except Exception as e:                       # noqa: BLE001
-                    emitir({"t": "error", "d": _error_amable(e)})
+                    emitir({"t": "error", "d": prov.mensaje_amable(e, self.config.proveedor)})
                     break
-                uso = getattr(final, "usage", None)
-                if uso:
-                    self.tokens["entrada"] += getattr(uso, "input_tokens", 0) or 0
-                    self.tokens["salida"] += getattr(uso, "output_tokens", 0) or 0
-                    self.tokens["cache"] += getattr(uso, "cache_read_input_tokens", 0) or 0
-                self.mensajes.append({"role": "assistant", "content": _bloques(final.content)})
-                pedidos = [b for b in final.content if getattr(b, "type", None) == "tool_use"]
-                if not pedidos:
-                    if getattr(final, "stop_reason", "") == "max_tokens":
+                for k in self.tokens:
+                    self.tokens[k] += turno.uso.get(k, 0)
+                self.mensajes.append({"role": "assistant", "texto": turno.texto, "llamadas": turno.llamadas})
+                if not turno.llamadas:
+                    if turno.parada == "max_tokens":
                         emitir({"t": "texto", "d": "\n(la respuesta se cortó por largo; pídeme que continúe)"})
                     break
-                resultados = []
-                for b in pedidos:
-                    texto_r, es_error = self._atender(b, emitir)
-                    resultados.append({"type": "tool_result", "tool_use_id": b.id, "content": _recortar(texto_r),
-                                       "is_error": bool(es_error)})
-                self.mensajes.append({"role": "user", "content": resultados})
+                for ll in turno.llamadas:
+                    texto_r, es_error = self._atender(ll, emitir)
+                    self.mensajes.append({"role": "herramienta", "id": ll["id"], "contenido": _recortar(texto_r),
+                                          "error": bool(es_error)})
             else:
                 emitir({"t": "texto", "d": f"\n(me detuve tras {MAX_PASOS} pasos; dime si sigo)"})
             emitir({"t": "fin", "tokens": self.tokens})
@@ -426,19 +435,45 @@ class Sesion:
 # ---------------------------------------------------------------------------------------------- HTTP
 
 class Aplicacion:
-    def __init__(self, config: Config, herramientas: Herramientas, crear_cliente: Optional[Callable[[str], Any]] = None):
+    def __init__(self, config: Config, herramientas: Herramientas, crear_cliente: Optional[Callable[[str], Any]] = None,
+                 transporte_groq: Any = None):
         self.config, self.herr, self.crear_cliente = config, herramientas, crear_cliente
+        self.transporte_groq = transporte_groq
         self.token = secrets.token_urlsafe(18)
         self.sesiones: dict[str, Sesion] = {}
         self.port = 0
         self.apagar = threading.Event()
+        self._modelos: dict[tuple[str, bool], tuple[float, list[tuple[str, str]]]] = {}
 
     def sesion(self, id_: str = "") -> Sesion:
         if id_ and id_ in self.sesiones:
             return self.sesiones[id_]
-        s = Sesion(self.config, self.herr, self.crear_cliente)
+        s = Sesion(self.config, self.herr, self.crear_cliente, self.transporte_groq)
         self.sesiones[s.id] = s
         return s
+
+    def lista_modelos(self) -> list[tuple[str, str]]:
+        """Los modelos del proveedor activo. Los de Groq salen de su API (cambian seguido) y se recuerdan 5 minutos."""
+        c = self.config
+        if c.proveedor == "anthropic":
+            lista = list(MODELOS)
+        else:
+            llave = (c.proveedor, bool(c.clave))
+            hecho = self._modelos.get(llave)
+            if not hecho or time.time() - hecho[0] > 300:
+                hecho = (time.time(), prov.ProvGroq(c.clave, transporte=self.transporte_groq).modelos())
+                self._modelos[llave] = hecho
+            lista = list(hecho[1])
+        if c.modelo not in [i for i, _ in lista]:            # el elegido antes sigue visible aunque la lista ya no lo traiga
+            lista.insert(0, (c.modelo, c.modelo))
+        return lista
+
+    def estado(self) -> dict[str, Any]:
+        c = self.config
+        return {"proveedor": c.proveedor, "clave": bool(c.clave), "modelo": c.modelo, "auto": c.auto,
+                "modelos": [{"id": i, "nombre": n} for i, n in self.lista_modelos()],
+                "proveedores": [{"id": i, "nombre": cls.nombre, "clave": bool(c.clave_de(i)), "sitio": cls.sitio_clave,
+                                 "prefijo": cls.prefijo_clave} for i, cls in prov.PROVEEDORES.items()]}
 
     def pagina(self) -> bytes:
         with open(os.path.join(AQUI, "chat_ui", "index.html"), encoding="utf-8") as fh:
@@ -486,9 +521,7 @@ def _manejador(app: Aplicacion) -> type:
             if ruta == "/api/estado":
                 if not self._autorizado():
                     return self._json(401, {"error": "token"})
-                c = app.config
-                return self._json(200, {"clave": bool(c.clave), "modelo": c.modelo, "auto": c.auto,
-                                        "modelos": [{"id": i, "nombre": n} for i, n in MODELOS]})
+                return self._json(200, app.estado())
             self._json(404, {"error": "no existe"})
 
         def do_POST(self) -> None:                           # noqa: N802
@@ -503,16 +536,22 @@ def _manejador(app: Aplicacion) -> type:
             c = app.config
             if ruta == "/api/config":
                 try:
-                    if "clave" in datos:
-                        c.poner_clave(datos["clave"])
-                    if datos.get("modelo") in [m for m, _ in MODELOS]:
-                        c.modelo = datos["modelo"]
+                    destino = datos.get("proveedor", c.proveedor)
+                    if destino not in prov.PROVEEDORES:
+                        raise ValueError("Proveedor desconocido.")
+                    if "clave" in datos:                      # la clave es del proveedor que se está configurando
+                        c.poner_clave(datos["clave"], destino)
+                    c.proveedor = destino
+                    modelo = datos.get("modelo")
+                    if isinstance(modelo, str) and (modelo in [m for m, _ in MODELOS] if destino == "anthropic"
+                                                    else MODELO_VALIDO.match(modelo) and not modelo.startswith("claude")):
+                        c.modelo = modelo
                     if "auto" in datos:
                         c.auto = bool(datos["auto"])
                     c.guardar()
                 except ValueError as e:
                     return self._json(400, {"error": str(e)})
-                return self._json(200, {"clave": bool(c.clave), "modelo": c.modelo, "auto": c.auto})
+                return self._json(200, app.estado())
             if ruta == "/api/aprobar":
                 s = app.sesion(datos.get("sesion", ""))
                 return self._json(200, {"ok": s.resolver(datos.get("id", ""), bool(datos.get("ok")), bool(datos.get("siempre")))})
@@ -596,12 +635,16 @@ def servir(demo: bool = False, vigilar: bool = True) -> int:
         if sys.stdout:
             print(existente)
         return 0
-    config = Config()
     crear = None
+    if demo:        # la demostración no toca la configuración real: ni su clave de mentira ni lo que se elija en la interfaz
+        import tempfile
+        config = Config(ruta=os.path.join(tempfile.mkdtemp(prefix="chat_demo_"), "chat.json"))
+    else:
+        config = Config()
     if demo:
         import chat_prueba
         crear = chat_prueba.cliente_demo
-        config._clave = "sk-ant-demo"
+        config._claves["anthropic"] = "sk-ant-demo"
     app = Aplicacion(config, Herramientas(), crear)
     puerto = _puerto_libre(8790)
     httpd = ThreadingHTTPServer(("127.0.0.1", puerto), _manejador(app))

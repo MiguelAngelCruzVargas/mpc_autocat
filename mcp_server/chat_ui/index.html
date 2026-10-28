@@ -60,14 +60,15 @@
 <body>
 <header>
   <h1>Asistente AutoCAD</h1>
+  <select id="proveedor" title="Con qué modelo hablar"></select>
   <select id="modelo" title="Modelo"></select>
   <label class="auto" title="Con esto activado solo se pide permiso para lo destructivo (borrar, purgar...)"><input type="checkbox" id="auto"> auto</label>
   <button id="nueva" title="Empezar una conversación nueva">Nueva</button>
   <button id="ajustes" title="Clave de API">⚙</button>
 </header>
 <div id="clave">
-  <p>Para hablar con Claude hace falta una <b>clave de la API de Anthropic</b> (console.anthropic.com). Es tuya, se guarda cifrada en este equipo y el uso se cobra a tu cuenta de la API.</p>
-  <input type="password" id="campoClave" placeholder="sk-ant-..." autocomplete="off">
+  <p id="textoClave"></p>
+  <input type="password" id="campoClave" placeholder="" autocomplete="off">
   <button class="primario" id="guardarClave">Guardar</button> <span id="msgClave" style="color:var(--mal)"></span>
 </div>
 <div id="mensajes">
@@ -83,7 +84,7 @@
     <button class="primario" id="enviar">Enviar</button>
     <button class="peligro" id="parar" style="display:none">Detener</button>
   </div>
-  <div id="uso"><span id="estado"></span><span id="tokens"></span></div>
+  <div id="uso"><span id="estado"></span><span id="estadoTexto" style="display:none">Claude</span><span id="tokens"></span></div>
 </footer>
 <script>
 (function () {
@@ -177,7 +178,7 @@
 
   function ocupa(si) {
     ocupado = si; $("enviar").style.display = si ? "none" : ""; $("parar").style.display = si ? "" : "none";
-    $("estado").textContent = si ? "Claude está trabajando…" : ""; $("entrada").disabled = si; if (!si) $("entrada").focus();
+    $("estado").textContent = si ? $("estadoTexto").textContent + " está trabajando…" : ""; $("entrada").disabled = si; if (!si) $("entrada").focus();
   }
 
   function evento(ev) {
@@ -211,13 +212,33 @@
     x.send(JSON.stringify({ sesion: sesion, texto: texto }));
   }
 
+  var proveedorActual = "", nombresProv = {};
+
+  function pinta(d) {
+    var p = $("proveedor"); p.innerHTML = "";
+    for (var j = 0; j < d.proveedores.length; j++) {
+      var q = d.proveedores[j], o = document.createElement("option");
+      o.value = q.id; o.textContent = q.nombre + (q.clave ? "" : " (sin clave)"); p.appendChild(o);
+      nombresProv[q.id] = q;
+    }
+    p.value = d.proveedor; proveedorActual = d.proveedor;
+    var sel = $("modelo"); sel.innerHTML = "";
+    for (var i = 0; i < d.modelos.length; i++) { var m = document.createElement("option"); m.value = d.modelos[i].id; m.textContent = d.modelos[i].nombre; sel.appendChild(m); }
+    sel.value = d.modelo; $("auto").checked = d.auto;
+    var info = nombresProv[d.proveedor];
+    var abierto = d.proveedor !== "anthropic";
+    $("textoClave").innerHTML = "Para hablar con <b>" + esc(info.nombre) + "</b> hace falta una <b>clave de API</b> (" + esc(info.sitio) + "). Es tuya, se guarda cifrada en este equipo y el uso se cobra a tu cuenta."
+      + (abierto ? " Los modelos abiertos son más baratos y rápidos, pero se equivocan más al elegir herramientas y armar sus datos: revisa lo que propongan antes de permitirlo." : "");
+    $("campoClave").placeholder = info.prefijo + "...";
+    if (!d.clave) $("clave").style.display = "block";
+    $("estadoTexto").textContent = info.nombre.split(" (")[0];
+  }
+
   function estado() {
     api("/api/estado", undefined, function (st, d) {
       if (st !== 200) { aviso("No pude hablar con el servidor del chat (" + st + ")."); return; }
-      var sel = $("modelo"); sel.innerHTML = "";
-      for (var i = 0; i < d.modelos.length; i++) { var o = document.createElement("option"); o.value = d.modelos[i].id; o.textContent = d.modelos[i].nombre; sel.appendChild(o); }
-      sel.value = d.modelo; $("auto").checked = d.auto;
-      $("clave").style.display = d.clave ? "none" : "block";
+      pinta(d);
+      if (!d.clave) $("clave").style.display = "block"; else $("clave").style.display = "none";
       var sugerencias = ["¿Qué hay en el dibujo abierto?", "Lista las capas del dibujo", "¿Cómo es el flujo de trabajo del pórtico?"];
       var ch = $("chips"); if (ch && !ch.childNodes.length) for (var k = 0; k < sugerencias.length; k++) (function (s) {
         var b = document.createElement("button"); b.textContent = s; b.onclick = function () { envia(s); }; ch.appendChild(b); })(sugerencias[k]);
@@ -231,11 +252,16 @@
   $("nueva").onclick = function () { if (ocupado) return; api("/api/nueva", {}, function (st, d) { sesion = d.sesion || ""; location.reload(); }); };
   $("ajustes").onclick = function () { var c = $("clave"); c.style.display = c.style.display === "block" ? "none" : "block"; };
   $("guardarClave").onclick = function () {
-    api("/api/config", { clave: $("campoClave").value }, function (st, d) {
+    api("/api/config", { proveedor: proveedorActual, clave: $("campoClave").value }, function (st, d) {
       if (st !== 200) { $("msgClave").textContent = d.error || "No se pudo guardar."; return; }
-      $("msgClave").textContent = ""; $("campoClave").value = ""; estado(); });
+      $("msgClave").textContent = ""; $("campoClave").value = ""; pinta(d); $("clave").style.display = d.clave ? "none" : "block"; });
   };
-  $("modelo").onchange = function () { api("/api/config", { modelo: this.value }, function () {}); };
+  $("proveedor").onchange = function () {
+    api("/api/config", { proveedor: this.value }, function (st, d) {
+      if (st !== 200) { $("msgClave").textContent = d.error || "No se pudo cambiar."; return; }
+      pinta(d); $("clave").style.display = d.clave ? "none" : "block"; });
+  };
+  $("modelo").onchange = function () { api("/api/config", { proveedor: proveedorActual, modelo: this.value }, function () {}); };
   $("auto").onchange = function () { api("/api/config", { auto: this.checked }, function () {}); };
   estado();
 })();
