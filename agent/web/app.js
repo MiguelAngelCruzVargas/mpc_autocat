@@ -577,7 +577,10 @@ function renderizarConfiguracion() {
     if (p.clave) {
       const modo = p.proteccion === 'dpapi' ? 'cifrada' : 'almacenada';
       chip.className = 'chip-status encrypted';
-      chip.innerHTML = `<span>${p.clave} (${modo})</span>`;
+      chip.innerHTML = p.puente ? `<span>${p.clave}</span>` : `<span>${p.clave} (${modo})</span>`;
+    } else if (p.puente) {
+      chip.className = 'chip-status warning';
+      chip.innerHTML = `<span>${p.detalle}</span>`;
     } else if (p.id === 'local') {
       chip.className = 'chip-status';
       chip.innerHTML = `<span>Local (sin clave)</span>`;
@@ -586,6 +589,14 @@ function renderizarConfiguracion() {
       chip.innerHTML = `<span>Sin clave guardada</span>`;
     }
   }
+
+  // Un puente usa la sesión de la persona: no hay clave que guardar ni borrar.
+  ['input-api-key', 'btn-save-key', 'btn-delete-key', 'btn-toggle-key-visibility'].forEach(id => {
+    const e = $('#' + id);
+    if (e) e.disabled = !!p.puente;
+  });
+  const campoClave = $('#input-api-key');
+  if (campoClave) campoClave.placeholder = p.puente ? 'No necesita clave: usa tu sesión' : 'Nueva API Key';
 
   const inModel = $('#input-model');
   if (inModel) {
@@ -963,7 +974,7 @@ async function enviarMensaje() {
 
   const p = getProveedorActual();
   if (!p.clave && p.id !== 'local') {
-    showToast(`Configura tu API key de ${p.id} antes de continuar`, 'error');
+    showToast(p.puente ? p.detalle : `Configura tu API key de ${p.id} antes de continuar`, 'error');
     return;
   }
 
@@ -1277,7 +1288,9 @@ function actualizarHintWizard() {
   const hint = $('#wizard-provider-hint');
   if (!hint || !p) return;
 
-  if (p.id === 'local') {
+  if (p.puente) {
+    hint.textContent = 'Usa tu Claude Code instalado y su sesión (sin clave de API). ' + (p.clave ? '' : p.detalle);
+  } else if (p.id === 'local') {
     hint.textContent = 'Servidor local (LM Studio / Ollama). No requiere clave de API.';
   } else {
     hint.textContent = `Requiere clave de ${p.id.toUpperCase()}` + (p.variable ? ` (o variable ${p.variable}).` : '.');

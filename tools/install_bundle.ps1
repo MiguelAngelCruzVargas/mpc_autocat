@@ -165,11 +165,11 @@ $count = (Get-ChildItem -Recurse -File $target | Measure-Object).Count
 Write-Output ""
 Write-Output "Bundle instalado en: $target"
 
-# Chat dentro de AutoCAD (comando MCPCHAT): anota donde estan Python y el servidor de chat, para que el comando
-# lo pueda arrancar solo. Sin Python en el PATH el chat no se registra; el resto del plugin no se entera.
+# Chat dentro de AutoCAD (comando MCPCHAT): anota donde estan Python y la interfaz del agente (iniciar_en_autocad.py,
+# la misma interfaz web, en un panel), para que el comando la pueda arrancar solo. Sin Python en el PATH el chat no se registra; el resto del plugin no se entera.
 $py = Get-Command python -ErrorAction SilentlyContinue
 if ($py) {
-    & $py.Source (Join-Path $repoRoot 'mcp_server\chat_server.py') --registrar | Out-Null
+    & $py.Source (Join-Path $repoRoot 'iniciar_en_autocad.py') --registrar | Out-Null
     Write-Output "Chat (MCPCHAT) registrado con $($py.Source)"
 } else {
     Write-Output "AVISO: no encontre python en el PATH; el comando MCPCHAT no podra arrancar el chat solo."

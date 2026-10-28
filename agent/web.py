@@ -21,7 +21,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
-from . import credenciales, providers
+from . import credenciales, providers, puentes
 from .cli import ENTREGABLES, PERFILES, _system_prompt
 from .loop import conversar
 from .mcp_link import ConexionMcp, SERVIDOR_DEFECTO
@@ -88,6 +88,8 @@ class Sesion:
         # Un chat por vez: dos pestañas mandando a la vez mezclaban sus
         # mensajes en la misma conversación del modelo.
         self.ocupada = threading.Lock()
+        # Id de la conversación de cada puente (Claude Code), para seguirla con --resume en el mensaje siguiente.
+        self.puente_sesion: dict[str, str] = {}
         self._cargar()
 
     def reiniciar(self, system: str) -> None:
@@ -96,6 +98,7 @@ class Sesion:
     def borrar(self) -> None:
         with self.lock:
             self.mensajes, self.eventos = [], []
+            self.puente_sesion = {}
         try:
             os.remove(self.ARCHIVO)
         except OSError:
@@ -147,6 +150,17 @@ class Sesion:
 
 
 SESION = Sesion()
+
+
+def _proveedores_puente() -> list[dict[str, Any]]:
+    """Los puentes (Claude Code...) como proveedores más: sin clave, 'disponibles' si el CLI está instalado."""
+    filas = []
+    for pid, cfg in puentes.PUENTES.items():
+        e = puentes.estado(pid)
+        filas.append({"id": pid, "modeloSugerido": "", "variable": "",
+                      "clave": cfg["nombre"] if e["disponible"] else None,
+                      "proteccion": "sesion", "puente": True, "detalle": e["detalle"]})
+    return filas
 
 # Dónde se dejan las capturas del plano que se muestran en la interfaz.
 # En temp y no en el repo: son de una corrida, igual que las de test_live.
@@ -565,7 +579,7 @@ class Handler(BaseHTTPRequestHandler):
                      "variable": preset.get("env", ""),
                      "clave": guardadas.get(nombre, {}).get("clave"),
                      "proteccion": guardadas.get(nombre, {}).get("proteccion")}
-                    for nombre, preset in sorted(providers.PRESETS.items())],
+                    for nombre, preset in sorted(providers.PRESETS.items())] + _proveedores_puente(),
                 "perfiles": [
                     {"id": p, "tools": conteo.get(p, len(v) if v else 0)}
                     for p, v in PERFILES.items()],
@@ -682,6 +696,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/modelos":
+            if puentes.es_puente(str(datos.get("proveedor", ""))):
+                self._json({"modelos": [{"modelo": m, "estado": "alias de Claude Code", "imagenes": False}
+                                        for m in puentes.PUENTES[str(datos["proveedor"])]["modelos"]]})
+                return
             try:
                 filas = providers.modelos_disponibles(
                     str(datos.get("proveedor", "")),
@@ -743,8 +761,7 @@ class Handler(BaseHTTPRequestHandler):
                     os.remove(ruta)
                 import time
                 with open(ruta, "a", encoding="utf-8") as fh:
-                    fh.write(f"{time.strftime('%H:%M:%S')} {str(datos.get('m', ''))[:500]} | {str(datos.get('ua', ''))[:200]}
-")
+                    fh.write(f"{time.strftime('%H:%M:%S')} {str(datos.get('m', ''))[:500]} | {str(datos.get('ua', ''))[:200]}" + chr(10))
             except OSError:
                 pass
             self._json({"ok": True})
@@ -875,6 +892,26 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "El mensaje está vacío."}, 400)
             return
 
+        puente = str(datos.get("proveedor", ""))
+        if puentes.es_puente(puente):
+            # Un puente no usa clave ni el bucle de este programa: el agente (Claude Code) trae lo suyo.
+            if imagenes:
+                self._json({"error": "El puente a Claude Code todavía no recibe imágenes: usa un proveedor con 📷."}, 400)
+                return
+            if not puentes.estado(puente)["disponible"]:
+                self._json({"error": puentes.estado(puente)["detalle"]}, 400)
+                return
+            if not SESION.ocupada.acquire(blocking=False):
+                self._json({"error": "Ya hay un pedido en curso (¿otra pestaña abierta?). Espera a que termine o "
+                                     "cancélalo."}, 409)
+                return
+            try:
+                self._chat_en_curso(datos, pedido, [], None, None, puente=puente)
+            finally:
+                SESION.ocupada.release()
+                SESION.guardar()
+            return
+
         try:
             proveedor = providers.construir(
                 str(datos.get("proveedor", "openrouter")),
@@ -917,7 +954,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _chat_en_curso(self, datos: dict[str, Any], pedido: str,
                        imagenes: list[str], proveedor: Any,
-                       incluir: Any) -> None:
+                       incluir: Any, puente: str = "") -> None:
         SESION.anotar({"tipo": "usuario", "texto": pedido,
                        "imagenes": len(imagenes)})
         # Costo en vivo: precio que puso el usuario para este modelo, o el
@@ -925,7 +962,7 @@ class Handler(BaseHTTPRequestHandler):
         # pasarlo -- un plano son decenas de vueltas y un modelo caro con el
         # perfil 'todo' se come el presupuesto sin que nadie lo note.
         precio = _precio_manual(datos) or providers.precio_de(
-            str(datos.get("proveedor", "")), proveedor.modelo)
+            str(datos.get("proveedor", "")), getattr(proveedor, "modelo", ""))
         try:
             tope = float(datos.get("topeUSD") or 0)
         except (TypeError, ValueError):
@@ -968,6 +1005,25 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, ValueError):
                 pass        # el navegador cerró la pestaña; no es un error
+
+        if puente:
+            SESION.cancelar.clear()
+            sistema = _system_prompt(bool(datos.get("conReglas", True)), int(datos.get("limiteReglas") or 0))
+            contexto = str(datos.get("contexto") or "").strip()[:2000]
+            if contexto:
+                sistema += "\n\n--- Contexto fijo de este proyecto (lo definió la persona) ---\n" + contexto
+            modelo = str(datos.get("modelo") or "")
+            if modelo not in puentes.PUENTES[puente]["modelos"] and not modelo.startswith("claude-"):
+                modelo = ""             # un modelo que quedó de OTRO proveedor no vale como alias de Claude Code
+            try:
+                r = puentes.correr(puente, pedido, emitir, SESION.cancelar.is_set,
+                                   sesion=SESION.puente_sesion.get(puente, ""), modelo=modelo, sistema=sistema)
+                if r.get("sesion"):
+                    SESION.puente_sesion[puente] = r["sesion"]
+            except Exception as exc:                    # noqa: BLE001
+                emitir("aviso", {"texto": f"Se cortó la corrida: {exc}"})
+            emitir("fin", {})
+            return
 
         async def trabajo(mcp: ConexionMcp) -> None:
             tools = mcp.catalogo(
