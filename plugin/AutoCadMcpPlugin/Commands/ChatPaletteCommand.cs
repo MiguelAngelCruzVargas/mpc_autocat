@@ -10,7 +10,7 @@ using Autodesk.AutoCAD.Runtime;
 namespace AutoCadMcpPlugin.Commands
 {
     /// <summary>
-    /// Comando MCPCHAT: abre dentro de AutoCAD el panel de chat con Claude.
+    /// Comando MCPCHATWEB: el chat como PÁGINA WEB dentro de un panel (la versión nativa es MCPCHAT, ver ChatNativoCommand.cs).
     ///
     /// El panel solo MUESTRA una página: el chat de verdad (el agente, las herramientas, la clave de API) vive en
     /// un proceso de Python (mcp_server/chat_server.py) que habla con el plugin por el mismo socket de siempre.
@@ -21,7 +21,7 @@ namespace AutoCadMcpPlugin.Commands
     /// </summary>
     public class McpChatCommands
     {
-        [CommandMethod("MCPCHAT")]
+        [CommandMethod("MCPCHATWEB")]
         public void AbrirChat()
         {
             ChatPalette.Mostrar();

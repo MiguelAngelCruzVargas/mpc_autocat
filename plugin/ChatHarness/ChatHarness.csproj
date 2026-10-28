@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Programa de PRUEBA del panel nativo del chat: una ventana WPF con el mismo ChatPanel que va dentro de AutoCAD,
+       pero con un «AutoCAD de mentira» (dibujo y selección inventados). Sirve para probar el panel contra el servidor
+       Python real y sacar capturas SIN abrir AutoCAD ni reiniciarlo. No se instala ni se distribuye.
+
+         dotnet run en plugin/ChatHarness (y luego los argumentos: url, enviar, espera, png; ver Program.cs)
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>ChatHarness</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\AutoCadMcpPlugin\Chat\ChatCliente.cs" Link="Chat\ChatCliente.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\ChatPanel.cs" Link="Chat\ChatPanel.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\ChatTema.cs" Link="Chat\ChatTema.cs" />
+  </ItemGroup>
+
+</Project>

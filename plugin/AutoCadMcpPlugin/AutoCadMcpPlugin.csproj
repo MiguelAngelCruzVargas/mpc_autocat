@@ -47,6 +47,14 @@
          solo trae la referencia de compilación. -->
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
+    <!-- El chat nativo (Chat/*.cs) es WPF dentro de un panel de AutoCAD: en net8/net10 ya viene con
+         Microsoft.WindowsDesktop.App; en .NET Framework hay que referenciarlo. -->
+    <Reference Include="System.Net.Http" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+    <Reference Include="WindowsFormsIntegration" />
   </ItemGroup>
 
   <!-- AutoCAD 2025+ (.NET 8) -->
