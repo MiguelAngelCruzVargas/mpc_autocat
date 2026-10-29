@@ -60,6 +60,19 @@ namespace ChatHarness
                     if (proveedor != null) await panel.ElegirProveedorPorIdAsync(proveedor);
                     var perfil = Arg(args, "--perfil");
                     if (perfil != null) panel.ElegirPerfil(perfil);
+                    var licDemo = Arg(args, "--licencia");
+                    if (licDemo != null)
+                    {
+                        // prueba:5 = prueba gratis, quedan 5 días; anual:300 = licencia anual que vence en 300 días; perpetua; vencida; sin
+                        var partes = licDemo.Split(':');
+                        var dias = partes.Length > 1 ? double.Parse(partes[1]) : 0;
+                        var hasta = (DateTime.UtcNow.AddDays(dias) - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+                        var lic = new System.Text.Json.Nodes.JsonObject { ["obligatoria"] = true, ["valida"] = partes[0] != "sin" && partes[0] != "vencida", ["mensaje"] = "Licencia de prueba" };
+                        if (partes[0] == "sin") lic["motivo"] = "sin_licencia";
+                        else if (partes[0] == "vencida") lic["motivo"] = "vencida";
+                        else { lic["plan"] = partes[0]; if (partes[0] != "perpetua") lic["licencia_hasta"] = hasta; }
+                        panel.SimularLicencia(lic.ToJsonString());
+                    }
                     if (args.Contains("--ajustes")) panel.AbrirAjustes();
                     if (args.Contains("--modelo-pantalla")) panel.AbrirModeloPantalla();
                     if (args.Contains("--historial")) panel.AbrirHistorialPantalla();

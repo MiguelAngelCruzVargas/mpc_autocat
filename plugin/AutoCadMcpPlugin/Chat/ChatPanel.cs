@@ -138,6 +138,7 @@ namespace AutoCadMcpPlugin.Chat
         internal void ElegirPerfil(string id) { _perfil = id; }
         internal bool AdjuntarSeleccion { set { _adjSel.IsChecked = value; } }
         internal void AbrirHistorialPantalla() => AbrirHistorial();
+        internal void SimularLicencia(string json) { using (var d = JsonDocument.Parse(json)) MostrarLicencia(d.RootElement); }
         internal void AbrirLimitesPantalla() { _limDetalle.Visibility = Visibility.Visible; }
         internal void AbrirModeloPantalla() => AbrirAjustes(true);
         internal void BajarAjustes() { if (_ajustes.Children.Count > 0 && _ajustes.Children[0] is ScrollViewer sv) { sv.UpdateLayout(); sv.ScrollToEnd(); } }
@@ -180,7 +181,7 @@ namespace AutoCadMcpPlugin.Chat
             cab.Children.Add(_provBtn); cab.Children.Add(_historialBtn); cab.Children.Add(_ajustesBtn); cab.Children.Add(_nuevaBtn);
             ConstruirLimites();
             var cabPila = new StackPanel();
-            cabPila.Children.Add(cab); cabPila.Children.Add(_limites);
+            cabPila.Children.Add(cab); cabPila.Children.Add(_licFila); cabPila.Children.Add(_limites);
             var cabBorde = new Border { Background = _t.Panel, Child = cabPila };
             Grid.SetRow(cabBorde, 0); raiz.Children.Add(cabBorde);
 
@@ -717,6 +718,7 @@ namespace AutoCadMcpPlugin.Chat
             _licSeccion.Visibility = _licObligatoria ? Visibility.Visible : Visibility.Collapsed;
             _licEstado.Text = lic.TryGetProperty("mensaje", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : "";
             _licEstado.Foreground = _licValida ? _t.Ok : _t.Mal;
+            ActualizarDistintivoLicencia(lic);
         }
 
         /// <summary>El estado de la licencia, como lo ve el guardián del plugin (el que de verdad hace cumplir), con un texto pensado para la persona.</summary>
@@ -727,6 +729,51 @@ namespace AutoCadMcpPlugin.Chat
                 e["mensaje"] = "Todavía no activas tu licencia. Pega la clave que recibiste al comprar o empieza la prueba gratis de 7 días.";
             using (var d = JsonDocument.Parse(e.ToJsonString())) return d.RootElement.Clone();
         }
+
+        // La franja de la licencia, siempre a la vista: si es prueba (y cuántos días quedan), licencia comprada, o sin licencia.
+        private readonly TextBlock _licFila = new TextBlock { FontFamily = new FontFamily("Consolas"), FontSize = 9.5, Margin = new Thickness(10, 0, 10, 6), Cursor = Cursors.Hand, TextTrimming = TextTrimming.CharacterEllipsis };
+
+        /// <summary>El texto de la franja para un estado de licencia (separado para poder probarlo sin ventana).</summary>
+        internal static (string texto, int tono) TextoDistintivo(JsonElement lic, DateTime ahoraUtc)
+        {
+            // tono: 0 = discreto, 1 = bien, 2 = mal
+            bool obligatoria = lic.TryGetProperty("obligatoria", out var o) && o.ValueKind == JsonValueKind.True;
+            if (!obligatoria) return ("VERSIÓN DE DESARROLLO  ·  la licencia no se exige", 0);
+            bool valida = lic.TryGetProperty("valida", out var v) && v.ValueKind == JsonValueKind.True;
+            string plan = lic.TryGetProperty("plan", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : "";
+            DateTime? vence = null;
+            if (lic.TryGetProperty("licencia_hasta", out var lh) && lh.ValueKind == JsonValueKind.Number)
+                vence = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(lh.GetDouble());
+            if (!valida)
+            {
+                var motivo = lic.TryGetProperty("motivo", out var mo) && mo.ValueKind == JsonValueKind.String ? mo.GetString() : "";
+                switch (motivo)
+                {
+                    case "sin_licencia": return ("SIN LICENCIA  ·  activa una clave o empieza la prueba gratis", 2);
+                    case "vencida": return ("LICENCIA VENCIDA  ·  renuévala para seguir", 2);
+                    default: return ("LICENCIA NO VÁLIDA  ·  toca para ver por qué", 2);
+                }
+            }
+            if (plan == "prueba")
+            {
+                var dias = vence.HasValue ? Math.Max(0, (int)Math.Ceiling((vence.Value - ahoraUtc).TotalDays)) : 0;
+                return ("MODO DEMO  ·  prueba gratis, " + (dias == 1 ? "queda 1 día" : "quedan " + dias + " días"), 1);
+            }
+            var nombre = plan == "perpetua" ? "PERPETUA" : plan == "anual" ? "ANUAL" : plan == "mensual" ? "MENSUAL" : plan.ToUpperInvariant();
+            return ("LICENCIA " + nombre + (vence.HasValue ? "  ·  vence el " + vence.Value.ToLocalTime().ToString("dd/MM/yyyy") : "  ·  sin vencimiento"), 1);
+        }
+
+        private void ActualizarDistintivoLicencia(JsonElement lic)
+        {
+            var (texto, tono) = TextoDistintivo(lic, DateTime.UtcNow);
+            _licFila.Text = texto;
+            _licFila.Foreground = tono == 1 ? _t.Ok : tono == 2 ? _t.Mal : _t.Suave;
+            _licFila.ToolTip = "Clic para abrir la configuración (licencia)";
+            _licFila.MouseLeftButtonUp -= AbrirDesdeLicencia;
+            _licFila.MouseLeftButtonUp += AbrirDesdeLicencia;
+        }
+
+        private void AbrirDesdeLicencia(object s, MouseButtonEventArgs e) => AbrirAjustes(false);
 
         private async Task LicenciaAsync(string clave)
         {
