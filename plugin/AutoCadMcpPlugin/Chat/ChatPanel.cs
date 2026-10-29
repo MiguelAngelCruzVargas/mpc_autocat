@@ -136,6 +136,7 @@ namespace AutoCadMcpPlugin.Chat
         internal void ElegirPerfil(string id) { _perfil = id; }
         internal bool AdjuntarSeleccion { set { _adjSel.IsChecked = value; } }
         internal void AbrirHistorialPantalla() => AbrirHistorial();
+        internal void AbrirLimitesPantalla() { _limDetalle.Visibility = Visibility.Visible; }
         internal void BajarAjustes() { if (_ajustes.Children.Count > 0 && _ajustes.Children[0] is ScrollViewer sv) { sv.UpdateLayout(); sv.ScrollToEnd(); } }
         internal Task EnviarTextoAsync(string texto) { _entrada.Text = texto; return EnviarAsync(); }
         internal Task ElegirProveedorPorIdAsync(string id)
@@ -174,7 +175,10 @@ namespace AutoCadMcpPlugin.Chat
             _nuevaBtn.Click += async (s, e) => await NuevaAsync().ConfigureAwait(true);
             Grid.SetColumn(_nuevaBtn, 3);
             cab.Children.Add(_provBtn); cab.Children.Add(_historialBtn); cab.Children.Add(_ajustesBtn); cab.Children.Add(_nuevaBtn);
-            var cabBorde = new Border { Background = _t.Panel, Child = cab };
+            ConstruirLimites();
+            var cabPila = new StackPanel();
+            cabPila.Children.Add(cab); cabPila.Children.Add(_limites);
+            var cabBorde = new Border { Background = _t.Panel, Child = cabPila };
             Grid.SetRow(cabBorde, 0); raiz.Children.Add(cabBorde);
 
             // fila de contexto de AutoCAD: dibujo activo y selección
@@ -324,6 +328,61 @@ namespace AutoCadMcpPlugin.Chat
             _provBtn.ToolTip = "Clic para cambiar de IA, de modelo, de especialidad o la clave";
         }
 
+        // ---- límites del modelo: «este modelo está limitado: no ve imágenes…» ----
+        private readonly Border _limites = new Border { Visibility = Visibility.Collapsed, BorderThickness = new Thickness(1), Margin = new Thickness(8, 0, 8, 8), Padding = new Thickness(8, 5, 8, 5), Cursor = Cursors.Hand };
+        private readonly TextBlock _limResumen = new TextBlock { FontFamily = new FontFamily("Consolas"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap };
+        private readonly TextBlock _limDetalle = new TextBlock { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), Visibility = Visibility.Collapsed };
+        private readonly TextBlock _limAjustes = new TextBlock();
+        private int _limVersion;
+        internal bool ModeloLimitado => _limites.Visibility == Visibility.Visible;
+
+        private void ConstruirLimites()
+        {
+            _limites.Background = _t.AvisoFondo; _limites.BorderBrush = _t.Aviso;
+            _limResumen.Foreground = _t.Aviso; _limDetalle.Foreground = _t.Texto;
+            var pila = new StackPanel();
+            pila.Children.Add(_limResumen); pila.Children.Add(_limDetalle);
+            _limites.Child = pila;
+            _limites.ToolTip = "Clic para ver qué limita este modelo";
+            _limites.MouseLeftButtonUp += (s, e) =>
+                _limDetalle.Visibility = _limDetalle.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        /// <summary>Pregunta al anfitrión qué le falta al modelo elegido y lo dice con palabras: sin imágenes, pequeño, sin herramientas fiables.</summary>
+        private async Task ActualizarLimitesAsync()
+        {
+            var version = ++_limVersion;
+            void Ocultar() { _limites.Visibility = Visibility.Collapsed; _limAjustes.Visibility = Visibility.Collapsed; }
+            var modelo = _modelo.Text.Trim();
+            if (_prov == null || _prov.Vivo || _cli == null || modelo.Length == 0) { Ocultar(); return; }
+            try
+            {
+                using (var doc = await _cli.PostAsync("/api/h/capacidades", new { proveedor = _prov.Id, modelo }).ConfigureAwait(true))
+                {
+                    if (version != _limVersion) return;               // el modelo cambió mientras tanto
+                    var r = doc.RootElement;
+                    if (!r.TryGetProperty("avisos", out var av) || av.ValueKind != JsonValueKind.Array || av.GetArrayLength() == 0) { Ocultar(); return; }
+                    var etiquetas = new List<string>(); var textos = new List<string>(); bool alto = false, importante = false;
+                    foreach (var a in av.EnumerateArray())
+                    {
+                        var nivel = Texto(a, "nivel");
+                        textos.Add("•  " + Texto(a, "texto"));
+                        if (nivel == "alto") alto = true;
+                        if (nivel != "bajo") { importante = true; etiquetas.Add(Texto(a, "etiqueta")); }
+                    }
+                    var completo = string.Join(((char)10).ToString(), textos);
+                    _limAjustes.Text = completo; _limAjustes.Visibility = Visibility.Visible;
+                    if (!importante) { _limites.Visibility = Visibility.Collapsed; return; }
+                    var color = alto ? _t.Mal : _t.Aviso;
+                    _limites.BorderBrush = color; _limResumen.Foreground = color;
+                    _limResumen.Text = "MODELO LIMITADO  ·  " + string.Join("  ·  ", etiquetas) + "  ▾";
+                    _limDetalle.Text = completo; _limDetalle.Visibility = Visibility.Collapsed;
+                    _limites.Visibility = Visibility.Visible;
+                }
+            }
+            catch { if (version == _limVersion) Ocultar(); }              // el aviso es una ayuda: sin servidor, sin aviso
+        }
+
         private void ConstruirAvisoVivo()
         {
             var pila = new StackPanel();
@@ -410,6 +469,8 @@ namespace AutoCadMcpPlugin.Chat
             _modelo.ToolTip = "Se puede escribir cualquier modelo del proveedor";
             _modelo.LostFocus += async (s, e) => await GuardarModeloAsync().ConfigureAwait(true);
             _seccionApi.Children.Add(_modelo);
+            _limAjustes.Foreground = _t.Aviso; _limAjustes.FontSize = 11; _limAjustes.TextWrapping = TextWrapping.Wrap; _limAjustes.Margin = new Thickness(0, 6, 0, 0); _limAjustes.Visibility = Visibility.Collapsed;
+            _seccionApi.Children.Add(_limAjustes);
             _modeloBtn.Content = "Ver los modelos disponibles"; _modeloBtn.Margin = new Thickness(0, 6, 0, 0); _modeloBtn.HorizontalAlignment = HorizontalAlignment.Left;
             _modeloBtn.Click += async (s, e) => await ListarModelosAsync().ConfigureAwait(true);
             _seccionApi.Children.Add(_modeloBtn);
@@ -826,7 +887,7 @@ namespace AutoCadMcpPlugin.Chat
             var vivoGrid = (UIElement)_vivoScroll.Parent;
             vivoGrid.Visibility = vivo ? Visibility.Visible : Visibility.Collapsed;
             if (vivo) VivoIniciar(); else VivoDetener();
-            ActualizarChip(); RefrescarProveedores(); ActualizarModoEntrada();
+            ActualizarChip(); RefrescarProveedores(); ActualizarModoEntrada(); _ = ActualizarLimitesAsync();
             if (guardar)
             {
                 try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { proveedor = p.Id } }).ConfigureAwait(true)) { } }
@@ -840,7 +901,7 @@ namespace AutoCadMcpPlugin.Chat
             var m = _modelo.Text.Trim();
             if (m == (_modelos.TryGetValue(_prov.Id, out var antes) ? antes : "")) return;
             _modelos[_prov.Id] = m;
-            ActualizarChip();
+            ActualizarChip(); _ = ActualizarLimitesAsync();
             try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { modelos = _modelos } }).ConfigureAwait(true)) { } }
             catch { }
         }

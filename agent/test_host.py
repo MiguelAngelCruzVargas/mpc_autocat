@@ -117,6 +117,19 @@ def main() -> int:
     st, d = post("/api/h/ejecutar", {"nombre": "ejecutar_herramienta", "meta": True, "args": {"__json_invalido__": "{x"}})
     check("JSON roto vuelve como error en vez de ejecutarse", d["error"] is True and "JSON" in d["texto"])
 
+    print("test_capacidades")
+    st, d = post("/api/h/capacidades", {"proveedor": "groq", "modelo": "openai/gpt-oss-20b"})
+    check("gpt-oss-20b: limitado, sin imagenes y modelo pequeno", st == 200 and d["limitado"] and d["imagenes"] is False
+          and any("no puede ver imágenes" in a["texto"] for a in d["avisos"]) and any("pequeño" in a["texto"] for a in d["avisos"]), str(d)[:200])
+    st, d = post("/api/h/capacidades", {"proveedor": "groq", "modelo": "whisper-large-v3"})
+    check("whisper no es modelo de chat (nivel alto)", d["limitado"] and d["avisos"][0]["nivel"] == "alto")
+    st, d = post("/api/h/capacidades", {"proveedor": "anthropic", "modelo": "claude-sonnet-5-5"})
+    check("claude: sin avisos y con imagenes", not d["limitado"] and d["imagenes"] is True and d["avisos"] == [])
+    st, d = post("/api/h/capacidades", {"proveedor": "openrouter", "modelo": "google/gemini-2.5-pro"})
+    check("«gemini» no se confunde con «mini»", not any("pequeño" in a["texto"] for a in d["avisos"]))
+    st, d = post("/api/h/capacidades", {"proveedor": "local", "modelo": "llama3"})
+    check("local: avisa de las herramientas", any("herramientas" in a["texto"] for a in d["avisos"]))
+
     httpd.shutdown()
     if FALLAS:
         print("\n%d FALLAS:" % len(FALLAS))
