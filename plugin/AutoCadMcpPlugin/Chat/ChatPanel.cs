@@ -719,6 +719,7 @@ namespace AutoCadMcpPlugin.Chat
             _licEstado.Text = lic.TryGetProperty("mensaje", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : "";
             _licEstado.Foreground = _licValida ? _t.Ok : _t.Mal;
             ActualizarDistintivoLicencia(lic);
+            AplicarBloqueoLicencia();
         }
 
         /// <summary>El estado de la licencia, como lo ve el guardián del plugin (el que de verdad hace cumplir), con un texto pensado para la persona.</summary>
@@ -774,6 +775,17 @@ namespace AutoCadMcpPlugin.Chat
         }
 
         private void AbrirDesdeLicencia(object s, MouseButtonEventArgs e) => AbrirAjustes(false);
+
+        /// <summary>Sin licencia (en una copia que la exige) no se puede escribir ni enviar nada: solo queda la configuración para activarla.</summary>
+        private void AplicarBloqueoLicencia()
+        {
+            bool bloqueado = _licObligatoria && !_licValida;
+            _entrada.IsEnabled = !bloqueado;
+            _enviar.IsEnabled = !bloqueado || _trabajando;
+            _adjSel.IsEnabled = !bloqueado && !(_prov != null && _prov.Vivo);
+            if (bloqueado) _placeholder.Text = "Sin licencia: actívala en la configuración (la tuerca)";
+            else _placeholder.Text = _prov != null && _prov.Vivo ? "Mensaje para tu agente…" : "Escribe tu instrucción…";
+        }
 
         private async Task LicenciaAsync(string clave)
         {
@@ -1027,6 +1039,7 @@ namespace AutoCadMcpPlugin.Chat
             _modeloBtn.IsEnabled = !p.Vivo;
             _claveEstado.Text = p.Vivo ? p.Detalle : (p.Clave ? "Hay una clave guardada para " + p.Id + "." : "Todavía no hay clave para " + p.Id + ".");
             _placeholder.Text = p.Vivo ? "Mensaje para tu agente…" : "Escribe tu instrucción…";
+            AplicarBloqueoLicencia();
             bool vivo = p.Vivo;
             _scroll.Visibility = vivo ? Visibility.Collapsed : Visibility.Visible;
             var vivoGrid = (UIElement)_vivoScroll.Parent;
@@ -1575,9 +1588,10 @@ namespace AutoCadMcpPlugin.Chat
                 catch (Exception ex) { _vivoEstado.Text = "No se pudo enviar: " + ex.Message; }
                 return;
             }
+            if (AutoCadMcpPlugin.LicenciaGuard.Obligatoria) MostrarLicencia(EstadoLicenciaLocal());
             if (_licObligatoria && !_licValida)
             {
-                _ajustes.Visibility = Visibility.Visible;
+                AbrirAjustes(false);
                 return;          // la sección de licencia arriba dice qué hacer
             }
             if (!_prov.Clave && !_prov.Puente)

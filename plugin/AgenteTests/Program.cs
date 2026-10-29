@@ -180,6 +180,23 @@ namespace AgenteTests
                 Check("un nombre que solo CONTIENE el patrón no entra", !Perfiles.Coincide("my_check_all", new[] { "check_" }) && Perfiles.Coincide("check_all", new[] { "check_" }));
             }
 
+            Console.WriteLine("test_sin_licencia_no_se_usa_nada");
+            {
+                var cliLic = new ChatCliente(url);
+                var agLic = new AgenteNativo(() => cliLic, Path.Combine(dir, "lic.json"));
+                bool llamoAlModelo = false;
+                agLic.FabricaProveedor = (prep, ped) => { llamoAlModelo = true; return null; };
+                agLic.Licencia = () => (true, false, "La licencia vencio.");
+                var evLic = new List<JsonElement>();
+                await agLic.EjecutarAsync(new PedidoAgente { Mensaje = "dibuja un circulo", Proveedor = "groq", Modelo = "m" }, e => evLic.Add(e.Clone()), default);
+                Check("sin licencia: avisa y explica por qué", Hay(evLic, "aviso", "Sin licencia: La licencia vencio."));
+                Check("sin licencia: no llega a pedir las herramientas ni a llamar al modelo", !llamoAlModelo && !Tipos(evLic).Contains("inicio") && !Tipos(evLic).Contains("tool"));
+                var evOk = new List<JsonElement>();
+                agLic.Licencia = () => (false, false, "");
+                await agLic.EjecutarAsync(new PedidoAgente { Mensaje = "hola", Proveedor = "groq", Modelo = "m" }, e => evOk.Add(e.Clone()), default);
+                Check("una copia que no exige licencia (desarrollo) sigue funcionando", !Hay(evOk, "aviso", "Sin licencia"));
+            }
+
             Console.WriteLine("test_traduccion_a_anthropic");
             var conv = new JsonArray
             {

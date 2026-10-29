@@ -177,6 +177,13 @@ namespace AutoCadMcpPlugin.Chat
 
         // ------------------------------------------------------------------------------------------ el bucle
 
+        /// <summary>Si la copia exige licencia y no es válida, el agente no hace nada (ni llama al modelo, que se cobra a la cuenta de la persona). Se cambia en las pruebas.</summary>
+        internal Func<(bool exige, bool valida, string mensaje)> Licencia = () =>
+        {
+            var e = AutoCadMcpPlugin.LicenciaGuard.Estado();
+            return (AutoCadMcpPlugin.LicenciaGuard.Obligatoria, e["valida"]?.GetValue<bool>() ?? false, e["mensaje"]?.ToString() ?? "");
+        };
+
         public async Task EjecutarAsync(PedidoAgente p, Action<JsonElement> alPanel, CancellationToken ct)
         {
             void Emitir(string tipo, JsonObject cuerpo)
@@ -189,6 +196,12 @@ namespace AutoCadMcpPlugin.Chat
 
             try
             {
+                var lic = Licencia();
+                if (lic.exige && !lic.valida)
+                {
+                    Emitir("aviso", Obj("texto", "Sin licencia: " + lic.mensaje + " Actívala en la configuración (la tuerca)."));
+                    return;
+                }
                 Anotar("usuario", new JsonObject { ["tipo"] = "usuario", ["texto"] = p.Mensaje });     // la burbuja del usuario ya la puso el panel
                 var host = _host();
                 if (host == null) { Emitir("aviso", Obj("texto", "No hay conexión con el servidor de herramientas.")); return; }
