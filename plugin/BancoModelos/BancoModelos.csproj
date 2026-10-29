@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Banco de pruebas de modelos: les hace los mismos pedidos (círculo, casa 9x12, borrar, exportar PDF) y mide si lo lograron, cuánto
+       tardaron y cuánto gastaron. Usa el MISMO agente que el panel (AgenteNativo) contra el servidor de herramientas de Python, que a su vez
+       habla con un AutoCAD de verdad. No se instala ni se distribuye.   Ver tools/banco_modelos.ps1 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>BancoModelos</RootNamespace>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\AutoCadMcpPlugin\Chat\ChatCliente.cs" Link="Chat\ChatCliente.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\AgenteNativo.cs" Link="Chat\AgenteNativo.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\AgenteProveedores.cs" Link="Chat\AgenteProveedores.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\Conversaciones.cs" Link="Chat\Conversaciones.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\Capacidades.cs" Link="Chat\Capacidades.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\Preferencias.cs" Link="Chat\Preferencias.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\Proveedores.cs" Link="Chat\Proveedores.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\LicenciaGuard.cs" Link="LicenciaGuard.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\Perfiles.cs" Link="Chat\Perfiles.cs" />
+    <EmbeddedResource Include="..\AutoCadMcpPlugin\Chat\perfiles.json" LogicalName="perfiles.json" />
+  </ItemGroup>
+</Project>
