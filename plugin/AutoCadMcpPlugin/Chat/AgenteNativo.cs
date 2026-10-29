@@ -23,6 +23,8 @@ namespace AutoCadMcpPlugin.Chat
         public string Contexto = "";
         public int Vueltas = 40;
         public double TopeUSD;
+        /// <summary>destructivo (por omisión: borrar, purgar, cerrar, comandos libres), todo (cada herramienta que toca el dibujo) o nada.</summary>
+        public string ModoPermisos = "destructivo";
     }
 
     /// <summary>
@@ -113,6 +115,35 @@ namespace AutoCadMcpPlugin.Chat
             Anotar("nota", new JsonObject { ["tipo"] = "nota", ["texto"] = "Pedido deshecho: el dibujo volvió a como estaba antes." });
             Guardar();
             return (true, "Pedido deshecho: el dibujo volvió a como estaba antes.");
+        }
+
+        /// <summary>¿Esta herramienta pide permiso, según el modo que eligió la persona?</summary>
+        private bool PidePermiso(string modo, string herramienta)
+        {
+            if (modo == "nada") return false;
+            if (modo == "todo") return !_soloLectura.IsMatch(herramienta);
+            return _destructivas.IsMatch(herramienta);
+        }
+
+        /// <summary>
+        /// Una frase de cuánto toca la acción, para que borrar un handle no se vea igual que borrar todo: cuenta los handles de la llamada,
+        /// detecta «all» y, en un comando libre, dice cuál.
+        /// </summary>
+        internal static string ResumenRiesgo(string herramienta, JsonObject args)
+        {
+            try
+            {
+                if (herramienta == "run_command" && args["tokens"] is JsonArray tk && tk.Count > 0)
+                    return "Comando de AutoCAD: " + string.Join(" ", tk.Take(6).Select(x => x?.ToString() ?? "↵"));
+                if (args["all"] is JsonValue todo && todo.TryGetValue<bool>(out var t) && t)
+                    return "Afecta a TODO el espacio activo";
+                foreach (var clave in new[] { "handles", "entities", "ids" })
+                    if (args[clave] is JsonArray h)
+                        return h.Count == 1 ? "Afecta a 1 entidad" : "Afecta a " + h.Count + " entidades" + (h.Count >= 20 ? "  (muchas)" : "");
+                if (args["handle"] != null) return "Afecta a 1 entidad";
+            }
+            catch (Exception) { }
+            return "";
         }
 
         private static JsonObject Comando(params string[] tokens)
@@ -325,12 +356,12 @@ namespace AutoCadMcpPlugin.Chat
                         // Lo destructivo (borrar, purgar, cerrar, deshacer, comandos libres) pide permiso CADA vez, con una tarjeta en el
                         // panel (los diálogos emergentes no abren dentro de una paleta de AutoCAD). Dibujar no pregunta: se revierte con «Deshacer».
                         bool rechazada = false;
-                        if (_destructivas.IsMatch(visible) && !_siempre.Contains(visible))
+                        if (PidePermiso(p.ModoPermisos, visible) && !_siempre.Contains(visible))
                         {
                             var idPermiso = Guid.NewGuid().ToString("N").Substring(0, 8);
                             var tcs = new TaskCompletionSource<int>();
                             lock (_permisos) _permisos[idPermiso] = tcs;
-                            Emitir("permiso", new JsonObject { ["id"] = idPermiso, ["nombre"] = visible, ["args"] = argsVisibles.DeepClone() });
+                            Emitir("permiso", new JsonObject { ["id"] = idPermiso, ["nombre"] = visible, ["args"] = argsVisibles.DeepClone(), ["resumen"] = ResumenRiesgo(visible, argsVisibles) });
                             int decision;
                             using (ct.Register(() => tcs.TrySetResult(0)))
                                 decision = await tcs.Task.ConfigureAwait(true);

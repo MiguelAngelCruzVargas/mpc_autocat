@@ -220,6 +220,31 @@ namespace AgenteTests
                       AgenteNativo.ComandoOk("{\"state\":\"done\",\"ok\":true}") && !AgenteNativo.ComandoOk("{\"ok\":false,\"error\":\"x\"}") && !AgenteNativo.ComandoOk("no es json"));
             }
 
+            Console.WriteLine("test_modos_de_permiso");
+            {
+                var cliM = new ChatCliente(url);
+                var agM = new AgenteNativo(() => cliM, Path.Combine(dir, "m.json"));
+                int Permisos(string modo, string herramienta, string args)
+                {
+                    var m = new ModeloGuion(() => ModeloGuion.Llama(herramienta, args), () => ModeloGuion.Texto("ok"));
+                    agM.FabricaProveedor = (prep, p) => m;
+                    int n = 0;
+                    var pe = new PedidoAgente { Mensaje = "x", Proveedor = "groq", Modelo = "falso", Perfil = "arquitectura", ModoPermisos = modo };
+                    agM.Reiniciar();
+                    agM.EjecutarAsync(pe, e => { if (e.GetProperty("tipo").GetString() == "permiso") { n++; agM.ResolverPermiso(e.GetProperty("id").GetString(), 0); } }, CancellationToken.None).GetAwaiter().GetResult();
+                    return n;
+                }
+                Check("modo «destructivo»: borrar pide permiso", Permisos("destructivo", "delete_entities", "{\"handles\":[\"FFFFFF9\"]}") == 1);
+                Check("modo «destructivo»: dibujar no pide", Permisos("destructivo", "create_line", "{\"x1\":0}") == 0);
+                Check("modo «todo»: dibujar también pide", Permisos("todo", "create_line", "{\"x1\":0}") == 1);
+                Check("modo «todo»: consultar no pide", Permisos("todo", "list_layers", "{}") == 0);
+                Check("modo «nada»: ni borrar pide", Permisos("nada", "delete_entities", "{\"handles\":[\"FFFFFF9\"]}") == 0);
+                Check("resumen de riesgo: un handle", AgenteNativo.ResumenRiesgo("delete_entities", JsonNode.Parse("{\"handles\":[\"A1\"]}") as JsonObject) == "Afecta a 1 entidad");
+                Check("resumen de riesgo: varios", AgenteNativo.ResumenRiesgo("delete_entities", JsonNode.Parse("{\"handles\":[\"A1\",\"B2\",\"C3\"]}") as JsonObject) == "Afecta a 3 entidades");
+                Check("resumen de riesgo: todo el espacio", AgenteNativo.ResumenRiesgo("overkill_entities", JsonNode.Parse("{\"all\":true}") as JsonObject).Contains("TODO"));
+                Check("resumen de riesgo: comando libre", AgenteNativo.ResumenRiesgo("run_command", JsonNode.Parse("{\"tokens\":[\"ERASE\",\"ALL\",null]}") as JsonObject).StartsWith("Comando de AutoCAD: ERASE ALL"));
+            }
+
             Console.WriteLine("test_texto_basura");
             {
                 var cliG = new ChatCliente(url);

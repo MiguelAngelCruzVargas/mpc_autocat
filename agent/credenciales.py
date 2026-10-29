@@ -200,7 +200,7 @@ PREFS_VALIDAS = ("proveedor", "modelo", "perfil", "temperatura",
                  # Precio por millón de tokens que escribe el usuario para
                  # los proveedores que no lo publican, el tope por pedido
                  # y los presets guardados (ver app.js).
-                 "precios", "topeUSD", "presets")
+                 "precios", "topeUSD", "presets", "modoPermisos")
 
 
 def leer_preferencias() -> dict[str, Any]:

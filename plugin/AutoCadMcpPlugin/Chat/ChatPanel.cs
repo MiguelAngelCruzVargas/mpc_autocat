@@ -76,6 +76,14 @@ namespace AutoCadMcpPlugin.Chat
         private readonly TextBlock _claveEstado = new TextBlock();
         private readonly CheckBox _reglas = new CheckBox();
         private readonly Slider _temp = new Slider();
+        // permisos, tope de gasto y licencia (ajustes)
+        private string _modoPermisos = "destructivo";
+        private readonly StackPanel _listaPermisos = new StackPanel();
+        private readonly TextBox _tope = new TextBox();
+        private readonly StackPanel _licSeccion = new StackPanel { Visibility = Visibility.Collapsed };
+        private readonly TextBlock _licEstado = new TextBlock();
+        private readonly TextBox _licClave = new TextBox();
+        private bool _licObligatoria, _licValida = true;
         private readonly StackPanel _listaProv = new StackPanel(), _listaModelos = new StackPanel(), _listaPerfiles = new StackPanel(), _seccionApi = new StackPanel();
         private readonly Grid _entradaFila = new Grid();
         private Border _vivoAviso;
@@ -360,6 +368,21 @@ namespace AutoCadMcpPlugin.Chat
             Grid.SetColumn(cerrar, 1); titulo.Children.Add(cerrar);
             p.Children.Add(titulo);
 
+            // licencia: solo si esta copia la exige (un paquete vendido). En el repo de desarrollo no aparece.
+            _licSeccion.Children.Add(Etiqueta("Licencia"));
+            _licEstado.Foreground = _t.Suave; _licEstado.TextWrapping = TextWrapping.Wrap; _licEstado.Margin = new Thickness(0, 0, 0, 4);
+            _licSeccion.Children.Add(_licEstado);
+            EstilizarTexto(_licClave); _licClave.ToolTip = "La clave que recibiste al comprar (AIA-XXXXX-XXXXX-XXXXX-XXXXX)";
+            _licSeccion.Children.Add(_licClave);
+            var licBotones = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+            var activar = new Button { Content = "Activar", Background = _t.Acento, Foreground = _t.AcentoTexto, BorderBrush = _t.Acento };
+            activar.Click += async (s, e) => await LicenciaAsync("/api/licencia/activar", new { clave = _licClave.Text.Trim() }).ConfigureAwait(true);
+            var prueba = new Button { Content = "Prueba gratis de 7 días", Margin = new Thickness(6, 0, 0, 0) };
+            prueba.Click += async (s, e) => await LicenciaAsync("/api/licencia/prueba", new { }).ConfigureAwait(true);
+            licBotones.Children.Add(activar); licBotones.Children.Add(prueba);
+            _licSeccion.Children.Add(licBotones);
+            p.Children.Add(_licSeccion);
+
             p.Children.Add(Etiqueta("Con qué IA quieres trabajar"));
             p.Children.Add(_listaProv);
             p.Children.Add(new TextBlock
@@ -401,6 +424,16 @@ namespace AutoCadMcpPlugin.Chat
             _reglas.Margin = new Thickness(0, 10, 0, 0);
             _seccionApi.Children.Add(_reglas);
 
+            _seccionApi.Children.Add(Etiqueta("Permisos al modificar el dibujo"));
+            _seccionApi.Children.Add(_listaPermisos);
+            _seccionApi.Children.Add(Etiqueta("Tope de gasto por pedido (US$)"));
+            EstilizarTexto(_tope); _tope.Width = 90; _tope.HorizontalAlignment = HorizontalAlignment.Left; _tope.Text = "0";
+            _tope.ToolTip = "0 = sin tope. Si un pedido pasa de esta cantidad, el agente se detiene al terminar la vuelta en curso.";
+            _tope.LostFocus += async (s, e) => await GuardarTopeAsync().ConfigureAwait(true);
+            _seccionApi.Children.Add(_tope);
+            _seccionApi.Children.Add(new TextBlock { Text = "0 = sin tope. Lo dibujado se queda; el agente solo deja de seguir.", Foreground = _t.Suave, FontSize = 11, Margin = new Thickness(0, 3, 0, 0), TextWrapping = TextWrapping.Wrap });
+            RefrescarPermisos();
+
             _seccionApi.Children.Add(Etiqueta("Temperatura"));
             _temp.Minimum = 0; _temp.Maximum = 1; _temp.Value = 0.2; _temp.TickFrequency = 0.1; _temp.IsSnapToTickEnabled = true;
             _seccionApi.Children.Add(_temp);
@@ -414,6 +447,60 @@ namespace AutoCadMcpPlugin.Chat
             p.Children.Add(listo);
             sv.Content = p;
             _ajustes.Children.Add(sv);
+        }
+
+        private void RefrescarPermisos()
+        {
+            _listaPermisos.Children.Clear();
+            var opciones = new[]
+            {
+                ("destructivo", "Preguntar lo destructivo", "Borrar, purgar, cerrar, deshacer y comandos libres piden permiso. Dibujar no."),
+                ("todo", "Preguntar todo lo que modifica", "Cada herramienta que toca el dibujo pide permiso. Lo más seguro, y lo más lento."),
+                ("nada", "No preguntar nada", "El agente hace todo sin preguntar, incluso borrar. «Deshacer este pedido» sigue disponible."),
+            };
+            foreach (var (id, titulo, detalle) in opciones)
+            {
+                var ident = id;
+                _listaPermisos.Children.Add(Fila(titulo, detalle, _modoPermisos == ident, async () =>
+                {
+                    _modoPermisos = ident; RefrescarPermisos();
+                    if (_cli != null) try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { modoPermisos = ident } }).ConfigureAwait(true)) { } } catch { }
+                }));
+            }
+        }
+
+        private async Task GuardarTopeAsync()
+        {
+            if (!double.TryParse(_tope.Text.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) || v < 0) { v = 0; _tope.Text = "0"; }
+            if (_cli != null) try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { topeUSD = v } }).ConfigureAwait(true)) { } } catch { }
+        }
+
+        private double TopeActual() =>
+            double.TryParse((_tope.Text ?? "").Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0 ? v : 0;
+
+        private void MostrarLicencia(JsonElement lic)
+        {
+            _licObligatoria = lic.TryGetProperty("obligatoria", out var o) && o.ValueKind == JsonValueKind.True;
+            _licValida = !_licObligatoria || (lic.TryGetProperty("valida", out var v) && v.ValueKind == JsonValueKind.True);
+            _licSeccion.Visibility = _licObligatoria ? Visibility.Visible : Visibility.Collapsed;
+            _licEstado.Text = lic.TryGetProperty("mensaje", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : "";
+            _licEstado.Foreground = _licValida ? _t.Ok : _t.Mal;
+        }
+
+        private async Task LicenciaAsync(string ruta, object cuerpo)
+        {
+            if (_cli == null) return;
+            try
+            {
+                using (var doc = await _cli.PostAsync(ruta, cuerpo).ConfigureAwait(true))
+                    if (doc.RootElement.TryGetProperty("licencia", out var lic))
+                    {
+                        // la respuesta trae el estado de la licencia; el mensaje listo lo da /api/estado
+                        using (var est = await _cli.GetAsync("/api/estado").ConfigureAwait(true))
+                            if (est.RootElement.TryGetProperty("licencia", out var l2)) MostrarLicencia(l2); else MostrarLicencia(lic);
+                    }
+            }
+            catch (Exception ex) { _licEstado.Text = ex.Message; _licEstado.Foreground = _t.Mal; }
         }
 
         // Una fila elegible, a lo ancho y con el nombre completo (sin menús emergentes).
@@ -569,12 +656,15 @@ namespace AutoCadMcpPlugin.Chat
                     if (pr.TryGetProperty("perfil", out var pe) && pe.ValueKind == JsonValueKind.String) _perfil = pe.GetString();
                     if (pr.TryGetProperty("conReglas", out var cr)) _reglas.IsChecked = cr.ValueKind != JsonValueKind.False;
                     if (pr.TryGetProperty("temperatura", out var tm) && tm.ValueKind == JsonValueKind.Number) _temp.Value = tm.GetDouble();
+                    if (pr.TryGetProperty("modoPermisos", out var mp) && mp.ValueKind == JsonValueKind.String) _modoPermisos = mp.GetString();
+                    if (pr.TryGetProperty("topeUSD", out var tu) && tu.ValueKind == JsonValueKind.Number) _tope.Text = tu.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture);
                     if (pr.TryGetProperty("modelos", out var ms) && ms.ValueKind == JsonValueKind.Object)
                         foreach (var m in ms.EnumerateObject())
                             if (m.Value.ValueKind == JsonValueKind.String) _modelos[m.Name] = m.Value.GetString();
                 }
                 var elegido = _provs.FirstOrDefault(x => x.Id == prefProv) ?? _provs.FirstOrDefault(x => x.Clave && !x.Vivo) ?? _provs.FirstOrDefault();
-                RefrescarPerfiles();
+                RefrescarPerfiles(); RefrescarPermisos();
+                if (r.TryGetProperty("licencia", out var licEstado) && licEstado.ValueKind == JsonValueKind.Object) MostrarLicencia(licEstado);
                 if (elegido != null) await ElegirProveedorAsync(elegido, false).ConfigureAwait(true);
             }
         }
@@ -951,6 +1041,9 @@ namespace AutoCadMcpPlugin.Chat
             pila.Children.Add(new TextBlock { Text = nombre, FontFamily = Mono, FontWeight = FontWeights.SemiBold, Foreground = _t.Texto, TextWrapping = TextWrapping.Wrap });
             if (detalle.Length > 0)
                 pila.Children.Add(new TextBlock { Text = detalle, FontFamily = Mono, FontSize = 10.5, Foreground = _t.Suave, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+            var riesgo = Texto(ev, "resumen");
+            if (riesgo.Length > 0)
+                pila.Children.Add(new TextBlock { Text = riesgo, FontFamily = Mono, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = riesgo.Contains("TODO") || riesgo.Contains("muchas") ? _t.Mal : _t.Aviso, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
             var respuesta = new TextBlock { Foreground = _t.Texto, FontFamily = Mono, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 6, 0, 0), TextWrapping = TextWrapping.Wrap };
             var botones = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
             Button B(string texto, int decision)
@@ -1090,6 +1183,11 @@ namespace AutoCadMcpPlugin.Chat
                 catch (Exception ex) { _vivoEstado.Text = "No se pudo enviar: " + ex.Message; }
                 return;
             }
+            if (_licObligatoria && !_licValida)
+            {
+                _ajustes.Visibility = Visibility.Visible;
+                return;          // la sección de licencia arriba dice qué hacer
+            }
             if (!_prov.Clave && !_prov.Puente)
             {
                 _ajustes.Visibility = Visibility.Visible;
@@ -1132,7 +1230,7 @@ namespace AutoCadMcpPlugin.Chat
                     await _agente.EjecutarAsync(new PedidoAgente
                     {
                         Mensaje = mensaje, Proveedor = _prov.Id, Modelo = _modelo.Text.Trim(), Perfil = _perfil,
-                        ConReglas = _reglas.IsChecked == true, Temperatura = _temp.Value,
+                        ConReglas = _reglas.IsChecked == true, Temperatura = _temp.Value, ModoPermisos = _modoPermisos, TopeUSD = TopeActual(),
                     }, Procesar, _cts.Token).ConfigureAwait(true);
                 }
             }
