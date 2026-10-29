@@ -18,5 +18,6 @@
     <Compile Include="..\AutoCadMcpPlugin\Chat\Capacidades.cs" Link="Chat\Capacidades.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\Preferencias.cs" Link="Chat\Preferencias.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\Proveedores.cs" Link="Chat\Proveedores.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\LicenciaGuard.cs" Link="LicenciaGuard.cs" />
   </ItemGroup>
 </Project>

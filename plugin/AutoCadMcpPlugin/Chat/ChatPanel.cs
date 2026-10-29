@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -504,9 +505,9 @@ namespace AutoCadMcpPlugin.Chat
             _licSeccion.Children.Add(_licClave);
             var licBotones = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
             var activar = new Button { Content = "Activar", Background = _t.Acento, Foreground = _t.AcentoTexto, BorderBrush = _t.Acento };
-            activar.Click += async (s, e) => await LicenciaAsync("/api/licencia/activar", new { clave = _licClave.Text.Trim() }).ConfigureAwait(true);
+            activar.Click += async (s, e) => await LicenciaAsync(_licClave.Text.Trim()).ConfigureAwait(true);
             var prueba = new Button { Content = "Prueba gratis de 7 días", Margin = new Thickness(6, 0, 0, 0) };
-            prueba.Click += async (s, e) => await LicenciaAsync("/api/licencia/prueba", new { }).ConfigureAwait(true);
+            prueba.Click += async (s, e) => await LicenciaAsync(null).ConfigureAwait(true);
             licBotones.Children.Add(activar); licBotones.Children.Add(prueba);
             _licSeccion.Children.Add(licBotones);
             _gAjustes.Children.Add(_licSeccion);
@@ -718,18 +719,23 @@ namespace AutoCadMcpPlugin.Chat
             _licEstado.Foreground = _licValida ? _t.Ok : _t.Mal;
         }
 
-        private async Task LicenciaAsync(string ruta, object cuerpo)
+        /// <summary>El estado de la licencia, como lo ve el guardián del plugin (el que de verdad hace cumplir), con un texto pensado para la persona.</summary>
+        internal static JsonElement EstadoLicenciaLocal()
         {
-            if (_cli == null) return;
+            var e = JsonNode.Parse(AutoCadMcpPlugin.LicenciaGuard.Estado().ToJsonString()) as JsonObject;
+            if (e["motivo"]?.ToString() == "sin_licencia")
+                e["mensaje"] = "Todavía no activas tu licencia. Pega la clave que recibiste al comprar o empieza la prueba gratis de 7 días.";
+            using (var d = JsonDocument.Parse(e.ToJsonString())) return d.RootElement.Clone();
+        }
+
+        private async Task LicenciaAsync(string clave)
+        {
             try
             {
-                using (var doc = await _cli.PostAsync(ruta, cuerpo).ConfigureAwait(true))
-                    if (doc.RootElement.TryGetProperty("licencia", out var lic))
-                    {
-                        // la respuesta trae el estado de la licencia; el mensaje listo lo da /api/estado
-                        using (var est = await _cli.GetAsync("/api/estado").ConfigureAwait(true))
-                            if (est.RootElement.TryGetProperty("licencia", out var l2)) MostrarLicencia(l2); else MostrarLicencia(lic);
-                    }
+                _licEstado.Text = clave == null ? "Pidiendo la prueba gratis…" : "Activando la licencia…"; _licEstado.Foreground = _t.Suave;
+                if (clave == null) await AutoCadMcpPlugin.LicenciaGuard.PruebaAsync().ConfigureAwait(true);
+                else await AutoCadMcpPlugin.LicenciaGuard.ActivarAsync(clave).ConfigureAwait(true);
+                MostrarLicencia(EstadoLicenciaLocal());
             }
             catch (Exception ex) { _licEstado.Text = ex.Message; _licEstado.Foreground = _t.Mal; }
         }
@@ -946,7 +952,7 @@ namespace AutoCadMcpPlugin.Chat
                 }
                 var elegido = _provs.FirstOrDefault(x => x.Id == prefProv) ?? _provs.FirstOrDefault(x => x.Clave && !x.Vivo) ?? _provs.FirstOrDefault();
                 RefrescarPerfiles(); RefrescarPermisos();
-                if (r.TryGetProperty("licencia", out var licEstado) && licEstado.ValueKind == JsonValueKind.Object) MostrarLicencia(licEstado);
+                MostrarLicencia(EstadoLicenciaLocal());
                 if (elegido != null) await ElegirProveedorAsync(elegido, false).ConfigureAwait(true);
             }
         }

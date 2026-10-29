@@ -3,6 +3,8 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Net.Http;
+using System.Threading.Tasks;
 using Microsoft.Win32;
 
 namespace AutoCadMcpPlugin
@@ -29,9 +31,93 @@ namespace AutoCadMcpPlugin
         public const bool Obligatoria = false;
 #endif
 
-        private static readonly string Archivo = Path.Combine(
-            Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "AutoCadMcp", "licencia.json");
+        // AUTOCAD_IA_CREDENCIALES desvía la carpeta en las pruebas (la misma que usan claves y preferencias).
+        private static string Carpeta
+        {
+            get
+            {
+                var desvio = Environment.GetEnvironmentVariable("AUTOCAD_IA_CREDENCIALES");
+                if (!string.IsNullOrEmpty(desvio)) return desvio;
+                return Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AutoCadMcp");
+            }
+        }
+
+        private static string Archivo => Path.Combine(Carpeta, "licencia.json");
+
+        // El mismo servidor de licencias que usa licencia.py (mcp_server): activar una clave y la prueba gratis salen de aquí.
+        private const string ServidorUrl = "https://vigentra-architech.vigentra.mx";
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+
+        private static string UrlServidor()
+        {
+            var url = Environment.GetEnvironmentVariable("AUTOCAD_IA_LICENCIAS_URL");
+            if (string.IsNullOrEmpty(url)) url = ServidorUrl;
+            if (url.Contains(".invalid")) throw new InvalidOperationException("Este paquete todavia no tiene configurado el servidor de licencias (AUTOCAD_IA_LICENCIAS_URL).");
+            return url.TrimEnd('/');
+        }
+
+        /// <summary>Activa una clave de licencia en este equipo (pide el token firmado al servidor y lo guarda). Lanza InvalidOperationException con el mensaje que ve la persona.</summary>
+        public static async Task<JsonObject> ActivarAsync(string clave)
+        {
+            if (clave == null || clave.Trim().Length < 12) throw new InvalidOperationException("La clave tiene el formato AIA-XXXXX-XXXXX-XXXXX-XXXXX.");
+            var resp = await PedirAsync("/v1/activar", new JsonObject { ["clave"] = clave.Trim(), ["maquina"] = IdEquipo(), ["equipo"] = Environment.GetEnvironmentVariable("COMPUTERNAME") ?? "" }).ConfigureAwait(false);
+            return Instalar(resp, clave.Trim());
+        }
+
+        /// <summary>La prueba gratis de 7 días (una sola vez por equipo; el servidor lo controla).</summary>
+        public static async Task<JsonObject> PruebaAsync()
+        {
+            var resp = await PedirAsync("/v1/prueba", new JsonObject { ["maquina"] = IdEquipo() }).ConfigureAwait(false);
+            return Instalar(resp, null);
+        }
+
+        private static async Task<JsonObject> PedirAsync(string ruta, JsonObject cuerpo)
+        {
+            using (var req = new HttpRequestMessage(HttpMethod.Post, UrlServidor() + ruta) { Content = new StringContent(cuerpo.ToJsonString(), Encoding.UTF8, "application/json") })
+            {
+                req.Headers.TryAddWithoutValidation("User-Agent", "AutoCAD-IA");
+                HttpResponseMessage resp;
+                try { resp = await Http.SendAsync(req).ConfigureAwait(false); }
+                catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException)
+                {
+                    throw new InvalidOperationException("No se pudo contactar al servidor de licencias (revisa tu internet): " + ex.Message);
+                }
+                using (resp)
+                {
+                    var texto = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        string msg = null;
+                        try { msg = (JsonNode.Parse(texto) as JsonObject)?["error"]?.ToString(); } catch (Exception) { }
+                        throw new InvalidOperationException(string.IsNullOrEmpty(msg) ? "El servidor de licencias respondio " + (int)resp.StatusCode + "." : msg);
+                    }
+                    try { return JsonNode.Parse(texto) as JsonObject ?? throw new FormatException(); }
+                    catch (Exception) { throw new InvalidOperationException("El servidor de licencias respondio algo que no se entiende."); }
+                }
+            }
+        }
+
+        /// <summary>Guarda el token (nunca uno que no verifique) conservando lo que ya hubiera en el archivo, y devuelve el estado.</summary>
+        internal static JsonObject Instalar(JsonObject resp, string clave)
+        {
+            var token = resp?["token"]?.ToString();
+            if (string.IsNullOrEmpty(token)) throw new InvalidOperationException("El servidor de licencias no devolvio una licencia.");
+            try { Verificar(token); }
+            catch (Exception) { throw new InvalidOperationException("La licencia que devolvio el servidor no es valida (firma incorrecta)."); }
+            JsonObject d;
+            try { d = File.Exists(Archivo) ? JsonNode.Parse(File.ReadAllText(Archivo)) as JsonObject ?? new JsonObject() : new JsonObject(); }
+            catch (Exception) { d = new JsonObject(); }
+            d["token"] = token;
+            if (!string.IsNullOrEmpty(clave)) d["clave"] = clave;
+            if (d["visto"] == null) d["visto"] = 0;
+            Directory.CreateDirectory(Carpeta);
+            var tmp = Archivo + ".tmp";
+            File.WriteAllText(tmp, d.ToJsonString(), new UTF8Encoding(false));
+            if (File.Exists(Archivo)) File.Delete(Archivo);
+            File.Move(tmp, Archivo);
+            lock (Candado) { _estado = null; }
+            return Estado();
+        }
 
         private static readonly object Candado = new object();
         private static DateTime _leidoEn = DateTime.MinValue;

@@ -148,6 +148,27 @@ namespace AgenteTests
                 catch (System.Net.HttpListenerException ex) { Console.WriteLine("  (sin prueba por HTTP: " + ex.Message + ")"); }
             }
 
+            Console.WriteLine("test_licencia_en_csharp");
+            {
+                var tmpLic = Path.Combine(Path.GetTempPath(), "lic_tests_" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                Environment.SetEnvironmentVariable("AUTOCAD_IA_CREDENCIALES", tmpLic);
+                var sin = AutoCadMcpPlugin.LicenciaGuard.Estado();
+                Check("sin archivo: no hay licencia", sin["valida"].GetValue<bool>() == false && sin["motivo"].ToString() == "sin_licencia");
+                var rechazado = false;
+                try { AutoCadMcpPlugin.LicenciaGuard.Instalar(new System.Text.Json.Nodes.JsonObject { ["token"] = "cuerpo.firma" }, null); }
+                catch (InvalidOperationException) { rechazado = true; }
+                Check("nunca guarda un token que no verifica", rechazado && !File.Exists(Path.Combine(tmpLic, "licencia.json")));
+                var claveCorta = false;
+                try { await AutoCadMcpPlugin.LicenciaGuard.ActivarAsync("AIA-1"); } catch (InvalidOperationException) { claveCorta = true; }
+                Check("una clave con formato roto ni sale a la red", claveCorta);
+                Environment.SetEnvironmentVariable("AUTOCAD_IA_LICENCIAS_URL", "http://127.0.0.1:9/");
+                var sinRed = "";
+                try { await AutoCadMcpPlugin.LicenciaGuard.PruebaAsync(); } catch (InvalidOperationException ex) { sinRed = ex.Message; }
+                Check("sin servidor: mensaje claro, no excepcion cruda", sinRed.Contains("No se pudo contactar"), sinRed);
+                Environment.SetEnvironmentVariable("AUTOCAD_IA_LICENCIAS_URL", null);
+                Environment.SetEnvironmentVariable("AUTOCAD_IA_CREDENCIALES", null);
+            }
+
             Console.WriteLine("test_traduccion_a_anthropic");
             var conv = new JsonArray
             {
