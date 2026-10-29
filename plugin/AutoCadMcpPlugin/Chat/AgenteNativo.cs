@@ -242,7 +242,22 @@ namespace AutoCadMcpPlugin.Chat
 
                     Compactar(_mensajes, MaxCharsContexto, ResultadosCompletos);
                     JsonObject resp;
-                    try { resp = await proveedor.CompletarAsync(_mensajes, tools, ct).ConfigureAwait(true); }
+                    try
+                    {
+                        // Con un modelo que sabe ir contando lo que escribe, el panel muestra el texto a medida que llega (no de golpe).
+                        if (proveedor is IProveedorConTexto flujo)
+                        {
+                            var reloj = System.Diagnostics.Stopwatch.StartNew();
+                            long ultimo = -1000;
+                            resp = await flujo.CompletarAsync(_mensajes, tools, ct, txt =>
+                            {
+                                if (reloj.ElapsedMilliseconds - ultimo < 70) return;          // no inundar el panel
+                                ultimo = reloj.ElapsedMilliseconds;
+                                Emitir("texto_parcial", Obj("texto", txt));
+                            }).ConfigureAwait(true);
+                        }
+                        else resp = await proveedor.CompletarAsync(_mensajes, tools, ct).ConfigureAwait(true);
+                    }
                     catch (OperationCanceledException)
                     {
                         Emitir("aviso", Obj("texto", "Cancelado. Lo que ya se dibujó queda en el DWG: revísalo antes de seguir."));

@@ -287,12 +287,12 @@ namespace AgenteTests
                     }
                     return a;
                 }
-                var v = Armar(12, 5000);
-                var tocados = AgenteNativo.Compactar(v, 1000000, 8);
-                var largos = v.Where(m => m["role"].ToString() == "tool").Select(m => m["content"].ToString().Length).ToList();
+                var corto = Armar(12, 5000);
+                var tocados = AgenteNativo.Compactar(corto, 1000000, 8);
+                var largos = corto.Where(m => m["role"].ToString() == "tool").Select(m => m["content"].ToString().Length).ToList();
                 Check("los resultados viejos se acortan", largos.Take(4).All(l => l < 700), string.Join(",", largos));
                 Check("y los 8 más recientes se conservan completos", largos.Skip(4).All(l => l == 5000));
-                Check("un resultado recortado lo dice", v.First(m => m["role"].ToString() == "tool")["content"].ToString().Contains("recortado"));
+                Check("un resultado recortado lo dice", corto.First(m => m["role"].ToString() == "tool")["content"].ToString().Contains("recortado"));
 
                 var w = Armar(20, 20000);
                 AgenteNativo.Compactar(w, 100000, 8);
@@ -305,6 +305,68 @@ namespace AgenteTests
                 Check("cada resultado conservado tiene su llamada", w.Where(m => m["role"].ToString() == "tool").All(m => llamadas.Contains(m["tool_call_id"].ToString())));
                 var chica = Armar(3, 100);
                 Check("una conversación corta no se toca", AgenteNativo.Compactar(chica, 100000, 8) == 0);
+            }
+
+            Console.WriteLine("test_flujo_openai");
+            {
+                var vistos = new List<string>();
+                var acu = new AcumuladorOpenAI(s => vistos.Add(s));
+                foreach (var l in new[]
+                {
+                    "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hol\"}}]}",
+                    "",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"a, \"}}]}",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"mundo\"}}]}",
+                    "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"pienso\"}}]}",
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"buscar_herramientas\",\"arguments\":\"{\\\"fl\"}}]}}]}",
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"ujo\\\":\\\"casa\\\"}\"}}]}}]}",
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"c2\",\"function\":{\"name\":\"list_layers\",\"arguments\":\"{}\"}}]}}]}",
+                    "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}",
+                    "data: [DONE]",
+                }) acu.Linea(l);
+                var res = acu.Resultado();
+                Check("el texto llega en pedazos y se arma entero", res["content"].ToString() == "Hola, mundo" && vistos.Count == 3 && vistos[0] == "Hol" && vistos[2] == "Hola, mundo");
+                Check("los argumentos partidos de una herramienta se unen", ((JsonArray)res["tool_calls"])[0]["function"]["arguments"].ToString() == "{\"flujo\":\"casa\"}");
+                Check("varias llamadas, en su orden y con su id", ((JsonArray)res["tool_calls"]).Count == 2 && res["tool_calls"][1]["id"].ToString() == "c2" && res["tool_calls"][1]["function"]["name"].ToString() == "list_layers");
+                Check("el razonamiento se guarda (DeepSeek lo exige de vuelta)", res["reasoning_content"].ToString() == "pienso");
+                Check("el uso de tokens sale del último pedazo", acu.Uso["prompt_tokens"].GetValue<int>() == 10);
+
+                var groq = new AcumuladorOpenAI(null);
+                groq.Linea("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}],\"x_groq\":{\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2}}}");
+                Check("Groq informa el uso dentro de x_groq", groq.Uso["prompt_tokens"].GetValue<int>() == 7);
+
+                var plano = new AcumuladorOpenAI(null);
+                plano.Linea("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"respuesta entera\"}}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}");
+                Check("un servidor que ignora «stream» y contesta un JSON entero también se entiende", plano.Resultado()["content"].ToString() == "respuesta entera" && plano.Uso["prompt_tokens"].GetValue<int>() == 3);
+
+                var malo = new AcumuladorOpenAI(null);
+                bool lanzo = false;
+                try { malo.Linea("data: {\"error\":{\"message\":\"cuota agotada\"}}"); } catch (ErrorProveedor ex) { lanzo = ex.Message.Contains("cuota agotada"); }
+                Check("un error en medio del flujo llega como error", lanzo);
+                Check("una línea de comentario o vacía no rompe nada", new AcumuladorOpenAI(null).Resultado()["content"] == null);
+            }
+
+            Console.WriteLine("test_flujo_anthropic");
+            {
+                var vistos = new List<string>();
+                var acu = new AcumuladorAnthropic(s => vistos.Add(s));
+                foreach (var l in new[]
+                {
+                    "event: message_start",
+                    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":25,\"output_tokens\":1}}}",
+                    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+                    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Voy \"}}",
+                    "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"a dibujar\"}}",
+                    "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"create_circle\",\"input\":{}}}",
+                    "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"x\\\":0,\"}}",
+                    "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"y\\\":0}\"}}",
+                    "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":42}}",
+                    "data: {\"type\":\"message_stop\"}",
+                }) acu.Linea(l);
+                var res = acu.Resultado();
+                Check("el texto de Claude se arma entero y va avisando", res["content"].ToString() == "Voy a dibujar" && vistos.Last() == "Voy a dibujar");
+                Check("la herramienta de Claude junta sus argumentos partidos", res["tool_calls"][0]["function"]["name"].ToString() == "create_circle" && res["tool_calls"][0]["function"]["arguments"].ToString() == "{\"x\":0,\"y\":0}");
+                Check("y el uso: entrada del inicio, salida del final", acu.Entrada == 25 && acu.Salida == 42);
             }
 
             Console.WriteLine("test_texto_basura");
@@ -342,6 +404,35 @@ namespace AgenteTests
             var clave = Credenciales.Obtener("groq", "GROQ_API_KEY");
             Check("la clave de Groq que guardó Python se descifra desde C# (DPAPI)", !string.IsNullOrEmpty(clave) && clave.StartsWith("gsk_"), clave == null ? "no se pudo" : "otra forma");
             Check("una clave en texto plano se lee tal cual", Credenciales.Revelar(JsonNode.Parse("{\"modo\":\"plano\",\"valor\":\"abc\"}")) == "abc" && Credenciales.Revelar(JsonNode.Parse("\"xyz\"")) == "xyz");
+
+            if (args.Contains("--vivo"))
+            {
+                // Con un modelo de verdad (gasta unos centavos de tokens): el streaming de Groq por la red.
+                Console.WriteLine("test_flujo_real_groq");
+                var claveG = Credenciales.Obtener("groq", "GROQ_API_KEY");
+                if (string.IsNullOrEmpty(claveG)) Console.WriteLine("  (sin clave de Groq guardada: se omite)");
+                else
+                {
+                    var prov = new ProveedorOpenAI("https://api.groq.com/openai/v1", claveG, "openai/gpt-oss-120b", 0.2);
+                    var pedazos = new List<string>();
+                    var mens = new JsonArray { new JsonObject { ["role"] = "user", ["content"] = "Cuenta del 1 al 25 separados por comas, sin nada más." } };
+                    var r1 = await prov.CompletarAsync(mens, new JsonArray(), CancellationToken.None, s => pedazos.Add(s));
+                    Check("llegó en varios pedazos y no de golpe", pedazos.Count >= 3, pedazos.Count + " pedazos");
+                    Check("el texto final está entero", r1["content"]?.ToString().Contains("25") == true, r1["content"]?.ToString());
+                    Check("el uso de tokens se contó", prov.Uso.Total > 0 && prov.Uso.Vueltas == 1, prov.Uso.Total + " tokens");
+                    var meta = new JsonArray { new JsonObject { ["type"] = "function", ["function"] = new JsonObject { ["name"] = "buscar_herramientas", ["description"] = "Busca herramientas", ["parameters"] = new JsonObject { ["type"] = "object", ["properties"] = new JsonObject { ["flujo"] = new JsonObject { ["type"] = "string" } } } } } };
+                    var mens2 = new JsonArray { new JsonObject { ["role"] = "user", ["content"] = "Usa buscar_herramientas con flujo casa." } };
+                    var r2 = await prov.CompletarAsync(mens2, meta, CancellationToken.None, s => { });
+                    var llamada = (r2["tool_calls"] as JsonArray)?.FirstOrDefault();
+                    Check("una herramienta llamada en streaming llega con sus argumentos completos",
+                          llamada?["function"]?["name"]?.ToString() == "buscar_herramientas" && llamada["function"]["arguments"].ToString().Contains("casa"), llamada?.ToJsonString());
+                    var ctsG = new CancellationTokenSource(); ctsG.CancelAfter(400);
+                    bool cancelo = false;
+                    try { await prov.CompletarAsync(new JsonArray { new JsonObject { ["role"] = "user", ["content"] = "Escribe un ensayo largo de 800 palabras sobre muros." } }, new JsonArray(), ctsG.Token, s => { }); }
+                    catch (OperationCanceledException) { cancelo = true; }
+                    Check("cancelar corta el flujo en marcha", cancelo);
+                }
+            }
 
             if (Fallas.Count > 0)
             {

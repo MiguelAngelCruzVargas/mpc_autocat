@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -34,6 +35,7 @@ namespace AutoCadMcpPlugin.Chat
         public long Entrada, Salida;
         public int Vueltas;
         public long Total => Entrada + Salida;
+        public void AnotarVuelta() { Vueltas++; }
 
         public void Anotar(JsonNode uso)
         {
@@ -51,6 +53,13 @@ namespace AutoCadMcpPlugin.Chat
     }
 
     /// <summary>Un modelo al que se le pide la siguiente respuesta de la conversación.</summary>
+    /// <summary>Un modelo que además puede ir contando el texto a medida que lo escribe (streaming).</summary>
+    internal interface IProveedorConTexto : IProveedorModelo
+    {
+        /// <summary>Igual que CompletarAsync, pero con <paramref name="alTexto"/> se recibe el texto acumulado cada vez que llega un pedazo.</summary>
+        Task<JsonObject> CompletarAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct, Action<string> alTexto);
+    }
+
     internal interface IProveedorModelo
     {
         string Modelo { get; }
@@ -99,6 +108,33 @@ namespace AutoCadMcpPlugin.Chat
             }
         }
 
+        /// <summary>Abre una respuesta en flujo (SSE): el llamador la lee línea a línea y la cierra.</summary>
+        public static async Task<HttpResponseMessage> AbrirFlujoAsync(string url, JsonObject cuerpo, Action<HttpRequestMessage> cabeceras, CancellationToken ct)
+        {
+            var pedido = new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(cuerpo.ToJsonString(), Encoding.UTF8, "application/json") };
+            cabeceras?.Invoke(pedido);
+            try { return await Http.SendAsync(pedido, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(true); }
+            catch (HttpRequestException ex) { throw new ErrorProveedor("No se pudo llamar a " + url + ": " + ex.Message); }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested) { throw new ErrorProveedor("El modelo tardó más de 180 s en contestar (" + url + ")."); }
+        }
+
+        /// <summary>Lee un flujo SSE entero entregando cada línea a <paramref name="linea"/>; cancelar cierra la respuesta.</summary>
+        public static async Task LeerFlujoAsync(HttpResponseMessage r, Action<string> linea, CancellationToken ct)
+        {
+            using (ct.Register(() => r.Dispose()))
+            using (var flujo = await r.Content.ReadAsStreamAsync().ConfigureAwait(true))
+            using (var lector = new System.IO.StreamReader(flujo, Encoding.UTF8))
+            {
+                try
+                {
+                    string l;
+                    while ((l = await lector.ReadLineAsync().ConfigureAwait(true)) != null) linea(l);
+                }
+                catch (ObjectDisposedException) when (ct.IsCancellationRequested) { throw new OperationCanceledException(ct); }
+                catch (System.IO.IOException) when (ct.IsCancellationRequested) { throw new OperationCanceledException(ct); }
+            }
+        }
+
         /// <summary>El 400 que corresponda: una herramienta inexistente se distingue del resto.</summary>
         public static ErrorProveedor ErrorDeRespuesta(int codigo, string texto)
         {
@@ -121,7 +157,7 @@ namespace AutoCadMcpPlugin.Chat
     }
 
     /// <summary>/chat/completions con tools: el formato de OpenAI, Groq, OpenRouter, DeepSeek, Together y los servidores locales.</summary>
-    internal sealed class ProveedorOpenAI : IProveedorModelo
+    internal sealed class ProveedorOpenAI : IProveedorConTexto
     {
         private readonly string _url, _clave;
         private readonly double? _temperatura;
@@ -133,7 +169,9 @@ namespace AutoCadMcpPlugin.Chat
             _url = url.TrimEnd('/'); _clave = clave; Modelo = modelo; _temperatura = temperatura;
         }
 
-        public async Task<JsonObject> CompletarAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct)
+        private bool _opcionesFlujo = true;       // «stream_options» pide el uso de tokens al final; algunos servidores locales no lo conocen
+
+        private JsonObject Cuerpo(JsonArray mensajes, JsonArray tools)
         {
             var cuerpo = new JsonObject { ["model"] = Modelo, ["messages"] = mensajes.DeepClone() };
             if (tools != null && tools.Count > 0)
@@ -142,6 +180,46 @@ namespace AutoCadMcpPlugin.Chat
                 cuerpo["tool_choice"] = "auto";
             }
             if (_temperatura.HasValue) cuerpo["temperature"] = _temperatura.Value;
+            return cuerpo;
+        }
+
+        private void Cabeceras(HttpRequestMessage p)
+        {
+            if (!string.IsNullOrEmpty(_clave)) p.Headers.TryAddWithoutValidation("Authorization", "Bearer " + _clave);
+            p.Headers.TryAddWithoutValidation("X-Title", "AutoCAD MCP");
+        }
+
+        public Task<JsonObject> CompletarAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct) => CompletarSinFlujoAsync(mensajes, tools, ct);
+
+        public async Task<JsonObject> CompletarAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct, Action<string> alTexto)
+        {
+            if (alTexto == null) return await CompletarSinFlujoAsync(mensajes, tools, ct).ConfigureAwait(true);
+            var cuerpo = Cuerpo(mensajes, tools);
+            cuerpo["stream"] = true;
+            if (_opcionesFlujo) cuerpo["stream_options"] = new JsonObject { ["include_usage"] = true };
+            using (var r = await ClienteHttp.AbrirFlujoAsync(_url + "/chat/completions", cuerpo, Cabeceras, ct).ConfigureAwait(true))
+            {
+                if (!r.IsSuccessStatusCode)
+                {
+                    var texto = await r.Content.ReadAsStringAsync().ConfigureAwait(true);
+                    if (_opcionesFlujo && texto.Contains("stream_options"))
+                    {
+                        _opcionesFlujo = false;
+                        return await CompletarAsync(mensajes, tools, ct, alTexto).ConfigureAwait(true);
+                    }
+                    throw ClienteHttp.ErrorDeRespuesta((int)r.StatusCode, texto);
+                }
+                var acu = new AcumuladorOpenAI(alTexto);
+                await ClienteHttp.LeerFlujoAsync(r, acu.Linea, ct).ConfigureAwait(true);
+                var msg = acu.Resultado();
+                if (acu.Uso != null) Uso.Anotar(acu.Uso); else Uso.AnotarVuelta();
+                return msg;
+            }
+        }
+
+        private async Task<JsonObject> CompletarSinFlujoAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct)
+        {
+            var cuerpo = Cuerpo(mensajes, tools);
 
             var (codigo, texto) = await ClienteHttp.PostAsync(_url + "/chat/completions", cuerpo, p =>
             {
@@ -163,7 +241,7 @@ namespace AutoCadMcpPlugin.Chat
     }
 
     /// <summary>/messages de Anthropic: otro formato de tools; la conversación se traduce al vuelo.</summary>
-    internal sealed class ProveedorAnthropic : IProveedorModelo
+    internal sealed class ProveedorAnthropic : IProveedorConTexto
     {
         private readonly string _url, _clave;
         private readonly double? _temperatura;
@@ -175,7 +253,7 @@ namespace AutoCadMcpPlugin.Chat
             _url = url.TrimEnd('/'); _clave = clave; Modelo = modelo; _temperatura = temperatura;
         }
 
-        public async Task<JsonObject> CompletarAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct)
+        private JsonObject Cuerpo(JsonArray mensajes, JsonArray tools)
         {
             var (sistema, conversacion) = Traducir(mensajes);
             var cuerpo = new JsonObject { ["model"] = Modelo, ["max_tokens"] = 8192, ["messages"] = conversacion };
@@ -196,6 +274,40 @@ namespace AutoCadMcpPlugin.Chat
                 cuerpo["tools"] = ts;
             }
             if (_temperatura.HasValue) cuerpo["temperature"] = Math.Min(1.0, _temperatura.Value);
+            return cuerpo;
+        }
+
+        private void Cabeceras(HttpRequestMessage p)
+        {
+            p.Headers.TryAddWithoutValidation("x-api-key", _clave ?? "");
+            p.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+        }
+
+        public Task<JsonObject> CompletarAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct) => CompletarSinFlujoAsync(mensajes, tools, ct);
+
+        public async Task<JsonObject> CompletarAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct, Action<string> alTexto)
+        {
+            if (alTexto == null) return await CompletarSinFlujoAsync(mensajes, tools, ct).ConfigureAwait(true);
+            var cuerpo = Cuerpo(mensajes, tools);
+            cuerpo["stream"] = true;
+            using (var r = await ClienteHttp.AbrirFlujoAsync(_url + "/messages", cuerpo, Cabeceras, ct).ConfigureAwait(true))
+            {
+                if (!r.IsSuccessStatusCode)
+                {
+                    var texto = await r.Content.ReadAsStringAsync().ConfigureAwait(true);
+                    throw new ErrorProveedor("El modelo respondió " + (int)r.StatusCode + ": " + (texto.Length > 600 ? texto.Substring(0, 600) : texto));
+                }
+                var acu = new AcumuladorAnthropic(alTexto);
+                await ClienteHttp.LeerFlujoAsync(r, acu.Linea, ct).ConfigureAwait(true);
+                var msg = acu.Resultado();
+                Uso.Entrada += acu.Entrada; Uso.Salida += acu.Salida; Uso.AnotarVuelta();
+                return msg;
+            }
+        }
+
+        private async Task<JsonObject> CompletarSinFlujoAsync(JsonArray mensajes, JsonArray tools, CancellationToken ct)
+        {
+            var cuerpo = Cuerpo(mensajes, tools);
 
             var (codigo, texto) = await ClienteHttp.PostAsync(_url + "/messages", cuerpo, p =>
             {
@@ -283,6 +395,153 @@ namespace AutoCadMcpPlugin.Chat
                 }
             var m = new JsonObject { ["role"] = "assistant", ["content"] = texto.Length > 0 ? texto.ToString() : null };
             if (llamadas.Count > 0) m["tool_calls"] = llamadas;
+            return m;
+        }
+    }
+
+    /// <summary>
+    /// Arma la respuesta de un modelo OpenAI-compatible que llega en pedazos (SSE): el texto, las llamadas a herramientas
+    /// (sus argumentos llegan partidos) y el razonamiento. Se alimenta línea a línea, así se prueba sin red.
+    /// Si el servidor ignora «stream» y contesta un JSON entero, también lo entiende.
+    /// </summary>
+    internal sealed class AcumuladorOpenAI
+    {
+        private readonly Action<string> _alTexto;
+        private readonly StringBuilder _texto = new StringBuilder(), _razon = new StringBuilder();
+        private readonly SortedDictionary<int, (string id, StringBuilder nombre, StringBuilder args)> _llamadas = new SortedDictionary<int, (string, StringBuilder, StringBuilder)>();
+        private readonly List<string> _crudas = new List<string>();
+        private bool _vistoData;
+        public JsonNode Uso;
+
+        public AcumuladorOpenAI(Action<string> alTexto) { _alTexto = alTexto; }
+
+        public void Linea(string linea)
+        {
+            if (linea == null) return;
+            if (!linea.StartsWith("data:", StringComparison.Ordinal))
+            {
+                if (linea.Length > 0 && !_vistoData) _crudas.Add(linea);
+                return;
+            }
+            _vistoData = true;
+            var d = linea.Substring(5).Trim();
+            if (d.Length == 0 || d == "[DONE]") return;
+            JsonNode j;
+            try { j = JsonNode.Parse(d); } catch (JsonException) { return; }
+            if (j?["error"] != null) throw new ErrorProveedor("El modelo respondió un error: " + (j["error"]["message"]?.ToString() ?? j["error"].ToString()));
+            var u = j?["usage"] ?? j?["x_groq"]?["usage"];
+            if (u != null) Uso = u.DeepClone();
+            var delta = (j?["choices"] as JsonArray)?.FirstOrDefault()?["delta"];
+            if (delta == null) return;
+            var c = delta["content"]?.ToString();
+            if (!string.IsNullOrEmpty(c)) { _texto.Append(c); _alTexto?.Invoke(_texto.ToString()); }
+            var r = delta["reasoning_content"]?.ToString();
+            if (!string.IsNullOrEmpty(r)) _razon.Append(r);
+            if (delta["tool_calls"] is JsonArray tcs)
+                foreach (var tc in tcs)
+                {
+                    int idx = 0;
+                    int.TryParse(tc?["index"]?.ToString(), out idx);
+                    if (!_llamadas.TryGetValue(idx, out var cur)) cur = (null, new StringBuilder(), new StringBuilder());
+                    var id = tc["id"]?.ToString();
+                    var fn = tc["function"];
+                    cur.nombre.Append(fn?["name"]?.ToString() ?? "");
+                    cur.args.Append(fn?["arguments"]?.ToString() ?? "");
+                    _llamadas[idx] = (id ?? cur.id, cur.nombre, cur.args);
+                }
+        }
+
+        public JsonObject Resultado()
+        {
+            if (!_vistoData && _crudas.Count > 0)
+            {
+                try
+                {
+                    var datos = JsonNode.Parse(string.Join("\n", _crudas));
+                    Uso = datos?["usage"]?.DeepClone();
+                    var m = (datos?["choices"] as JsonArray)?.FirstOrDefault()?["message"];
+                    if (m != null) return (JsonObject)m.DeepClone();
+                }
+                catch (JsonException) { }
+                throw new ErrorProveedor("Respuesta que no es un flujo ni un JSON del modelo: " + (_crudas[0].Length > 300 ? _crudas[0].Substring(0, 300) : _crudas[0]));
+            }
+            var msg = new JsonObject { ["role"] = "assistant", ["content"] = _texto.Length > 0 ? (JsonNode)_texto.ToString() : null };
+            if (_razon.Length > 0) msg["reasoning_content"] = _razon.ToString();
+            if (_llamadas.Count > 0)
+            {
+                var arr = new JsonArray();
+                foreach (var kv in _llamadas)
+                    arr.Add(new JsonObject
+                    {
+                        ["id"] = kv.Value.id ?? ("call_" + kv.Key), ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = kv.Value.nombre.ToString(), ["arguments"] = kv.Value.args.Length > 0 ? kv.Value.args.ToString() : "{}" },
+                    });
+                msg["tool_calls"] = arr;
+            }
+            return msg;
+        }
+    }
+
+    /// <summary>Lo mismo para el flujo de Anthropic (eventos message_start, content_block_*, message_delta).</summary>
+    internal sealed class AcumuladorAnthropic
+    {
+        private readonly Action<string> _alTexto;
+        private readonly StringBuilder _texto = new StringBuilder();
+        private readonly SortedDictionary<int, (string id, string nombre, StringBuilder json)> _herramientas = new SortedDictionary<int, (string, string, StringBuilder)>();
+        public long Entrada, Salida;
+
+        public AcumuladorAnthropic(Action<string> alTexto) { _alTexto = alTexto; }
+
+        public void Linea(string linea)
+        {
+            if (linea == null || !linea.StartsWith("data:", StringComparison.Ordinal)) return;
+            var d = linea.Substring(5).Trim();
+            if (d.Length == 0) return;
+            JsonNode j;
+            try { j = JsonNode.Parse(d); } catch (JsonException) { return; }
+            switch (j?["type"]?.ToString())
+            {
+                case "message_start":
+                    long.TryParse(j["message"]?["usage"]?["input_tokens"]?.ToString(), out var ent); Entrada += ent;
+                    break;
+                case "content_block_start":
+                {
+                    int.TryParse(j["index"]?.ToString(), out var i);
+                    var b = j["content_block"];
+                    if (b?["type"]?.ToString() == "tool_use") _herramientas[i] = (b["id"]?.ToString(), b["name"]?.ToString(), new StringBuilder());
+                    break;
+                }
+                case "content_block_delta":
+                {
+                    int.TryParse(j["index"]?.ToString(), out var i);
+                    var delta = j["delta"];
+                    var tipo = delta?["type"]?.ToString();
+                    if (tipo == "text_delta") { _texto.Append(delta["text"]?.ToString()); _alTexto?.Invoke(_texto.ToString()); }
+                    else if (tipo == "input_json_delta" && _herramientas.TryGetValue(i, out var h)) h.json.Append(delta["partial_json"]?.ToString());
+                    break;
+                }
+                case "message_delta":
+                    long.TryParse(j["usage"]?["output_tokens"]?.ToString(), out var sal); if (sal > 0) Salida = sal;
+                    break;
+                case "error":
+                    throw new ErrorProveedor("El modelo respondió un error: " + (j["error"]?["message"]?.ToString() ?? d));
+            }
+        }
+
+        public JsonObject Resultado()
+        {
+            var m = new JsonObject { ["role"] = "assistant", ["content"] = _texto.Length > 0 ? (JsonNode)_texto.ToString() : null };
+            if (_herramientas.Count > 0)
+            {
+                var arr = new JsonArray();
+                foreach (var kv in _herramientas)
+                    arr.Add(new JsonObject
+                    {
+                        ["id"] = kv.Value.id, ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = kv.Value.nombre, ["arguments"] = kv.Value.json.Length > 0 ? kv.Value.json.ToString() : "{}" },
+                    });
+                m["tool_calls"] = arr;
+            }
             return m;
         }
     }

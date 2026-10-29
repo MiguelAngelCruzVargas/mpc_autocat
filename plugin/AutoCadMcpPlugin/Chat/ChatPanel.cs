@@ -956,6 +956,41 @@ namespace AutoCadMcpPlugin.Chat
             Agregar(new TextBlock { Text = "▸ " + texto, Foreground = _t.Suave, FontSize = 10.5, Margin = new Thickness(0, 5, 0, 5), TextWrapping = TextWrapping.Wrap });
         }
 
+        // El texto que el modelo va escribiendo, en vivo (texto plano; cuando termina se cambia por el mismo texto ya con formato).
+        private StackPanel _parcialPila;
+        private TextBlock _parcialTexto;
+
+        private void MostrarParcial(string texto)
+        {
+            if (string.IsNullOrEmpty(texto)) return;
+            if (_parcialPila == null)
+            {
+                _parcialPila = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
+                if (_primerAsistente) _parcialPila.Children.Add(Rotulo("ASISTENTE", _t.Acento)); else _parcialPila.Children.Add(new Border { Height = 6 });
+                _parcialTexto = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = _t.Texto, FontSize = 13, LineHeight = 19, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
+                _parcialPila.Children.Add(_parcialTexto);
+                Agregar(_parcialPila);
+            }
+            _parcialTexto.Text = texto;
+            if (AlFinal()) _scroll.ScrollToEnd();
+        }
+
+        private void QuitarParcial()
+        {
+            if (_parcialPila == null) return;
+            _lista.Children.Remove(_parcialPila);
+            _parcialPila = null; _parcialTexto = null;
+        }
+
+        // Si el pedido se corta (Detener, error) con texto a medias, se conserva lo que alcanzó a decir.
+        private void CerrarParcial()
+        {
+            if (_parcialPila == null) return;
+            var texto = _parcialTexto?.Text ?? "";
+            QuitarParcial();
+            if (texto.Length > 0) AgregarAsistente(texto);
+        }
+
         private string SiguientePaso() => (++_nPaso).ToString("00");
 
         // Un paso del agente, como una línea del índice de un plano:   01  Dibujar círculo ·········· ✓
@@ -1218,7 +1253,11 @@ namespace AutoCadMcpPlugin.Chat
                         _estado.Text = Texto(ev, "modelo");
                         break;
                     }
+                case "texto_parcial":
+                    MostrarParcial(Texto(ev, "texto"));
+                    break;
                 case "texto":
+                    QuitarParcial();
                     AgregarAsistente(Texto(ev, "texto"));
                     break;
                 case "tool":
@@ -1344,6 +1383,7 @@ namespace AutoCadMcpPlugin.Chat
             finally
             {
                 _trabajando = false;
+                CerrarParcial();
                 OcultarActividad();
                 _enviar.Content = "ENVIAR";
                 foreach (var cola in _pendientes.Values) cola.Clear();
