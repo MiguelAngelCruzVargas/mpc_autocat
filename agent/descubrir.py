@@ -37,7 +37,10 @@ Que no veas una herramienta en la lista NO significa que no exista: casi todo lo
 rechazarlos: abrir, cerrar, guardar y listar dibujos (la persona es la dueña de los archivos y te lo autoriza; si dice «sin guardar», se \
 cierra sin guardar) y dibujar cualquier plano o pieza que alcances. Si el pedido es amplio o ambiguo, no rechaces ni preguntes de entrada: \
 empieza con `buscar_herramientas` y elige tú lo más completo que alcances. NUNCA digas que hiciste algo que no ejecutaste con una \
-herramienta: si no la llamaste, no ocurrió."""
+herramienta: si no la llamaste, no ocurrió.
+Para una casa, vivienda, estructura, instalaciones o láminas NO dibujes rectángulos a mano: empieza con `buscar_herramientas` con \
+`flujo` (casa, estructura, instalaciones...) y sigue sus pasos en orden (en una casa: `suggest_layout` y `draw_layout`). No termines \
+hasta haber hecho todo el pedido, y cierra siempre con un resumen de lo que quedó dibujado."""
 
 META: list[dict[str, Any]] = [
     {"type": "function", "function": {

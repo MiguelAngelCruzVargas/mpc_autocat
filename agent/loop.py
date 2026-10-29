@@ -92,6 +92,8 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
         return bool(cancelado and cancelado())
 
     invalidas = 0        # veces seguidas que pidió una tool inexistente
+    silencios = 0        # veces que terminó sin decir nada después de trabajar
+    hubo_tools = False
 
     # Modo «bajo demanda» (descubrir.py): el modelo recibe 3 herramientas y descubre las demás. Se activa si el
     # catálogo no cabe en un pedido de este proveedor (límite conocido) o si el proveedor se queja de la cantidad.
@@ -178,9 +180,21 @@ async def conversar(conexion: ConexionMcp, proveedor: Any,
         mensajes.append(_como_mensaje_asistente(respuesta, formato, texto,
                                                 llamadas))
         if not llamadas:
+            # Un modelo chico a veces corta el turno en seco, sin una palabra, a la mitad del trabajo: la persona
+            # se queda viendo un dibujo a medias y ningún mensaje. Se le pide una vez más seguir o resumir.
+            if hubo_tools and not texto and silencios < 2:
+                silencios += 1
+                if mensajes and mensajes[-1].get("role") == "assistant":
+                    mensajes.pop()
+                avisar("nota", {"texto": "El modelo se detuvo sin decir nada; se le pide que siga o que resuma."})
+                mensajes.append({"role": "user", "content":
+                                 "Te detuviste sin decir nada. Si el pedido todavía no está terminado, sigue con las "
+                                 "herramientas hasta completarlo; si ya terminaste, resume en pocas líneas qué hiciste y qué falta."})
+                continue
             break
 
         resultados = []
+        hubo_tools = True
         for llamada in llamadas:
             # Se corta ENTRE tools, nunca a mitad de una: abandonar un
             # create_walls a medio camino dejaría el dibujo inconsistente.

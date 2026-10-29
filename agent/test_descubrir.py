@@ -100,6 +100,23 @@ def main() -> int:
     check("describir_herramienta da sus parámetros exactos", res and "thickness" in res[0]["texto"], str(res))
     check("termina con el texto del modelo", [d["texto"] for t, d in ev if t == "texto"][-1].startswith("Listo"))
 
+    print("test_corta_en_seco_sin_decir_nada")
+    con = ConexionFalsa()
+    prov = ProveedorLimitado([
+        {"role": "assistant", "content": None, "tool_calls": [llamada("a", "buscar_herramientas", flujo="casa")]},
+        {"role": "assistant", "content": ""},
+        {"role": "assistant", "content": "Listo: hice lo que pediste."}])
+    ev, msgs = correr(prov, con, con.catalogo(), limite_tools=128)
+    check("si termina sin decir nada tras trabajar, se le pide seguir o resumir",
+          any(t == "nota" and "sin decir nada" in d["texto"] for t, d in ev), str(ev))
+    check("y la respuesta final llega a la persona", [d["texto"] for t, d in ev if t == "texto"][-1].startswith("Listo"))
+    check("sin dejar un mensaje vacío del asistente en la conversación",
+          not any(m.get("role") == "assistant" and not m.get("content") and not m.get("tool_calls") for m in msgs))
+    con = ConexionFalsa()
+    prov = ProveedorLimitado([{"role": "assistant", "content": ""}])
+    ev, _ = correr(prov, con, con.catalogo(), limite_tools=128)
+    check("si nunca trabajó, un silencio no se insiste", sum(1 for t, d in ev if t == "nota" and "sin decir nada" in d["texto"]) == 0)
+
     print("test_el_proveedor_se_queja")
     con, prov = ConexionFalsa(), ProveedorLimitado(guion_ejecutar())
     ev, _ = correr(prov, con, con.catalogo())          # sin límite conocido: lo descubre por el error
