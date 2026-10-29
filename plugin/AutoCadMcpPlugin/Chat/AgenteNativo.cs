@@ -381,6 +381,7 @@ namespace AutoCadMcpPlugin.Chat
 
                     hubieronTools = true;
                     bool cortado = false;
+                    var capturas = new List<string>();
                     foreach (var ll in llamadas)
                     {
                         // Se corta ENTRE herramientas, nunca a mitad de una: abandonar un create_walls a medio camino dejaría el dibujo inconsistente.
@@ -429,6 +430,19 @@ namespace AutoCadMcpPlugin.Chat
                         Emitir("resultado", new JsonObject { ["nombre"] = visible, ["texto"] = salida, ["error"] = error });
                         if (!error && regexDibujo.IsMatch(visible)) dibujo = true;
                         _mensajes.Add(new JsonObject { ["role"] = "tool", ["tool_call_id"] = ll.Id, ["name"] = ll.Nombre, ["content"] = salida });
+                        if (!error && !rechazada && visible == "capture_viewport")
+                        {
+                            var cap = LeerCaptura(argsVisibles);
+                            if (cap != null) capturas.Add(cap);
+                        }
+                    }
+                    // El resultado de una herramienta es texto: para que un modelo con visión MIRE la captura se le da como imagen en un
+                    // mensaje aparte, justo después de los resultados (no puede ir entre la llamada y su respuesta).
+                    if (capturas.Count > 0 && !cortado && Capacidades.Evaluar(p.Proveedor, p.Modelo).Imagenes)
+                    {
+                        _mensajes.Add(MensajeUsuario("Esta es la captura del dibujo que pediste con capture_viewport. Mírala y juzga el resultado: ¿algo encimado, fuera de lugar o que falte?", capturas));
+                        QuitarImagenes(_mensajes, 2);            // las capturas viejas no se reenvían en cada vuelta
+                        Emitir("nota", Obj("texto", "El modelo está mirando la captura del dibujo."));
                     }
                     if (cortado) break;
                     if (vuelta == p.Vueltas - 1)
@@ -566,6 +580,22 @@ namespace AutoCadMcpPlugin.Chat
         internal const int ResultadosCompletos = 8;
         private const int RecorteResultado = 500;
 
+        /// <summary>La imagen que dejó capture_viewport en su <c>path</c>, como data URL; null si no existe, no es png/jpg o pesa demasiado.</summary>
+        internal static string LeerCaptura(JsonObject args)
+        {
+            try
+            {
+                var ruta = args?["path"]?.ToString();
+                if (string.IsNullOrEmpty(ruta) || !File.Exists(ruta)) return null;
+                var ext = Path.GetExtension(ruta).ToLowerInvariant();
+                if (ext != ".png" && ext != ".jpg" && ext != ".jpeg") return null;
+                var bytes = File.ReadAllBytes(ruta);
+                if (bytes.Length == 0 || bytes.Length > 3500000) return null;
+                return "data:image/" + (ext == ".png" ? "png" : "jpeg") + ";base64," + Convert.ToBase64String(bytes);
+            }
+            catch (Exception) { return null; }
+        }
+
         /// <summary>El mensaje del usuario: texto solo, o (con imágenes) una lista de partes texto + image_url, el formato estándar de visión.</summary>
         internal static JsonObject MensajeUsuario(string texto, IList<string> imagenes)
         {
@@ -577,12 +607,18 @@ namespace AutoCadMcpPlugin.Chat
         }
 
         /// <summary>Cambia las imágenes de los mensajes por una nota de texto («[2 imágenes adjuntas]»): el historial no carga base64 ni lo reenvía en cada vuelta.</summary>
-        internal static int QuitarImagenes(JsonArray mensajes)
+        internal static int QuitarImagenes(JsonArray mensajes, int conservar = 0)
         {
             int cambiados = 0;
+            // los mensajes con imágenes, del más nuevo al más viejo: los primeros «conservar» se dejan
+            var conImagenes = new List<JsonObject>();
+            for (int i = mensajes.Count - 1; i >= 0; i--)
+                if (mensajes[i] is JsonObject mo && mo["role"]?.ToString() == "user" && mo["content"] is JsonArray ps && ps.Any(x => x?["type"]?.ToString() == "image_url"))
+                    conImagenes.Add(mo);
+            var aQuitar = new HashSet<JsonObject>(conImagenes.Skip(Math.Max(0, conservar)));
             foreach (var n in mensajes)
             {
-                if (!(n is JsonObject m) || m["role"]?.ToString() != "user" || !(m["content"] is JsonArray partes)) continue;
+                if (!(n is JsonObject m) || !aQuitar.Contains(m) || !(m["content"] is JsonArray partes)) continue;
                 var texto = new StringBuilder(); int imgs = 0;
                 foreach (var parte in partes)
                 {

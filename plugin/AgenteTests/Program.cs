@@ -221,6 +221,22 @@ namespace AgenteTests
                 Check("con un modelo que ve, la imagen llega como image_url y sin aviso", !Hay(evVe, "aviso", "no ve imágenes") && conVista.Ultimos[0].Contains("image_url"), conVista.Ultimos.Count > 0 ? conVista.Ultimos[0] : "(sin llamada)");
             }
 
+            Console.WriteLine("test_modelo_ve_la_captura");
+            {
+                var rutaPng = Path.Combine(dir, "captura.png");
+                File.WriteAllBytes(rutaPng, new byte[] { 137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3 });
+                var url0 = AgenteNativo.LeerCaptura(new JsonObject { ["path"] = rutaPng });
+                Check("lee la captura que dejó capture_viewport como data URL png", url0 != null && url0.StartsWith("data:image/png;base64,"));
+                Check("una ruta que no existe, o que no es imagen, no da nada", AgenteNativo.LeerCaptura(new JsonObject { ["path"] = Path.Combine(dir, "no_existe.png") }) == null
+                      && AgenteNativo.LeerCaptura(new JsonObject { ["path"] = Path.Combine(dir, "captura.png.txt") }) == null && AgenteNativo.LeerCaptura(new JsonObject()) == null);
+                var vieja = AgenteNativo.MensajeUsuario("captura 1", new List<string> { "data:image/png;base64,AAAA" });
+                var media = AgenteNativo.MensajeUsuario("captura 2", new List<string> { "data:image/png;base64,BBBB" });
+                var nueva = AgenteNativo.MensajeUsuario("captura 3", new List<string> { "data:image/png;base64,CCCC" });
+                var hist = new JsonArray { vieja, media, nueva };
+                AgenteNativo.QuitarImagenes(hist, 2);
+                Check("se conservan las ultimas 2 capturas y la mas vieja pasa a nota", hist[0]["content"].ToString().Contains("[1 imagen adjunta") && hist[1]["content"] is JsonArray && hist[2]["content"] is JsonArray);
+            }
+
             Console.WriteLine("test_traduccion_a_anthropic");
             var conv = new JsonArray
             {
