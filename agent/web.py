@@ -996,6 +996,12 @@ class Handler(BaseHTTPRequestHandler):
         if preset is None:
             self._json({"error": f"Proveedor desconocido: {proveedor!r}."}, 400)
             return
+        # El texto de sistema manda guardar los entregables ahí: si la carpeta no existe, save_drawing, export_pdf y
+        # capture_viewport fallan con «No existe la carpeta» y el modelo se queda reintentando.
+        try:
+            os.makedirs(ENTREGABLES, exist_ok=True)
+        except OSError:
+            pass
         modelo = str(datos.get("modelo") or preset.get("modelo", ""))
         limite = descubrir.LIMITES.get(proveedor)
         forzar = bool(datos.get("forzarBajoDemanda"))
