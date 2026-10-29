@@ -74,6 +74,22 @@ namespace AgenteTests
             var dir = Path.Combine(Path.GetTempPath(), "agente_tests_" + Guid.NewGuid().ToString("N").Substring(0, 6));
             Directory.CreateDirectory(dir);
 
+            Console.WriteLine("test_capacidades_del_modelo");
+            var c20 = Capacidades.Evaluar("groq", "openai/gpt-oss-20b");
+            Check("gpt-oss-20b: limitado, sin imagenes y pequeno", c20.Limitado && !c20.Imagenes
+                  && c20.Avisos.Any(a => a.Etiqueta == "no ve imágenes") && c20.Avisos.Any(a => a.Etiqueta == "modelo pequeño"));
+            var c120 = Capacidades.Evaluar("groq", "openai/gpt-oss-120b");
+            Check("gpt-oss-120b: sin imagenes pero NO pequeno", c120.Limitado && !c120.Avisos.Any(a => a.Etiqueta == "modelo pequeño"));
+            var cw = Capacidades.Evaluar("groq", "whisper-large-v3");
+            Check("whisper no es modelo de chat (nivel alto)", cw.Limitado && cw.Avisos.Count == 1 && cw.Avisos[0].Nivel == "alto");
+            var cc = Capacidades.Evaluar("anthropic", "claude-sonnet-5-5");
+            Check("claude: sin avisos y con imagenes", !cc.Limitado && cc.Imagenes && cc.Avisos.Count == 0);
+            Check("«gemini» no se confunde con «mini»", !Capacidades.EsPequeno("google/gemini-2.5-pro") && Capacidades.EsPequeno("gpt-5-mini"));
+            Check("«28b» no es chico y «8b» si", !Capacidades.EsPequeno("qwen2.5-28b") && Capacidades.EsPequeno("llama-3.1-8b-instant"));
+            Check("local avisa de las herramientas", Capacidades.Evaluar("local", "llama3").Avisos.Any(a => a.Etiqueta == "herramientas dudosas"));
+            Check("lo que el proveedor publica manda sobre el nombre", Capacidades.Evaluar("openrouter", "vendor/raro-1", true).Imagenes);
+            Check("groq avisa su tope de 128 herramientas (aviso bajo)", c120.Avisos.Any(a => a.Nivel == "bajo" && a.Etiqueta.Contains("128")));
+
             Console.WriteLine("test_traduccion_a_anthropic");
             var conv = new JsonArray
             {

@@ -45,6 +45,15 @@ namespace AutoCadMcpPlugin.Chat
 
         private void Avisar() { try { Cambio?.Invoke(); } catch { } }
 
+        public string VersionAutoCad
+        {
+            get
+            {
+                try { return "AutoCAD " + AcApp.Version.Major + "." + AcApp.Version.Minor + " (" + AcApp.Version + ")"; }
+                catch { return "desconocida"; }
+            }
+        }
+
         public string NombreDibujo
         {
             get

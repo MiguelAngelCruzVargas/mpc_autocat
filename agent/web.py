@@ -699,10 +699,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/h/ejecutar":
             self._h_ejecutar(datos)
             return
-        if self.path == "/api/h/capacidades":
-            from . import capacidades
-            self._json(capacidades.evaluar(str(datos.get("proveedor", "")), str(datos.get("modelo", ""))))
-            return
 
         if self.path == "/api/clave":
             proveedor = str(datos.get("proveedor", ""))

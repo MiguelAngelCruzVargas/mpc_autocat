@@ -19,6 +19,7 @@
     <Compile Include="..\AutoCadMcpPlugin\Chat\AgenteNativo.cs" Link="Chat\AgenteNativo.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\AgenteProveedores.cs" Link="Chat\AgenteProveedores.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\Conversaciones.cs" Link="Chat\Conversaciones.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\Capacidades.cs" Link="Chat\Capacidades.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\ChatPanel.cs" Link="Chat\ChatPanel.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\ChatTema.cs" Link="Chat\ChatTema.cs" />
   </ItemGroup>

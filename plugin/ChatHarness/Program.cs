@@ -15,6 +15,7 @@ namespace ChatHarness
         public bool Claro;
         public int Sel = 3;
         public string NombreDibujo => "Portico_Barda_Mixtan.dwg";
+        public string VersionAutoCad => "AutoCAD de prueba";
         public int Seleccionados => Sel;
         public bool TemaClaro => Claro;
         public event Action Cambio;
@@ -76,7 +77,7 @@ namespace ChatHarness
                         if (!panel.Trabajando && DateTime.UtcNow >= limite) break;
                     }
                     await Task.Delay(800);
-                    if (png != null) { Capturar(panel, png); File.WriteAllText(png + ".ok.txt", "capturado"); }
+                    if (png != null) { Capturar(panel, png); File.WriteAllText(png + ".ok.txt", "capturado"); File.WriteAllText(png + ".diag.txt", panel.DiagnosticoPrueba()); }
                 }
                 catch (Exception ex) { Console.Error.WriteLine(ex); if (png != null) File.WriteAllText(png + ".error.txt", ex.ToString()); codigo = 1; }
                 finally { app.Shutdown(); }

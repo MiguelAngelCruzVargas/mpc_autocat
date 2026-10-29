@@ -18,6 +18,7 @@ namespace AutoCadMcpPlugin.Chat
     internal interface IContextoCad
     {
         string NombreDibujo { get; }
+        string VersionAutoCad { get; }
         int Seleccionados { get; }
         string DescribirSeleccion(int max);
         bool TemaClaro { get; }
@@ -334,7 +335,6 @@ namespace AutoCadMcpPlugin.Chat
         private readonly TextBlock _limResumen = new TextBlock { FontFamily = new FontFamily("Consolas"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap };
         private readonly TextBlock _limDetalle = new TextBlock { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), Visibility = Visibility.Collapsed };
         private readonly TextBlock _limAjustes = new TextBlock();
-        private int _limVersion;
         internal bool ModeloLimitado => _limites.Visibility == Visibility.Visible;
 
         private void ConstruirLimites()
@@ -349,40 +349,81 @@ namespace AutoCadMcpPlugin.Chat
                 _limDetalle.Visibility = _limDetalle.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
         }
 
-        /// <summary>Pregunta al anfitrión qué le falta al modelo elegido y lo dice con palabras: sin imágenes, pequeño, sin herramientas fiables.</summary>
-        private async Task ActualizarLimitesAsync()
+        /// <summary>Dice qué le falta al modelo elegido (sin imágenes, pequeño, no es de chat…): se evalúa aquí, en C#, con Capacidades.</summary>
+        private void ActualizarLimites()
         {
-            var version = ++_limVersion;
             void Ocultar() { _limites.Visibility = Visibility.Collapsed; _limAjustes.Visibility = Visibility.Collapsed; }
             var modelo = _modelo.Text.Trim();
-            if (_prov == null || _prov.Vivo || _cli == null || modelo.Length == 0) { Ocultar(); return; }
+            if (_prov == null || _prov.Vivo || modelo.Length == 0) { Ocultar(); return; }
+            var cap = Capacidades.Evaluar(_prov.Id, modelo);
+            if (cap.Avisos.Count == 0) { Ocultar(); return; }
+            var completo = string.Join(((char)10).ToString(), cap.Avisos.Select(a => "•  " + a.Texto));
+            _limAjustes.Text = completo; _limAjustes.Visibility = Visibility.Visible;
+            var importantes = cap.Avisos.Where(a => a.Nivel != "bajo").ToList();
+            if (importantes.Count == 0) { _limites.Visibility = Visibility.Collapsed; return; }
+            var color = cap.Avisos.Any(a => a.Nivel == "alto") ? _t.Mal : _t.Aviso;
+            _limites.BorderBrush = color; _limResumen.Foreground = color;
+            _limResumen.Text = "MODELO LIMITADO  ·  " + string.Join("  ·  ", importantes.Select(a => a.Etiqueta)) + "  ▾";
+            _limDetalle.Text = completo; _limDetalle.Visibility = Visibility.Collapsed;
+            _limites.Visibility = Visibility.Visible;
+        }
+
+        // ---- diagnóstico: lo que hace falta para entender qué pasó sin preguntar nada ----
+        private readonly List<string> _bitacora = new List<string>();
+
+        private void Anotar(string linea)
+        {
+            var l = (linea ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+            if (l.Length > 240) l = l.Substring(0, 237) + "…";
+            _bitacora.Add(DateTime.Now.ToString("HH:mm:ss") + "  " + l);
+            if (_bitacora.Count > 80) _bitacora.RemoveAt(0);
+        }
+
+        /// <summary>Un texto para pegar en un mensaje: versiones, modelo, estado y los últimos pasos. Sin claves ni contenido del dibujo.</summary>
+        internal string ConstruirDiagnostico()
+        {
+            var sb = new StringBuilder();
+            void L(string k, string v) => sb.AppendLine(k.PadRight(16) + v);
+            sb.AppendLine("DIAGNÓSTICO DEL CHAT DE AUTOCAD  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            sb.AppendLine(new string('-', 60));
+            L("Plugin", typeof(ChatPanel).Assembly.GetName().Version.ToString());
+            L("AutoCAD", _ctx.VersionAutoCad);
+            L("Runtime", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription);
+            L("Windows", Environment.OSVersion.VersionString);
+            L("Dibujo", string.IsNullOrEmpty(_ctx.NombreDibujo) ? "(ninguno)" : _ctx.NombreDibujo + " · " + _ctx.Seleccionados + " seleccionadas");
+            L("Servidor", _cli == null ? "sin conexión" : _cli.Base);
+            L("IA", _prov == null ? "(sin elegir)" : _prov.Id + (_prov.Clave || _prov.Puente ? " · con clave" : " · SIN clave"));
+            L("Modelo", _modelo.Text.Trim());
+            L("Especialidad", _perfil + " · permisos " + _modoPermisos + " · tope US$" + TopeActual().ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
+            L("Licencia", _licObligatoria ? (_licValida ? "válida" : "NO válida") : "no se exige");
+            L("Límites", ModeloLimitado ? _limResumen.Text.Replace("  ▾", "") : "ninguno detectado");
+            L("Este pedido", _tokens.ToString("N0") + " tokens · " + _vueltas + " vueltas" + (_costo > 0 ? " · US$" + _costo.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture) : ""));
+            sb.AppendLine(new string('-', 60));
+            sb.AppendLine("ÚLTIMOS PASOS (" + _bitacora.Count + "):");
+            foreach (var l in _bitacora.Skip(Math.Max(0, _bitacora.Count - 40))) sb.AppendLine(l);
+            return sb.ToString();
+        }
+
+        private void CopiarDiagnostico(TextBlock estado)
+        {
+            var txt = ConstruirDiagnostico();
+            string ruta = null;
             try
             {
-                using (var doc = await _cli.PostAsync("/api/h/capacidades", new { proveedor = _prov.Id, modelo }).ConfigureAwait(true))
-                {
-                    if (version != _limVersion) return;               // el modelo cambió mientras tanto
-                    var r = doc.RootElement;
-                    if (!r.TryGetProperty("avisos", out var av) || av.ValueKind != JsonValueKind.Array || av.GetArrayLength() == 0) { Ocultar(); return; }
-                    var etiquetas = new List<string>(); var textos = new List<string>(); bool alto = false, importante = false;
-                    foreach (var a in av.EnumerateArray())
-                    {
-                        var nivel = Texto(a, "nivel");
-                        textos.Add("•  " + Texto(a, "texto"));
-                        if (nivel == "alto") alto = true;
-                        if (nivel != "bajo") { importante = true; etiquetas.Add(Texto(a, "etiqueta")); }
-                    }
-                    var completo = string.Join(((char)10).ToString(), textos);
-                    _limAjustes.Text = completo; _limAjustes.Visibility = Visibility.Visible;
-                    if (!importante) { _limites.Visibility = Visibility.Collapsed; return; }
-                    var color = alto ? _t.Mal : _t.Aviso;
-                    _limites.BorderBrush = color; _limResumen.Foreground = color;
-                    _limResumen.Text = "MODELO LIMITADO  ·  " + string.Join("  ·  ", etiquetas) + "  ▾";
-                    _limDetalle.Text = completo; _limDetalle.Visibility = Visibility.Collapsed;
-                    _limites.Visibility = Visibility.Visible;
-                }
+                var dir = Environment.GetEnvironmentVariable("AUTOCAD_IA_ESTADO");
+                if (string.IsNullOrEmpty(dir)) dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoCadMcp");
+                System.IO.Directory.CreateDirectory(dir);
+                ruta = System.IO.Path.Combine(dir, "diagnostico.txt");
+                System.IO.File.WriteAllText(ruta, txt, new UTF8Encoding(false));
             }
-            catch { if (version == _limVersion) Ocultar(); }              // el aviso es una ayuda: sin servidor, sin aviso
+            catch { ruta = null; }
+            bool copiado = false;
+            try { Clipboard.SetText(txt); copiado = true; } catch { }
+            estado.Text = copiado ? "Copiado: pégalo en tu mensaje." + (ruta != null ? " También quedó en " + ruta : "")
+                : ruta != null ? "No pude usar el portapapeles; el texto quedó en " + ruta : "No pude copiarlo ni guardarlo.";
         }
+
+        internal string DiagnosticoPrueba() => ConstruirDiagnostico();
 
         private void ConstruirAvisoVivo()
         {
@@ -536,6 +577,11 @@ namespace AutoCadMcpPlugin.Chat
             _seccionOpc.Children.Add(_temp);
             _gModelo.Children.Add(_seccionApi);
             _gAjustes.Children.Add(_seccionOpc);
+            _gAjustes.Children.Add(Etiqueta("Diagnóstico", "Si algo falla: copia versiones, modelo y los últimos pasos para pegarlos en un mensaje"));
+            var diagEstado = new TextBlock { Foreground = _t.Suave, FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
+            var diagBtn = new Button { Content = "Copiar diagnóstico", HorizontalAlignment = HorizontalAlignment.Left };
+            diagBtn.Click += (s, e) => CopiarDiagnostico(diagEstado);
+            _gAjustes.Children.Add(diagBtn); _gAjustes.Children.Add(diagEstado);
             p.Children.Add(_gModelo);
             p.Children.Add(_gAjustes);
 
@@ -907,7 +953,7 @@ namespace AutoCadMcpPlugin.Chat
             var vivoGrid = (UIElement)_vivoScroll.Parent;
             vivoGrid.Visibility = vivo ? Visibility.Visible : Visibility.Collapsed;
             if (vivo) VivoIniciar(); else VivoDetener();
-            ActualizarChip(); RefrescarProveedores(); ActualizarModoEntrada(); _ = ActualizarLimitesAsync();
+            ActualizarChip(); RefrescarProveedores(); ActualizarModoEntrada(); ActualizarLimites();
             if (guardar)
             {
                 try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { proveedor = p.Id } }).ConfigureAwait(true)) { } }
@@ -921,7 +967,7 @@ namespace AutoCadMcpPlugin.Chat
             var m = _modelo.Text.Trim();
             if (m == (_modelos.TryGetValue(_prov.Id, out var antes) ? antes : "")) return;
             _modelos[_prov.Id] = m;
-            ActualizarChip(); _ = ActualizarLimitesAsync();
+            ActualizarChip(); ActualizarLimites();
             try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { modelos = _modelos } }).ConfigureAwait(true)) { } }
             catch { }
         }
@@ -1074,6 +1120,7 @@ namespace AutoCadMcpPlugin.Chat
 
         private void AgregarAviso(string texto)
         {
+            Anotar("AVISO  " + texto);
             var g = new Grid();
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1379,6 +1426,7 @@ namespace AutoCadMcpPlugin.Chat
             {
                 case "inicio":
                     {
+                        Anotar("PEDIDO  modelo " + Texto(ev, "modelo"));
                         // Solo el modelo, discreto: cuántas herramientas ve o cómo las descubre es cosa interna.
                         AgregarNota(Texto(ev, "modelo"), false);
                         _estado.Text = Texto(ev, "modelo");
@@ -1394,6 +1442,7 @@ namespace AutoCadMcpPlugin.Chat
                 case "tool":
                     {
                         var nombre = Texto(ev, "nombre");
+                        Anotar("HERRAMIENTA  " + nombre + " " + (ev.TryGetProperty("args", out var aa) ? ResumenArgs(aa) : ""));
                         MostrarActividad(Frase(nombre));
                         if (EsDescubrimiento(nombre)) break;          // buscar y leer herramientas: se ve como «Buscando herramientas…», sin tarjeta
                         var c = TarjetaTool.Crear(_t, nombre, ev.TryGetProperty("args", out var a) ? ResumenArgs(a) : "", SiguientePaso());
@@ -1408,6 +1457,7 @@ namespace AutoCadMcpPlugin.Chat
                         MostrarActividad("Pensando");
                         if (EsDescubrimiento(nombre)) break;
                         bool error = ev.TryGetProperty("error", out var er) && er.ValueKind == JsonValueKind.True;
+                        Anotar((error ? "ERROR  " : "OK  ") + nombre + "  " + Texto(ev, "texto"));
                         if (_pendientes.TryGetValue(nombre, out var cola) && cola.Count > 0)
                             cola.Dequeue().Resolver(_t, !error, Texto(ev, "texto"), null);
                         break;
@@ -1416,6 +1466,7 @@ namespace AutoCadMcpPlugin.Chat
                     AgregarAviso(Texto(ev, "texto"));
                     break;
                 case "permiso":
+                    Anotar("PERMISO  " + Texto(ev, "nombre"));
                     MostrarActividad("Esperando tu permiso");
                     MostrarPermiso(ev);
                     break;
@@ -1423,6 +1474,7 @@ namespace AutoCadMcpPlugin.Chat
                     MostrarDeshacer();
                     break;
                 case "nota":
+                    Anotar("NOTA  " + Texto(ev, "texto"));
                     if (ev.TryGetProperty("tecnica", out var tecnica) && tecnica.ValueKind == JsonValueKind.True) break;     // avisos internos del agente
                     AgregarNota(Texto(ev, "texto"));
                     break;
