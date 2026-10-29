@@ -41,13 +41,14 @@ namespace ChatHarness
             var proveedor = Arg(args, "--proveedor");
             var espera = int.Parse(Arg(args, "--espera", "10"));
             var ancho = int.Parse(Arg(args, "--ancho", "420"));
+            var alto = int.Parse(Arg(args, "--alto", "720"));
             var claro = args.Contains("--claro");
             var adjuntar = args.Contains("--adjuntar");
 
             var app = new Application();
             var ctx = new ContextoFalso { Claro = claro };
             var panel = new ChatPanel(ctx, () => Task.FromResult<(string, string)>((url, null)));
-            var ventana = new Window { Width = ancho, Height = 720, Content = panel, Title = "Chat nativo (prueba)" };
+            var ventana = new Window { Width = ancho, Height = alto, Content = panel, Title = "Chat nativo (prueba)" };
             int codigo = 0;
             ventana.ContentRendered += async (s, e) =>
             {
@@ -59,6 +60,8 @@ namespace ChatHarness
                     var perfil = Arg(args, "--perfil");
                     if (perfil != null) panel.ElegirPerfil(perfil);
                     if (args.Contains("--ajustes")) panel.AbrirAjustes();
+                    if (args.Contains("--historial")) panel.AbrirHistorialPantalla();
+                    if (args.Contains("--abajo")) { await Task.Delay(400); panel.BajarAjustes(); await Task.Delay(300); }
                     if (enviar != null)
                     {
                         if (adjuntar) { ctx.Disparar(); panel.AdjuntarSeleccion = true; }

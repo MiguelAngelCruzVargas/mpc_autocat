@@ -135,6 +135,8 @@ namespace AutoCadMcpPlugin.Chat
         internal bool Trabajando => _trabajando;
         internal void ElegirPerfil(string id) { _perfil = id; }
         internal bool AdjuntarSeleccion { set { _adjSel.IsChecked = value; } }
+        internal void AbrirHistorialPantalla() => AbrirHistorial();
+        internal void BajarAjustes() { if (_ajustes.Children.Count > 0 && _ajustes.Children[0] is ScrollViewer sv) { sv.UpdateLayout(); sv.ScrollToEnd(); } }
         internal Task EnviarTextoAsync(string texto) { _entrada.Text = texto; return EnviarAsync(); }
         internal Task ElegirProveedorPorIdAsync(string id)
         {
@@ -301,7 +303,7 @@ namespace AutoCadMcpPlugin.Chat
         {
             // El cajetín: dos renglones rotulados, como el cuadro de rotulación de un plano.
             var g = new Grid();
-            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -393,7 +395,7 @@ namespace AutoCadMcpPlugin.Chat
             _licSeccion.Children.Add(licBotones);
             p.Children.Add(_licSeccion);
 
-            p.Children.Add(Etiqueta("Con qué IA quieres trabajar"));
+            p.Children.Add(Etiqueta("IA", "Con qué IA quieres trabajar"));
             p.Children.Add(_listaProv);
             p.Children.Add(new TextBlock
             {
@@ -413,7 +415,7 @@ namespace AutoCadMcpPlugin.Chat
             _seccionApi.Children.Add(_modeloBtn);
             _seccionApi.Children.Add(_listaModelos);
 
-            _seccionApi.Children.Add(Etiqueta("Clave de API"));
+            _seccionApi.Children.Add(Etiqueta("Clave de API", "Se guarda cifrada en tu usuario de Windows"));
             _claveEstado.Foreground = _t.Suave; _claveEstado.Margin = new Thickness(0, 0, 0, 4); _claveEstado.TextWrapping = TextWrapping.Wrap;
             _seccionApi.Children.Add(_claveEstado);
             _clave.Background = _t.Tarjeta; _clave.Foreground = _t.Texto; _clave.BorderBrush = _t.Borde; _clave.Padding = new Thickness(4, 4, 4, 4);
@@ -426,17 +428,25 @@ namespace AutoCadMcpPlugin.Chat
             botones.Children.Add(guardar); botones.Children.Add(borrar);
             _seccionApi.Children.Add(botones);
 
-            _seccionApi.Children.Add(Etiqueta("Especialidad (qué herramientas ve el modelo)"));
+            _seccionApi.Children.Add(Etiqueta("Especialidad", "Qué herramientas ve el modelo"));
             _seccionApi.Children.Add(_listaPerfiles);
+            _verTools = new TextBlock { Text = "Ver la lista de herramientas", Foreground = _t.Acento, FontSize = 11, Cursor = Cursors.Hand, Margin = new Thickness(0, 6, 0, 0), TextDecorations = TextDecorations.Underline };
+            _verTools.MouseLeftButtonUp += (s, e) =>
+            {
+                var abrir = _perfilTools.Visibility != Visibility.Visible;
+                _perfilTools.Visibility = abrir ? Visibility.Visible : Visibility.Collapsed;
+                _verTools.Text = abrir ? "Ocultar la lista" : "Ver la lista de herramientas";
+            };
+            _seccionApi.Children.Add(_verTools);
             _seccionApi.Children.Add(_perfilTools);
 
             _reglas.Content = "Reglas de dibujo del proyecto (gasta más tokens)"; _reglas.IsChecked = true; _reglas.Foreground = _t.Texto;
             _reglas.Margin = new Thickness(0, 10, 0, 0);
             _seccionApi.Children.Add(_reglas);
 
-            _seccionApi.Children.Add(Etiqueta("Permisos al modificar el dibujo"));
+            _seccionApi.Children.Add(Etiqueta("Permisos", "Cuándo pregunta antes de modificar el dibujo"));
             _seccionApi.Children.Add(_listaPermisos);
-            _seccionApi.Children.Add(Etiqueta("Tope de gasto por pedido (US$)"));
+            _seccionApi.Children.Add(Etiqueta("Tope de gasto", "Dólares por pedido; si lo pasa, el agente se detiene"));
             EstilizarTexto(_tope); _tope.Width = 90; _tope.HorizontalAlignment = HorizontalAlignment.Left; _tope.Text = "0";
             _tope.ToolTip = "0 = sin tope. Si un pedido pasa de esta cantidad, el agente se detiene al terminar la vuelta en curso.";
             _tope.LostFocus += async (s, e) => await GuardarTopeAsync().ConfigureAwait(true);
@@ -622,13 +632,46 @@ namespace AutoCadMcpPlugin.Chat
                 string detalle = item.Vivo ? "Claude Code, Codex, OpenCode…: trabajan en su programa; aquí ves lo que hacen"
                                : item.Puente ? "usa tu sesión"
                                : item.Clave ? "con clave guardada" : "falta la clave";
-                _listaProv.Children.Add(Fila(item.Nombre.Replace(" · sin clave", ""), detalle, _prov != null && _prov.Id == item.Id,
+                _listaProv.Children.Add(Fila(NombresIa.TryGetValue(item.Id, out var bonito) ? bonito : item.Nombre.Replace(" · sin clave", ""), detalle, _prov != null && _prov.Id == item.Id,
                     async () => await ElegirProveedorAsync(item, true).ConfigureAwait(true)));
             }
         }
 
         private readonly Dictionary<string, string> _toolsPerfil = new Dictionary<string, string>();
-        private readonly TextBlock _perfilTools = new TextBlock { TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), FontSize = 11, Margin = new Thickness(0, 6, 0, 0) };
+        private readonly TextBlock _perfilTools = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 11, Margin = new Thickness(0, 4, 0, 0), Visibility = Visibility.Collapsed };
+        private TextBlock _verTools;
+
+        private static readonly Dictionary<string, string> Verbos = new Dictionary<string, string>
+        {
+            ["create"] = "Crear", ["delete"] = "Borrar", ["list"] = "Listar", ["get"] = "Leer", ["set"] = "Configurar", ["check"] = "Revisar",
+            ["export"] = "Exportar", ["move"] = "Mover", ["copy"] = "Copiar", ["rotate"] = "Girar", ["scale"] = "Escalar", ["mirror"] = "Reflejar",
+            ["offset"] = "Desfasar", ["trim"] = "Recortar", ["extend"] = "Extender", ["fillet"] = "Empalmar", ["chamfer"] = "Chaflanar",
+            ["join"] = "Unir", ["explode"] = "Descomponer", ["design"] = "Diseñar", ["draw"] = "Dibujar", ["suggest"] = "Proponer",
+            ["calculate"] = "Calcular", ["place"] = "Colocar", ["insert"] = "Insertar", ["attach"] = "Vincular", ["add"] = "Agregar",
+            ["remove"] = "Quitar", ["save"] = "Guardar", ["open"] = "Abrir", ["zoom"] = "Encuadrar", ["capture"] = "Capturar", ["query"] = "Consultar",
+            ["select"] = "Seleccionar", ["rename"] = "Renombrar", ["purge"] = "Purgar", ["merge"] = "Fusionar", ["compose"] = "Componer",
+            ["describe"] = "Describir", ["call"] = "Llamar", ["solid"] = "Sólido", ["extrude"] = "Extruir", ["revolve"] = "Revolver",
+            ["sweep"] = "Barrer", ["loft"] = "Solevar", ["restore"] = "Restaurar", ["package"] = "Empaquetar", ["quantify"] = "Cuantificar",
+            ["dimension"] = "Acotar", ["label"] = "Rotular", ["undo"] = "Deshacer", ["run"] = "Ejecutar", ["diagnose"] = "Diagnosticar",
+            ["find"] = "Buscar", ["match"] = "Igualar", ["break"] = "Partir", ["divide"] = "Dividir", ["stretch"] = "Estirar", ["align"] = "Alinear",
+            ["lengthen"] = "Alargar", ["convert"] = "Convertir", ["mesh"] = "Malla", ["edit"] = "Editar", ["impose"] = "Imponer", ["refit"] = "Reencuadrar",
+            ["unload"] = "Descargar", ["reload"] = "Recargar", ["bind"] = "Incrustar", ["isolate"] = "Aislar", ["unisolate"] = "Restaurar capas",
+            ["clear"] = "Limpiar", ["modify"] = "Modificar", ["update"] = "Actualizar", ["fit"] = "Ajustar", ["union"] = "Unir", ["native"] = "Estado de",
+        };
+
+        /// <summary>El nombre de una herramienta como la entiende una persona: «Crear círculo», no create_circle.</summary>
+        internal static string Humanizar(string n)
+        {
+            if (string.IsNullOrEmpty(n)) return "";
+            var partes = n.Split('_');
+            string verbo;
+            if (!Verbos.TryGetValue(partes[0], out verbo)) return char.ToUpperInvariant(n[0]) + n.Substring(1).Replace('_', ' ');
+            var resto = string.Join("_", partes.Skip(1));
+            string sust;
+            if (resto.Length == 0) sust = "";
+            else if (!Sustantivos.TryGetValue(resto, out sust)) sust = resto.Replace('_', ' ');
+            return (verbo + " " + sust).Trim();
+        }
 
         // Los nombres de las herramientas de la especialidad elegida: lo que el agente puede (y no puede) hacer.
         private async Task MostrarToolsPerfilAsync()
@@ -642,7 +685,7 @@ namespace AutoCadMcpPlugin.Chat
                 using (var doc = await _cli.GetAsync("/api/perfil_tools?perfil=" + Uri.EscapeDataString(_perfil)).ConfigureAwait(true))
                 {
                     var nombres = doc.RootElement.GetProperty("tools").EnumerateArray().Select(x => x.GetString()).ToList();
-                    var txt = "Herramientas de «" + _perfil + "» (" + nombres.Count + "):" + (char)10 + string.Join(" · ", nombres);
+                    var txt = nombres.Count + " herramientas en esta especialidad:" + (char)10 + string.Join(" · ", nombres.Select(Humanizar).Distinct());
                     _toolsPerfil[_perfil] = txt;
                     _perfilTools.Text = txt;
                 }
@@ -656,7 +699,7 @@ namespace AutoCadMcpPlugin.Chat
             foreach (var pf in _perfiles)
             {
                 var item = pf;
-                _listaPerfiles.Children.Add(Fila(item.id, item.tools + " herramientas" + (item.id == "todo" ? " (las ~300 a la vez: gasta ~100 mil tokens por mensaje y Groq/OpenAI aceptan máximo 128)" : item.id == "descubrir" ? " (las ~300, bajo demanda: el agente busca y usa las que necesita; la que conviene con una IA de API)" : item.id == "basico" ? " (dibujo simple)" : ""), item.id == _perfil, async () =>
+                _listaPerfiles.Children.Add(Fila(char.ToUpperInvariant(item.id[0]) + item.id.Substring(1), item.tools + " herramientas" + (item.id == "todo" ? " (todas a la vez: caro en tokens y Groq/OpenAI aceptan máximo 128)" : item.id == "descubrir" ? " (todas, bajo demanda: el agente busca y usa las que necesita; la recomendada)" : item.id == "basico" ? " (dibujo simple)" : ""), item.id == _perfil, async () =>
                 {
                     _perfil = item.id; RefrescarPerfiles(); ActualizarChip();
                     try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { perfil = _perfil } }).ConfigureAwait(true)) { } } catch { }
@@ -696,8 +739,15 @@ namespace AutoCadMcpPlugin.Chat
             }
         }
 
-        private TextBlock Etiqueta(string texto) =>
-            new TextBlock { Text = texto, Foreground = _t.Suave, FontSize = 11, Margin = new Thickness(0, 12, 0, 3) };
+        // Un título de sección de la configuración: el mismo rótulo de cota que separa los mensajes, con su explicación debajo.
+        private UIElement Etiqueta(string titulo, string detalle = null)
+        {
+            var pila = new StackPanel();
+            pila.Children.Add(Rotulo(titulo.ToUpperInvariant(), _t.Suave));
+            if (!string.IsNullOrEmpty(detalle))
+                pila.Children.Add(new TextBlock { Text = detalle, Foreground = _t.Suave, FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, -2, 0, 5) });
+            return pila;
+        }
 
         // ------------------------------------------------------------------------------------------ arranque y estado
 
