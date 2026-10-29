@@ -22,17 +22,17 @@ namespace AutoCadMcpPlugin.Chat
             return claro
                 ? new ChatTema
                 {
-                    FondoHex = "#F5F6F8", TarjetaHex = "#FFFFFF", BordeHex = "#E1E4EA", TextoHex = "#1B1F27", AcentoHex = "#3B6FE0", HoverHex = "#E9ECF1",
-                    Fondo = B("#F5F6F8"), Panel = B("#F5F6F8"), Tarjeta = B("#FFFFFF"), Borde = B("#E1E4EA"), Texto = B("#1B1F27"),
-                    Suave = B("#6B7280"), Acento = B("#3B6FE0"), AcentoTexto = B("#FFFFFF"), Ok = B("#1F9D61"), Mal = B("#D64545"),
-                    Aviso = B("#B7791F"), Usuario = B("#E3EBFB"), Codigo = B("#ECEEF2"), MalFondo = B("#FBEAEA"), AvisoFondo = B("#FBF3DD"),
+                    FondoHex = "#F4F3EE", TarjetaHex = "#FFFFFF", BordeHex = "#C8CBD1", TextoHex = "#1C2128", AcentoHex = "#087F86", HoverHex = "#E7E6E0",
+                    Fondo = B("#F4F3EE"), Panel = B("#F4F3EE"), Tarjeta = B("#FFFFFF"), Borde = B("#C8CBD1"), Texto = B("#1C2128"),
+                    Suave = B("#6A7280"), Acento = B("#087F86"), AcentoTexto = B("#FFFFFF"), Ok = B("#1F9D61"), Mal = B("#C93C3C"),
+                    Aviso = B("#A86B0A"), Usuario = B("#E7E6E0"), Codigo = B("#ECEBE5"), MalFondo = B("#FBEAEA"), AvisoFondo = B("#FBF3DD"),
                 }
                 : new ChatTema
                 {
-                    FondoHex = "#16181D", TarjetaHex = "#20232A", BordeHex = "#2C3038", TextoHex = "#E6E8EC", AcentoHex = "#5B8DEF", HoverHex = "#2A2E37",
-                    Fondo = B("#16181D"), Panel = B("#16181D"), Tarjeta = B("#20232A"), Borde = B("#2C3038"), Texto = B("#E6E8EC"),
-                    Suave = B("#8A909C"), Acento = B("#5B8DEF"), AcentoTexto = B("#FFFFFF"), Ok = B("#5FCF8A"), Mal = B("#F07178"),
-                    Aviso = B("#E9B949"), Usuario = B("#2B3A57"), Codigo = B("#101216"), MalFondo = B("#2E2023"), AvisoFondo = B("#2B2619"),
+                    FondoHex = "#13161A", TarjetaHex = "#1A1E24", BordeHex = "#303743", TextoHex = "#E3E7ED", AcentoHex = "#3FD0D4", HoverHex = "#232831",
+                    Fondo = B("#13161A"), Panel = B("#13161A"), Tarjeta = B("#1A1E24"), Borde = B("#303743"), Texto = B("#E3E7ED"),
+                    Suave = B("#7D8795"), Acento = B("#3FD0D4"), AcentoTexto = B("#06191B"), Ok = B("#6FD08C"), Mal = B("#F2777A"),
+                    Aviso = B("#F2B544"), Usuario = B("#1A1E24"), Codigo = B("#0E1114"), MalFondo = B("#2E2023"), AvisoFondo = B("#2B2619"),
                 };
         }
 
@@ -44,12 +44,12 @@ namespace AutoCadMcpPlugin.Chat
                 "<Setter Property='Background' Value='" + TarjetaHex + "'/>" +
                 "<Setter Property='Foreground' Value='" + TextoHex + "'/>" +
                 "<Setter Property='BorderBrush' Value='" + BordeHex + "'/>" +
-                "<Setter Property='BorderThickness' Value='0'/>" +
+                "<Setter Property='BorderThickness' Value='1'/>" +
                 "<Setter Property='Padding' Value='8,3'/>" +
                 "<Setter Property='Cursor' Value='Hand'/>" +
                 "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='Button'>" +
                 "<Border x:Name='b' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' " +
-                "BorderThickness='{TemplateBinding BorderThickness}' CornerRadius='8' Padding='{TemplateBinding Padding}'>" +
+                "BorderThickness='{TemplateBinding BorderThickness}' CornerRadius='0' Padding='{TemplateBinding Padding}'>" +
                 "<ContentPresenter HorizontalAlignment='{TemplateBinding HorizontalContentAlignment}' VerticalAlignment='Center'/></Border>" +
                 "<ControlTemplate.Triggers>" +
                 "<Trigger Property='IsMouseOver' Value='True'><Setter TargetName='b' Property='Background' Value='" + HoverHex + "'/></Trigger>" +
@@ -61,7 +61,23 @@ namespace AutoCadMcpPlugin.Chat
 
     internal static class ChatEstilos
     {
-        /// <summary>Botón sin fondo (solo se ilumina al pasar el ratón): para los iconos de la cabecera.</summary>
+        /// <summary>Un botón de cajetín: solo el filo fino, sin relleno; al pasar el ratón el filo toma la tinta de traza.</summary>
+        public static Style Cajetin(ChatTema t)
+        {
+            return (Style)XamlReader.Parse(
+                "<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>" +
+                "<Setter Property='Background' Value='Transparent'/><Setter Property='Foreground' Value='" + t.TextoHex + "'/>" +
+                "<Setter Property='BorderBrush' Value='" + t.BordeHex + "'/><Setter Property='BorderThickness' Value='1'/><Setter Property='Cursor' Value='Hand'/>" +
+                "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='Button'>" +
+                "<Border x:Name='b' Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' BorderThickness='{TemplateBinding BorderThickness}' Padding='{TemplateBinding Padding}'>" +
+                "<ContentPresenter HorizontalAlignment='{TemplateBinding HorizontalContentAlignment}' VerticalAlignment='Center'/></Border>" +
+                "<ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter TargetName='b' Property='BorderBrush' Value='" + t.AcentoHex + "'/>" +
+                "<Setter TargetName='b' Property='Background' Value='" + t.TarjetaHex + "'/></Trigger>" +
+                "<Trigger Property='IsEnabled' Value='False'><Setter Property='Opacity' Value='0.45'/></Trigger></ControlTemplate.Triggers>" +
+                "</ControlTemplate></Setter.Value></Setter></Style>");
+        }
+
+        /// <summary>Botón sin fondo (solo se ilumina al pasar el ratón): para las filas de la lista.</summary>
         public static Style Fantasma(ChatTema t)
         {
             return (Style)XamlReader.Parse(
@@ -69,7 +85,7 @@ namespace AutoCadMcpPlugin.Chat
                 "<Setter Property='Background' Value='Transparent'/><Setter Property='Foreground' Value='" + t.TextoHex + "'/>" +
                 "<Setter Property='BorderThickness' Value='0'/><Setter Property='Cursor' Value='Hand'/>" +
                 "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='Button'>" +
-                "<Border x:Name='b' Background='{TemplateBinding Background}' CornerRadius='8' Padding='{TemplateBinding Padding}'>" +
+                "<Border x:Name='b' Background='{TemplateBinding Background}' CornerRadius='0' Padding='{TemplateBinding Padding}'>" +
                 "<ContentPresenter HorizontalAlignment='{TemplateBinding HorizontalContentAlignment}' VerticalAlignment='Center'/></Border>" +
                 "<ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter TargetName='b' Property='Background' Value='" + t.HoverHex + "'/></Trigger>" +
                 "<Trigger Property='IsEnabled' Value='False'><Setter Property='Opacity' Value='0.45'/></Trigger></ControlTemplate.Triggers>" +
@@ -87,7 +103,7 @@ namespace AutoCadMcpPlugin.Chat
                 "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='ScrollBar'>" +
                 "<Grid Background='Transparent'><Track x:Name='PART_Track' IsDirectionReversed='True'>" +
                 "<Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType='Thumb'>" +
-                "<Border CornerRadius='4' Background='" + t.BordeHex + "' Margin='2,1,2,1'/>" +
+                "<Border CornerRadius='0' Background='" + t.BordeHex + "' Margin='2,1,2,1'/>" +
                 "</ControlTemplate></Thumb.Template></Thumb></Track.Thumb></Track></Grid>" +
                 "</ControlTemplate></Setter.Value></Setter></Style>");
         }
@@ -100,7 +116,7 @@ namespace AutoCadMcpPlugin.Chat
                 "<Setter Property='Foreground' Value='" + t.TextoHex + "'/><Setter Property='Cursor' Value='Hand'/>" +
                 "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='CheckBox'>" +
                 "<StackPanel Orientation='Horizontal' Background='Transparent'>" +
-                "<Border x:Name='caja' Width='14' Height='14' CornerRadius='3' BorderThickness='1' BorderBrush='" + t.BordeHex + "' Background='" + t.TarjetaHex + "' VerticalAlignment='Center'>" +
+                "<Border x:Name='caja' Width='14' Height='14' CornerRadius='0' BorderThickness='1' BorderBrush='" + t.BordeHex + "' Background='" + t.TarjetaHex + "' VerticalAlignment='Center'>" +
                 "<TextBlock x:Name='marca' Text='✓' FontSize='10' FontWeight='Bold' Foreground='White' HorizontalAlignment='Center' VerticalAlignment='Center' Visibility='Collapsed'/></Border>" +
                 "<ContentPresenter Margin='6,0,0,0' VerticalAlignment='Center'/></StackPanel>" +
                 "<ControlTemplate.Triggers><Trigger Property='IsChecked' Value='True'>" +
@@ -133,7 +149,7 @@ namespace AutoCadMcpPlugin.Chat
                         cuerpo = cuerpo.Substring(nl + 1);
                     pila.Children.Add(new Border
                     {
-                        Background = t.Codigo, CornerRadius = new CornerRadius(5), Padding = new Thickness(6), Margin = new Thickness(0, 3, 0, 3),
+                        Background = t.Codigo, BorderBrush = t.Borde, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(0), Padding = new Thickness(7), Margin = new Thickness(0, 4, 0, 4),
                         Child = new TextBlock
                         {
                             Text = cuerpo.Trim('\n'), FontFamily = new FontFamily("Consolas"), FontSize = 11.5, Foreground = t.Texto,

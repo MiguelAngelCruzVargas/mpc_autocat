@@ -61,7 +61,11 @@ namespace AutoCadMcpPlugin.Chat
         // Lo que el agente está haciendo ahora («Pensando…», «Dibujando círculo…»), con puntos que se mueven: en vez de enseñar las tripas.
         private readonly Border _actividad = new Border { Visibility = Visibility.Collapsed };
         private readonly TextBlock _actividadTxt = new TextBlock();
-        private readonly TextBlock _actividadPunto = RelojArena(15);
+        private readonly Border _actividadLinea = new Border { Height = 2 };       // la línea que se va trazando mientras el agente trabaja
+        private ScaleTransform _trazo;
+        private Style _estiloFantasma, _estiloCajetin;
+        private int _nPaso;
+        private bool _primerAsistente = true;
         private DispatcherTimer _animTimer;
         private string _fase = "";
         private int _puntos;
@@ -136,35 +140,36 @@ namespace AutoCadMcpPlugin.Chat
             // cabecera: qué IA está activa (nombre y modelo COMPLETOS), ajustes y conversación nueva.
             // No hay menús desplegables: los menús emergentes de WPF no se abren bien dentro de una paleta de AutoCAD,
             // así que todo lo que se elige vive en la pantalla de configuración (el botón de la tuerca).
-            var cab = new Grid { Margin = new Thickness(6, 6, 6, 4) };
+            var cab = new Grid { Margin = new Thickness(8, 8, 8, 8) };
             cab.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             cab.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             cab.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var fantasma = ChatEstilos.Fantasma(_t);
-            _provBtn.Style = fantasma; _ajustesBtn.Style = fantasma; _nuevaBtn.Style = fantasma;
-            _provBtn.HorizontalContentAlignment = HorizontalAlignment.Stretch; _provBtn.Padding = new Thickness(10, 5, 8, 5);
+            _estiloFantasma = ChatEstilos.Fantasma(_t); _estiloCajetin = ChatEstilos.Cajetin(_t);
+            _provBtn.Style = _estiloCajetin; _ajustesBtn.Style = _estiloCajetin; _nuevaBtn.Style = _estiloCajetin;
+            _provBtn.HorizontalContentAlignment = HorizontalAlignment.Stretch; _provBtn.Padding = new Thickness(9, 5, 9, 6);
             _provBtn.Click += (s, e) => AbrirAjustes();
             ActualizarChip();
-            _ajustesBtn.Content = Icono("\uE713"); _ajustesBtn.ToolTip = "Configuración"; _ajustesBtn.Margin = new Thickness(2, 0, 0, 0); _ajustesBtn.Width = 34; _ajustesBtn.Height = 34;
+            _ajustesBtn.Content = Icono("\uE713"); _ajustesBtn.ToolTip = "Configuración"; _ajustesBtn.Margin = new Thickness(6, 0, 0, 0); _ajustesBtn.Width = 38;
             _ajustesBtn.Click += (s, e) => { if (_ajustes.Visibility == Visibility.Visible) _ajustes.Visibility = Visibility.Collapsed; else AbrirAjustes(); };
             Grid.SetColumn(_ajustesBtn, 1);
-            _nuevaBtn.Content = Icono("\uE710"); _nuevaBtn.ToolTip = "Conversación nueva"; _nuevaBtn.Margin = new Thickness(2, 0, 0, 0); _nuevaBtn.Width = 34; _nuevaBtn.Height = 34;
+            _nuevaBtn.Content = Icono("\uE710"); _nuevaBtn.ToolTip = "Conversación nueva"; _nuevaBtn.Margin = new Thickness(6, 0, 0, 0); _nuevaBtn.Width = 38;
             _nuevaBtn.Click += async (s, e) => await NuevaAsync().ConfigureAwait(true);
             Grid.SetColumn(_nuevaBtn, 2);
             cab.Children.Add(_provBtn); cab.Children.Add(_ajustesBtn); cab.Children.Add(_nuevaBtn);
-            var cabBorde = new Border { Background = _t.Panel, BorderBrush = _t.Borde, BorderThickness = new Thickness(0), Child = cab };
+            var cabBorde = new Border { Background = _t.Panel, Child = cab };
             Grid.SetRow(cabBorde, 0); raiz.Children.Add(cabBorde);
 
             // fila de contexto de AutoCAD: dibujo activo y selección
-            var ctxFila = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 4, 8, 6) };
-            _ctxTexto.Foreground = _t.Suave; _ctxTexto.FontSize = 11; _ctxTexto.VerticalAlignment = VerticalAlignment.Center;
+            var ctxFila = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 5, 8, 5) };
+            _ctxTexto.Foreground = _t.Texto; _ctxTexto.FontFamily = Mono; _ctxTexto.FontSize = 10.5; _ctxTexto.VerticalAlignment = VerticalAlignment.Center;
             _ctxTexto.TextTrimming = TextTrimming.CharacterEllipsis;
-            _adjSel.Content = "adjuntar selección"; _adjSel.Foreground = _t.Texto; _adjSel.FontSize = 11; _adjSel.Margin = new Thickness(8, 0, 0, 0);
+            _adjSel.Content = "adjuntar selección"; _adjSel.Foreground = _t.Texto; _adjSel.FontSize = 11; _adjSel.Margin = new Thickness(12, 0, 0, 0);
             _adjSel.VerticalAlignment = VerticalAlignment.Center; _adjSel.Visibility = Visibility.Collapsed;
             _adjSel.ToolTip = "Le manda al agente los handles y tipos de lo que tienes seleccionado en el dibujo";
-            ctxFila.Children.Add(new Border { Background = _t.Tarjeta, CornerRadius = new CornerRadius(10), Padding = new Thickness(9, 3, 9, 3), Child = _ctxTexto });
+            ctxFila.Children.Add(_ctxTexto);
             ctxFila.Children.Add(_adjSel);
-            Grid.SetRow(ctxFila, 1); raiz.Children.Add(ctxFila);
+            var ctxBorde = new Border { BorderBrush = _t.Borde, BorderThickness = new Thickness(0, 1, 0, 1), Child = ctxFila };
+            Grid.SetRow(ctxBorde, 1); raiz.Children.Add(ctxBorde);
 
             // contenido: conversación o vista «en vivo», y los ajustes encima
             var contenido = new Grid();
@@ -195,14 +200,15 @@ namespace AutoCadMcpPlugin.Chat
             Grid.SetRow(contenido, 2); raiz.Children.Add(contenido);
 
             // estado
-            _estado.Foreground = _t.Suave; _estado.FontSize = 10.5; _estado.Margin = new Thickness(16, 4, 8, 0); _estado.TextTrimming = TextTrimming.CharacterEllipsis;
-            _actividadTxt.Foreground = _t.Texto; _actividadTxt.FontSize = 12.5; _actividadTxt.VerticalAlignment = VerticalAlignment.Center; _actividadTxt.TextTrimming = TextTrimming.CharacterEllipsis;
-            _actividadPunto.Margin = new Thickness(0, 0, 8, 0);
-            var filaActividad = new StackPanel { Orientation = Orientation.Horizontal };
-            filaActividad.Children.Add(_actividadPunto); filaActividad.Children.Add(_actividadTxt);
-            _actividad.Child = filaActividad; _actividad.Margin = new Thickness(12, 6, 12, 4);
-            _actividad.BorderBrush = _t.Acento; _actividad.BorderThickness = new Thickness(2, 0, 0, 0); _actividad.CornerRadius = new CornerRadius(6);
-            _actividad.Background = _t.Tarjeta; _actividad.Padding = new Thickness(9, 5, 9, 5);
+            _estado.Foreground = _t.Suave; _estado.FontFamily = Mono; _estado.FontSize = 10; _estado.Margin = new Thickness(12, 6, 8, 0); _estado.TextTrimming = TextTrimming.CharacterEllipsis;
+            _actividadTxt.Foreground = _t.Acento; _actividadTxt.FontFamily = Mono; _actividadTxt.FontSize = 11.5; _actividadTxt.TextTrimming = TextTrimming.CharacterEllipsis;
+            _trazo = new ScaleTransform(0, 1);
+            _actividadLinea.Background = _t.Acento; _actividadLinea.RenderTransformOrigin = new Point(0, 0.5); _actividadLinea.RenderTransform = _trazo;
+            var pista = new Grid { Height = 2, Margin = new Thickness(0, 5, 0, 0), Background = _t.Borde, ClipToBounds = true };
+            pista.Children.Add(_actividadLinea);
+            var pilaActividad = new StackPanel();
+            pilaActividad.Children.Add(_actividadTxt); pilaActividad.Children.Add(pista);
+            _actividad.Child = pilaActividad; _actividad.Margin = new Thickness(12, 9, 12, 2);
             _animTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(420) };
             _animTimer.Tick += (s, e) => { _puntos = (_puntos + 1) % 4; _actividadTxt.Text = _fase + new string('.', _puntos); };
 
@@ -210,12 +216,16 @@ namespace AutoCadMcpPlugin.Chat
             // entrada
             ConstruirAvisoVivo();
             var ent = _entradaFila; ent.Margin = new Thickness(0);
+            ent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             ent.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             ent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            // como la línea de comandos de AutoCAD: un indicador a la izquierda y el texto en un recuadro de filo fino
+            var indicador = new TextBlock { Text = "›", FontFamily = Mono, FontSize = 18, Foreground = _t.Acento, Margin = new Thickness(10, 3, 0, 0), VerticalAlignment = VerticalAlignment.Top };
             var caja = new Grid();
+            Grid.SetColumn(caja, 1);
             EstilizarTexto(_entrada);
-            _entrada.AcceptsReturn = true; _entrada.TextWrapping = TextWrapping.Wrap; _entrada.MinHeight = 34; _entrada.MaxHeight = 120;
-            _entrada.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; _entrada.Padding = new Thickness(8, 7, 6, 5);
+            _entrada.AcceptsReturn = true; _entrada.TextWrapping = TextWrapping.Wrap; _entrada.MinHeight = 36; _entrada.MaxHeight = 120;
+            _entrada.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; _entrada.Padding = new Thickness(6, 8, 6, 5);
             _entrada.Background = Brushes.Transparent; _entrada.BorderThickness = new Thickness(0);
             _entrada.PreviewKeyDown += async (s, e) =>
             {
@@ -223,16 +233,16 @@ namespace AutoCadMcpPlugin.Chat
             };
             _entrada.TextChanged += (s, e) => _placeholder.Visibility = _entrada.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
             _placeholder.Text = "Escribe tu instrucción…"; _placeholder.Foreground = _t.Suave; _placeholder.IsHitTestVisible = false;
-            _placeholder.Margin = new Thickness(10, 8, 0, 0); _placeholder.VerticalAlignment = VerticalAlignment.Top;
+            _placeholder.Margin = new Thickness(8, 9, 0, 0); _placeholder.VerticalAlignment = VerticalAlignment.Top;
             caja.Children.Add(_entrada); caja.Children.Add(_placeholder);
-            _enviar.Content = "Enviar"; _enviar.Margin = new Thickness(4, 4, 4, 4); _enviar.Padding = new Thickness(14, 4, 14, 4);
-            _enviar.Background = _t.Acento; _enviar.Foreground = _t.AcentoTexto; _enviar.VerticalAlignment = VerticalAlignment.Stretch;
+            _enviar.Content = "ENVIAR"; _enviar.FontFamily = Mono; _enviar.FontSize = 10.5; _enviar.FontWeight = FontWeights.Bold;
+            _enviar.Margin = new Thickness(4, 4, 4, 4); _enviar.Padding = new Thickness(12, 4, 12, 4);
+            _enviar.Background = _t.Acento; _enviar.Foreground = _t.AcentoTexto; _enviar.BorderBrush = _t.Acento; _enviar.VerticalAlignment = VerticalAlignment.Stretch;
             _enviar.Click += async (s, e) => { if (_trabajando) Detener(); else await EnviarAsync().ConfigureAwait(true); };
-            Grid.SetColumn(_enviar, 1);
-            ent.Children.Add(caja); ent.Children.Add(_enviar);
-            // la caja de escribir y el botón de enviar van dentro de UN recipiente redondeado, como en los chats actuales
-            var entBorde = new Border { Background = _t.Tarjeta, BorderBrush = _t.Borde, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Margin = new Thickness(10, 6, 10, 10), Child = ent };
-            var pie = new Border { BorderBrush = _t.Borde, BorderThickness = new Thickness(0), Background = _t.Panel, Child = new StackPanel { Children = { _actividad, _estado, _vivoAviso, entBorde } } };
+            Grid.SetColumn(_enviar, 2);
+            ent.Children.Add(indicador); ent.Children.Add(caja); ent.Children.Add(_enviar);
+            var entBorde = new Border { Background = _t.Fondo, BorderBrush = _t.Borde, BorderThickness = new Thickness(1), Margin = new Thickness(10, 8, 10, 10), Child = ent };
+            var pie = new Border { BorderBrush = _t.Borde, BorderThickness = new Thickness(0, 1, 0, 0), Background = _t.Panel, Child = new StackPanel { Children = { _actividad, _estado, _vivoAviso, entBorde } } };
             Grid.SetRow(pie, 3); Grid.SetRowSpan(pie, 2); raiz.Children.Add(pie);
             // la configuración cubre todo el panel (dibujo, conversación y caja de escribir): es una pantalla aparte
             Grid.SetRow(_ajustes, 1); Grid.SetRowSpan(_ajustes, 4); Panel.SetZIndex(_ajustes, 10); raiz.Children.Add(_ajustes);
@@ -264,31 +274,33 @@ namespace AutoCadMcpPlugin.Chat
             ["local"] = "Local", ["anthropic"] = "Claude", ["en-vivo"] = "En vivo",
         };
 
+        private static readonly FontFamily Mono = new FontFamily("Consolas");
+
+        /// <summary>Letras con un hilo de aire entre ellas: los rótulos de un plano van «abiertos».</summary>
+        private static string Espaciado(string s) => string.Join("\u200A", s.ToCharArray().Select(c => c.ToString()));
+
         private void ActualizarChip()
         {
-            // Arriba, lo que importa (el modelo); debajo y discreto, con qué IA y qué especialidad. Sin cifras internas.
-            var pila = new StackPanel();
-            var fila = new Grid();
-            fila.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            fila.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            // El cajetín: dos renglones rotulados, como el cuadro de rotulación de un plano.
+            var g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             string modelo = _modelo.Text.Trim();
             string ia = _prov == null ? "" : NombresIa.TryGetValue(_prov.Id, out var bonito) ? bonito : _prov.Nombre.Replace(" · sin clave", "");
-            string titulo = _prov == null ? "Elegir con qué IA trabajar" : _prov.Vivo ? "Tu agente, en vivo" : (modelo.Length > 0 ? modelo : ia);
-            fila.Children.Add(new TextBlock { Text = titulo, FontWeight = FontWeights.SemiBold, FontSize = 13.5, TextTrimming = TextTrimming.CharacterEllipsis });
-            var flecha = Icono("\uE70D", 10); flecha.Foreground = _t.Suave; flecha.Margin = new Thickness(8, 0, 0, 0); Grid.SetColumn(flecha, 1);
-            fila.Children.Add(flecha);
-            pila.Children.Add(fila);
-            string detalle = null;
-            if (_prov != null && !_prov.Vivo)
-            {
-                var esp = string.IsNullOrEmpty(_perfil) ? "" : char.ToUpperInvariant(_perfil[0]) + _perfil.Substring(1);
-                detalle = modelo.Length > 0 ? ia + (esp.Length > 0 ? " · " + esp : "") : esp;
-            }
-            else if (_prov != null)
-                detalle = "Aquí ves lo que hace; él trabaja en su programa";
-            if (!string.IsNullOrEmpty(detalle))
-                pila.Children.Add(new TextBlock { Text = detalle, FontSize = 11, Foreground = _t.Suave, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0) });
-            _provBtn.Content = pila;
+            var esp = string.IsNullOrEmpty(_perfil) ? "" : char.ToUpperInvariant(_perfil[0]) + _perfil.Substring(1);
+            string valor0 = _prov == null ? "elegir con qué IA trabajar" : _prov.Vivo ? "tu agente, en vivo" : (modelo.Length > 0 ? modelo : ia);
+            string valor1 = _prov == null ? "" : _prov.Vivo ? "aquí ves lo que hace" : ia + (esp.Length > 0 ? "  ·  " + esp : "");
+            var l0 = new TextBlock { Text = Espaciado("MODELO"), FontFamily = Mono, FontSize = 8.5, Foreground = _t.Suave, VerticalAlignment = VerticalAlignment.Center };
+            var v0 = new TextBlock { Text = valor0, FontFamily = Mono, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = _t.Texto, TextTrimming = TextTrimming.CharacterEllipsis };
+            var l1 = new TextBlock { Text = Espaciado("IA"), FontFamily = Mono, FontSize = 8.5, Foreground = _t.Suave, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 3, 0, 0) };
+            var v1 = new TextBlock { Text = valor1, FontFamily = Mono, FontSize = 10.5, Foreground = _t.Suave, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) };
+            Grid.SetRow(l1, 1); Grid.SetColumn(v0, 1); Grid.SetColumn(v1, 1); Grid.SetRow(v1, 1);
+            var flecha = Icono("\uE70D", 9); flecha.Foreground = _t.Suave; flecha.Margin = new Thickness(8, 0, 0, 0); Grid.SetColumn(flecha, 2); Grid.SetRowSpan(flecha, 2);
+            g.Children.Add(l0); g.Children.Add(v0); g.Children.Add(l1); g.Children.Add(v1); g.Children.Add(flecha);
+            _provBtn.Content = g;
             _provBtn.ToolTip = "Clic para cambiar de IA, de modelo, de especialidad o la clave";
         }
 
@@ -627,20 +639,17 @@ namespace AutoCadMcpPlugin.Chat
         {
             _lista.Children.Clear();
             _hayConversacion = false;
-            _lista.Children.Add(new TextBlock
-            {
-                Text = "¿En qué te ayudo con este dibujo?", FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = _t.Texto, Margin = new Thickness(4, 14, 4, 4),
-                TextWrapping = TextWrapping.Wrap,
-            });
-            _lista.Children.Add(new TextBlock
-            {
-                Text = "Puedo consultar, dibujar, revisar y cuantificar. Lo que veo en AutoCAD (el dibujo y tu selección) lo puedo usar.",
-                Foreground = _t.Suave, Margin = new Thickness(4, 0, 4, 12), TextWrapping = TextWrapping.Wrap,
-            });
+            _lista.Children.Add(Rotulo("NUEVA CONSULTA", _t.Acento));
+            _lista.Children.Add(new TextBlock { Text = "¿Qué hacemos con este dibujo?", FontSize = 16, FontWeight = FontWeights.SemiBold, Foreground = _t.Texto, Margin = new Thickness(0, 2, 0, 4), TextWrapping = TextWrapping.Wrap });
+            _lista.Children.Add(new TextBlock { Text = "Consulto, dibujo, reviso y cuantifico. Veo el dibujo abierto y tu selección.", Foreground = _t.Suave, Margin = new Thickness(0, 0, 0, 14), TextWrapping = TextWrapping.Wrap });
+            int n = 0;
             foreach (var s in new[] { "¿Qué hay en el dibujo abierto?", "Lista las capas del dibujo", "Revisa el plano con check_all" })
             {
-                var texto = s;
-                var b = new Button { Content = texto, HorizontalContentAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 6), Padding = new Thickness(12, 8, 12, 8) };
+                var texto = s; n++;
+                var fila = new StackPanel { Orientation = Orientation.Horizontal };
+                fila.Children.Add(new TextBlock { Text = n.ToString("00"), FontFamily = Mono, FontSize = 10.5, Foreground = _t.Acento, Width = 26, VerticalAlignment = VerticalAlignment.Center });
+                fila.Children.Add(new TextBlock { Text = texto, Foreground = _t.Texto, TextWrapping = TextWrapping.Wrap });
+                var b = new Button { Content = fila, HorizontalContentAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 2), Padding = new Thickness(6, 8, 6, 8), Style = _estiloFantasma };
                 b.Click += async (x, y) => { _entrada.Text = texto; await EnviarAsync().ConfigureAwait(true); };
                 _lista.Children.Add(b);
             }
@@ -684,25 +693,39 @@ namespace AutoCadMcpPlugin.Chat
             if (final) Dispatcher.BeginInvoke(new Action(() => _scroll.ScrollToEnd()), DispatcherPriority.Background);
         }
 
+        /// <summary>Un rótulo como la línea de cota de un plano:  ─ TÍTULO ───────────┤</summary>
+        private UIElement Rotulo(string texto, Brush color)
+        {
+            var g = new Grid { Margin = new Thickness(0, 12, 0, 5) };
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var ini = new Border { Width = 12, Height = 1, Background = color, VerticalAlignment = VerticalAlignment.Center };
+            var tb = new TextBlock { Text = Espaciado(texto), FontFamily = Mono, FontSize = 9.5, Foreground = color, Margin = new Thickness(7, 0, 7, 1), VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(tb, 1);
+            var linea = new Border { Height = 1, Background = _t.Borde, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(linea, 2);
+            var fin = new Border { Width = 1, Height = 7, Background = _t.Borde, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(fin, 3);
+            g.Children.Add(ini); g.Children.Add(tb); g.Children.Add(linea); g.Children.Add(fin);
+            return g;
+        }
+
+        // Solo lo usa la vista «En vivo»: un recuadro de filo fino.
         private Border Burbuja(UIElement contenido, Brush fondo, Brush borde, HorizontalAlignment lado)
         {
-            // El usuario: una burbuja suave a la derecha. La IA: texto directo sobre el fondo, sin caja (así se lee más limpio).
-            bool usuario = lado == HorizontalAlignment.Right;
             return new Border
             {
-                Background = usuario ? fondo : Brushes.Transparent,
-                CornerRadius = usuario ? new CornerRadius(14, 14, 4, 14) : new CornerRadius(0),
-                Padding = usuario ? new Thickness(12, 7, 12, 8) : new Thickness(2),
-                Margin = usuario ? new Thickness(40, 8, 2, 4) : new Thickness(0, 6, 16, 6),
-                HorizontalAlignment = usuario ? HorizontalAlignment.Right : HorizontalAlignment.Stretch,
-                Child = contenido,
+                Background = Brushes.Transparent, BorderBrush = ReferenceEquals(borde, Brushes.Transparent) ? _t.Borde : borde, BorderThickness = new Thickness(1),
+                Padding = new Thickness(8, 6, 8, 7), Margin = new Thickness(lado == HorizontalAlignment.Right ? 24 : 0, 4, lado == HorizontalAlignment.Left ? 10 : 0, 4), Child = contenido,
             };
         }
 
         private void AgregarUsuario(string texto, string adjunto = null)
         {
             // Lo que se restaura del historial trae el bloque «[Contexto de AutoCAD]...» pegado al mensaje: se separa
-            // para no mostrar la lista de handles en la burbuja.
+            // para no mostrar la lista de handles.
             if (adjunto == null && texto != null && texto.StartsWith("[Contexto de AutoCAD]", StringComparison.Ordinal))
             {
                 var corte = texto.IndexOf("\n\n", StringComparison.Ordinal);
@@ -713,77 +736,90 @@ namespace AutoCadMcpPlugin.Chat
                     texto = texto.Substring(corte + 2);
                 }
             }
-            var pila = new StackPanel();
+            _nPaso = 0; _primerAsistente = true;          // cada pedido empieza su propia numeración de pasos
+            var pila = new StackPanel { Margin = new Thickness(0, 0, 0, 2) };
+            pila.Children.Add(Rotulo("TÚ", _t.Suave));
             pila.Children.Add(new TextBlock { Text = texto, TextWrapping = TextWrapping.Wrap, Foreground = _t.Texto, FontSize = 13, LineHeight = 19, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
             if (adjunto != null)
-                pila.Children.Add(new TextBlock { Text = adjunto, Foreground = _t.Suave, FontSize = 10.5, Margin = new Thickness(0, 3, 0, 0) });
-            Agregar(Burbuja(pila, _t.Usuario, Brushes.Transparent, HorizontalAlignment.Right));
+                pila.Children.Add(new TextBlock { Text = adjunto, FontFamily = Mono, Foreground = _t.Suave, FontSize = 10, Margin = new Thickness(0, 4, 0, 0) });
+            Agregar(pila);
         }
 
         private void AgregarAsistente(string texto)
         {
-            var b = Burbuja(ChatMarkdown.Render(texto, _t), _t.Tarjeta, _t.Borde, HorizontalAlignment.Left);
+            var pila = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
+            if (_primerAsistente) { pila.Children.Add(Rotulo("ASISTENTE", _t.Acento)); _primerAsistente = false; }
+            else pila.Children.Add(new Border { Height = 6 });
+            pila.Children.Add(ChatMarkdown.Render(texto, _t));
             var copiar = new MenuItem { Header = "Copiar" };
             copiar.Click += (s, e) => { try { Clipboard.SetText(texto); } catch { } };
-            b.ContextMenu = new ContextMenu { Items = { copiar } };
-            Agregar(b);
+            pila.ContextMenu = new ContextMenu { Items = { copiar } };
+            Agregar(pila);
         }
 
         private void AgregarAviso(string texto)
         {
-            Agregar(new Border
-            {
-                Background = _t.MalFondo, BorderBrush = _t.Mal, BorderThickness = new Thickness(3, 0, 0, 0), CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6, 10, 7), Margin = new Thickness(0, 4, 12, 4),
-                Child = new TextBlock { Text = texto, TextWrapping = TextWrapping.Wrap, Foreground = _t.Texto },
-            });
+            var g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.Children.Add(new TextBlock { Text = "!", FontFamily = Mono, FontWeight = FontWeights.Bold, Foreground = _t.Mal });
+            var tb = new TextBlock { Text = texto, TextWrapping = TextWrapping.Wrap, Foreground = _t.Texto }; Grid.SetColumn(tb, 1); g.Children.Add(tb);
+            Agregar(new Border { BorderBrush = _t.Mal, BorderThickness = new Thickness(1), Padding = new Thickness(8, 6, 8, 7), Margin = new Thickness(0, 6, 0, 6), Child = g });
         }
 
         private void AgregarNota(string texto, bool franja = true)
         {
-            var tb = new TextBlock { Text = texto, Foreground = _t.Suave, FontSize = franja ? 11.5 : 10.5, TextWrapping = TextWrapping.Wrap };
-            if (!franja) { tb.Margin = new Thickness(4, 4, 4, 4); Agregar(tb); return; }
-            Agregar(new Border
-            {
-                Background = _t.Tarjeta, BorderBrush = _t.Acento, BorderThickness = new Thickness(2, 0, 0, 0), CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(9, 5, 9, 6), Margin = new Thickness(0, 4, 14, 4), Child = tb,
-            });
+            Agregar(new TextBlock { Text = "▸ " + texto, Foreground = _t.Suave, FontSize = 10.5, Margin = new Thickness(0, 5, 0, 5), TextWrapping = TextWrapping.Wrap });
         }
 
-        // Una herramienta en la lista: ⏳ corriendo → ✓ / ✗, con el resumen de sus argumentos y, al hacer clic, su resultado.
+        private string SiguientePaso() => (++_nPaso).ToString("00");
+
+        // Un paso del agente, como una línea del índice de un plano:   01  Dibujar círculo ·········· ✓
+        // Mientras corre, la guía de puntos «marcha» y un cursor parpadea; al terminar queda quieta y el filo cuenta cómo salió.
         internal sealed class TarjetaTool
         {
             public Border Raiz;
-            public TextBlock Icono, Detalle, Resumen, Extra;
+            public TextBlock Estado, Etiqueta, Detalle, Resumen, Extra;
+            public System.Windows.Shapes.Line Guia;
             public string Nombre;
             public bool Abierta, Fallo;
             public string Completo = "", Corto = "";
 
-            public static TarjetaTool Crear(ChatTema t, string nombre, string args)
+            public static TarjetaTool Crear(ChatTema t, string nombre, string args, string numero = "")
             {
                 var c = new TarjetaTool { Nombre = nombre };
                 var g = new Grid();
-                g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+                g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(26) });
+                g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
                 for (int i = 0; i < 4; i++) g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                c.Icono = RelojArena(13);
-                var nom = new TextBlock { Text = Frase(nombre), Foreground = t.Suave, FontSize = 12, TextWrapping = TextWrapping.Wrap };
-                Grid.SetColumn(nom, 1);
-                // El nombre técnico y los argumentos quedan plegados: se ven al hacer clic en la tarjeta.
-                c.Detalle = new TextBlock { Text = nombre + (string.IsNullOrEmpty(args) ? "" : "  ·  " + args), FontFamily = new FontFamily("Consolas"), FontSize = 11, Foreground = t.Suave, TextWrapping = TextWrapping.Wrap };
-                Grid.SetColumn(c.Detalle, 1); Grid.SetRow(c.Detalle, 1);
-                c.Detalle.Visibility = Visibility.Collapsed;
-                // lo que contestó la herramienta, a la vista (unas líneas); el detalle completo, al hacer clic
-                c.Resumen = new TextBlock { FontFamily = new FontFamily("Consolas"), FontSize = 11, Foreground = t.Texto, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 3, 0, 0), MaxHeight = 64 };
-                Grid.SetColumn(c.Resumen, 1); Grid.SetRow(c.Resumen, 2);
-                c.Extra = new TextBlock { Background = t.Codigo, Padding = new Thickness(6), FontFamily = new FontFamily("Consolas"), FontSize = 11, Foreground = t.Texto, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 3, 0, 0) };
-                Grid.SetColumn(c.Extra, 1); Grid.SetRow(c.Extra, 3);
-                g.Children.Add(c.Icono); g.Children.Add(nom); g.Children.Add(c.Detalle); g.Children.Add(c.Resumen); g.Children.Add(c.Extra);
-                c.Raiz = new Border
+
+                var num = new TextBlock { Text = string.IsNullOrEmpty(numero) ? "·" : numero, FontFamily = Mono, FontSize = 10.5, Foreground = t.Suave, VerticalAlignment = VerticalAlignment.Center };
+                c.Etiqueta = new TextBlock { Text = Frase(nombre), Foreground = t.Texto, FontSize = 12.5, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(c.Etiqueta, 1);
+                c.Guia = new System.Windows.Shapes.Line
                 {
-                    Background = Brushes.Transparent, BorderBrush = t.Acento, BorderThickness = new Thickness(2, 0, 0, 0), CornerRadius = new CornerRadius(6),
-                    Padding = new Thickness(8, 4, 6, 4), Margin = new Thickness(0, 2, 14, 2), Child = g, Cursor = Cursors.Hand,
+                    X1 = 0, X2 = 1, Y1 = 0, Y2 = 0, Stretch = Stretch.Fill, Stroke = t.Acento, StrokeThickness = 1,
+                    StrokeDashArray = new DoubleCollection { 1, 3 }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 5, 8, 0),
                 };
+                Grid.SetColumn(c.Guia, 2);
+                Marchar(c.Guia);
+                c.Estado = new TextBlock { Text = "▍", FontFamily = Mono, FontSize = 13, Foreground = t.Acento, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(c.Estado, 3);
+                Parpadear(c.Estado);
+
+                // el nombre técnico y los argumentos quedan plegados: se ven al hacer clic en el paso
+                c.Detalle = new TextBlock { Text = nombre + (string.IsNullOrEmpty(args) ? "" : "  ·  " + args), FontFamily = Mono, FontSize = 10.5, Foreground = t.Suave, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Margin = new Thickness(26, 2, 0, 0) };
+                Grid.SetColumn(c.Detalle, 0); Grid.SetColumnSpan(c.Detalle, 4); Grid.SetRow(c.Detalle, 1);
+                c.Resumen = new TextBlock { FontFamily = Mono, FontSize = 10.5, Foreground = t.Mal, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Margin = new Thickness(26, 2, 0, 0), MaxHeight = 64 };
+                Grid.SetColumn(c.Resumen, 0); Grid.SetColumnSpan(c.Resumen, 4); Grid.SetRow(c.Resumen, 2);
+                c.Extra = new TextBlock { Background = t.Codigo, Padding = new Thickness(7), FontFamily = Mono, FontSize = 10.5, Foreground = t.Texto, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Margin = new Thickness(26, 3, 0, 2) };
+                Grid.SetColumn(c.Extra, 0); Grid.SetColumnSpan(c.Extra, 4); Grid.SetRow(c.Extra, 3);
+
+                g.Children.Add(num); g.Children.Add(c.Etiqueta); g.Children.Add(c.Guia); g.Children.Add(c.Estado);
+                g.Children.Add(c.Detalle); g.Children.Add(c.Resumen); g.Children.Add(c.Extra);
+                c.Raiz = new Border { Background = Brushes.Transparent, Padding = new Thickness(0, 4, 0, 4), Child = g, Cursor = Cursors.Hand };
                 c.Raiz.MouseEnter += (s, e) => c.Raiz.Background = t.Tarjeta;
                 c.Raiz.MouseLeave += (s, e) => c.Raiz.Background = Brushes.Transparent;
                 c.Raiz.MouseLeftButtonUp += (s, e) => { c.Abierta = !c.Abierta; c.Pintar(); };
@@ -794,7 +830,7 @@ namespace AutoCadMcpPlugin.Chat
             {
                 bool hay = Completo.Length > 0;
                 bool largo = Completo.Length > Corto.Length;
-                // Si salió bien, no se enseña nada más que el ✓; si falló, el motivo en corto. El detalle completo, al hacer clic.
+                // Si salió bien no se enseña nada más que el ✓; si falló, el motivo en corto. El detalle completo, al hacer clic.
                 Resumen.Visibility = hay && !Abierta && Fallo ? Visibility.Visible : Visibility.Collapsed;
                 Extra.Visibility = hay && Abierta ? Visibility.Visible : Visibility.Collapsed;
                 Detalle.Visibility = Abierta ? Visibility.Visible : Visibility.Collapsed;
@@ -804,46 +840,30 @@ namespace AutoCadMcpPlugin.Chat
             public void Resolver(ChatTema t, bool ok, string texto, string tiempo)
             {
                 Fallo = !ok;
-                Icono.Text = ok ? "✓" : "✗";
-                Icono.Foreground = ok ? t.Ok : t.Mal;
-                // la franja cuenta cómo salió: verde si bien, roja si falló (mientras corre es azul y el reloj de arena gira)
-                Raiz.BorderBrush = ok ? t.Ok : t.Mal;
-                Raiz.BorderThickness = new Thickness(ok ? 2 : 3, 0, 0, 0);
-                Icono.RenderTransform = Transform.Identity;
-                Icono.FontFamily = new FontFamily("Segoe UI");
+                Estado.BeginAnimation(UIElement.OpacityProperty, null);
+                Estado.Opacity = 1; Estado.FontSize = 12; Estado.Text = ok ? "✓" : "✗"; Estado.Foreground = ok ? t.Ok : t.Mal;
+                Guia.BeginAnimation(System.Windows.Shapes.Shape.StrokeDashOffsetProperty, null);
+                Guia.Stroke = ok ? t.Borde : t.Mal;
+                Etiqueta.Foreground = ok ? t.Suave : t.Mal;
                 texto = texto ?? "";
                 Completo = texto.Length > 3000 ? texto.Substring(0, 2997) + "…" : texto;
                 var plano = System.Text.RegularExpressions.Regex.Replace(Completo, @"\s+", " ").Trim();
                 Corto = plano.Length > 150 ? plano.Substring(0, 147) + "…" : plano;
                 Extra.Text = Completo;
-                Resumen.Foreground = ok ? t.Texto : t.Mal;
                 if (!string.IsNullOrEmpty(tiempo)) Detalle.Text = (Detalle.Text.Length > 0 ? Detalle.Text + "  ·  " : "") + tiempo;
                 Pintar();
             }
         }
 
-        // ------------------------------------------------------------------------------------------ actividad y frases
+        private static void Parpadear(UIElement el) =>
+            el.BeginAnimation(UIElement.OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(1, 0.12, TimeSpan.FromMilliseconds(450))
+            { AutoReverse = true, RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever });
 
-        /// <summary>Un reloj de arena que se da vuelta sin parar: «esto está en marcha».</summary>
-        internal static TextBlock RelojArena(double tam)
-        {
-            var giro = new RotateTransform(0);
-            var tb = new TextBlock
-            {
-                Text = "\u23F3", FontFamily = new FontFamily("Segoe UI Emoji, Segoe UI Symbol"), FontSize = tam,
-                VerticalAlignment = VerticalAlignment.Center, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = giro,
-            };
-            var anim = new System.Windows.Media.Animation.DoubleAnimationUsingKeyFrames { RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever };
-            anim.KeyFrames.Add(new System.Windows.Media.Animation.LinearDoubleKeyFrame(0, TimeSpan.FromMilliseconds(0)));
-            anim.KeyFrames.Add(new System.Windows.Media.Animation.LinearDoubleKeyFrame(0, TimeSpan.FromMilliseconds(700)));          // quieto un momento
-            anim.KeyFrames.Add(new System.Windows.Media.Animation.EasingDoubleKeyFrame(180, TimeSpan.FromMilliseconds(1100),
-                new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseInOut }));   // y se da vuelta
-            anim.KeyFrames.Add(new System.Windows.Media.Animation.LinearDoubleKeyFrame(180, TimeSpan.FromMilliseconds(1800)));
-            anim.KeyFrames.Add(new System.Windows.Media.Animation.EasingDoubleKeyFrame(360, TimeSpan.FromMilliseconds(2200),
-                new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseInOut }));
-            giro.BeginAnimation(RotateTransform.AngleProperty, anim);
-            return tb;
-        }
+        private static void Marchar(System.Windows.Shapes.Shape s) =>
+            s.BeginAnimation(System.Windows.Shapes.Shape.StrokeDashOffsetProperty, new System.Windows.Media.Animation.DoubleAnimation(0, -4, TimeSpan.FromMilliseconds(500))
+            { RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever });
+
+        // ------------------------------------------------------------------------------------------ actividad y frases
 
         private void MostrarActividad(string fase)
         {
@@ -851,12 +871,18 @@ namespace AutoCadMcpPlugin.Chat
             _fase = fase;
             _actividadTxt.Text = _fase + new string('.', _puntos);
             _actividad.Visibility = Visibility.Visible;
-            if (!_animTimer.IsEnabled) _animTimer.Start();
+            if (!_animTimer.IsEnabled)
+            {
+                _animTimer.Start();
+                _trazo.BeginAnimation(ScaleTransform.ScaleXProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(1800))
+                { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseInOut }, RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever });
+            }
         }
 
         private void OcultarActividad()
         {
             _animTimer.Stop();
+            _trazo.BeginAnimation(ScaleTransform.ScaleXProperty, null);
             _actividad.Visibility = Visibility.Collapsed;
         }
 
@@ -914,42 +940,39 @@ namespace AutoCadMcpPlugin.Chat
             return "Ejecutando " + n.Replace('_', ' ');
         }
 
-        // Una acción destructiva pide permiso con una tarjeta (no con un diálogo: los emergentes no abren dentro de una paleta).
+        // Una acción destructiva pide permiso con un recuadro (no con un diálogo: los emergentes no abren dentro de una paleta).
         private void MostrarPermiso(JsonElement ev)
         {
             var id = Texto(ev, "id");
             var nombre = Texto(ev, "nombre");
             var detalle = ev.TryGetProperty("args", out var a) ? ResumenArgs(a) : "";
             var pila = new StackPanel();
-            pila.Children.Add(new TextBlock { Text = "⚠ Pide permiso para ejecutar", Foreground = _t.Suave, FontSize = 11 });
-            pila.Children.Add(new TextBlock { Text = nombre, FontFamily = new FontFamily("Consolas"), FontWeight = FontWeights.SemiBold, Foreground = _t.Texto, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+            pila.Children.Add(Rotulo("CONFIRMAR", _t.Aviso));
+            pila.Children.Add(new TextBlock { Text = nombre, FontFamily = Mono, FontWeight = FontWeights.SemiBold, Foreground = _t.Texto, TextWrapping = TextWrapping.Wrap });
             if (detalle.Length > 0)
-                pila.Children.Add(new TextBlock { Text = detalle, FontFamily = new FontFamily("Consolas"), FontSize = 11, Foreground = _t.Suave, TextWrapping = TextWrapping.Wrap });
-            var respuesta = new TextBlock { Foreground = _t.Texto, FontSize = 12, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 4, 0, 0) };
-            var botones = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+                pila.Children.Add(new TextBlock { Text = detalle, FontFamily = Mono, FontSize = 10.5, Foreground = _t.Suave, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+            var respuesta = new TextBlock { Foreground = _t.Texto, FontFamily = Mono, FontSize = 11, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 6, 0, 0), TextWrapping = TextWrapping.Wrap };
+            var botones = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
             Button B(string texto, int decision)
             {
-                var b = new Button { Content = texto, Margin = new Thickness(0, 0, 6, 4), Padding = new Thickness(10, 4, 10, 4) };
-                if (decision == 1) { b.Background = _t.Acento; b.Foreground = _t.AcentoTexto; }
+                var b = new Button { Content = texto, FontFamily = Mono, FontSize = 10.5, Margin = new Thickness(0, 0, 6, 4), Padding = new Thickness(10, 4, 10, 4) };
+                if (decision == 1) { b.Background = _t.Aviso; b.BorderBrush = _t.Aviso; b.Foreground = _t.AcentoTexto; b.FontWeight = FontWeights.Bold; }
                 b.Click += (s, e) =>
                 {
                     botones.Visibility = Visibility.Collapsed;
-                    respuesta.Text = decision == 0 ? "✗ Rechazado" : decision == 2 ? "✓ Permitido (y no vuelvo a preguntar por esta herramienta en esta conversación)" : "✓ Permitido";
+                    respuesta.Text = decision == 0 ? "✗ RECHAZADO" : decision == 2 ? "✓ PERMITIDO · sin volver a preguntar por esta herramienta en esta conversación" : "✓ PERMITIDO";
+                    respuesta.Foreground = decision == 0 ? _t.Mal : _t.Ok;
                     respuesta.Visibility = Visibility.Visible;
                     _agente?.ResolverPermiso(id, decision);
                 };
                 return b;
             }
-            botones.Children.Add(B("Permitir", 1));
-            botones.Children.Add(B("Rechazar", 0));
-            botones.Children.Add(B("Permitir siempre esta (en esta conversación)", 2));
+            botones.Children.Add(B("PERMITIR", 1));
+            botones.Children.Add(B("RECHAZAR", 0));
+            botones.Children.Add(B("PERMITIR SIEMPRE ESTA", 2));
             pila.Children.Add(botones);
             pila.Children.Add(respuesta);
-            Agregar(new Border
-            {
-                BorderBrush = _t.Aviso, BorderThickness = new Thickness(3, 0, 0, 0), CornerRadius = new CornerRadius(8), Background = _t.AvisoFondo,
-                Padding = new Thickness(10, 7, 10, 6), Margin = new Thickness(0, 4, 14, 4), Child = pila,
-            });
+            Agregar(new Border { BorderBrush = _t.Aviso, BorderThickness = new Thickness(1), Padding = new Thickness(10, 0, 10, 6), Margin = new Thickness(0, 8, 0, 6), Child = pila });
         }
 
         // «Deshacer este pedido»: vuelve a la marca de UNDO que se puso antes de que el pedido tocara el dibujo.
@@ -957,8 +980,8 @@ namespace AutoCadMcpPlugin.Chat
 
         private void MostrarDeshacer()
         {
-            var pila = new StackPanel { Margin = new Thickness(0, 4, 14, 6) };
-            var b = new Button { Content = "↶ Deshacer este pedido", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 3, 8, 3) };
+            var pila = new StackPanel { Margin = new Thickness(0, 8, 0, 8) };
+            var b = new Button { Content = "↶  DESHACER ESTE PEDIDO", FontFamily = Mono, FontSize = 10.5, HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(10, 4, 10, 4), Style = _estiloCajetin };
             _botonesDeshacer.Add(b);
             b.Click += async (s, e) =>
             {
@@ -968,7 +991,7 @@ namespace AutoCadMcpPlugin.Chat
                 if (ok) AgregarNota("↶ " + mensaje); else { AgregarAviso(mensaje); b.IsEnabled = true; }
             };
             pila.Children.Add(b);
-            pila.Children.Add(new TextBlock { Text = "Revierte todo lo que hizo este pedido (también lo que edites a mano después).", Foreground = _t.Suave, FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 2, 0, 0) });
+            pila.Children.Add(new TextBlock { Text = "Revierte todo lo que hizo este pedido (también lo que edites a mano después).", Foreground = _t.Suave, FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0) });
             Agregar(pila);
         }
 
@@ -1016,7 +1039,7 @@ namespace AutoCadMcpPlugin.Chat
                         var nombre = Texto(ev, "nombre");
                         MostrarActividad(Frase(nombre));
                         if (EsDescubrimiento(nombre)) break;          // buscar y leer herramientas: se ve como «Buscando herramientas…», sin tarjeta
-                        var c = TarjetaTool.Crear(_t, nombre, ev.TryGetProperty("args", out var a) ? ResumenArgs(a) : "");
+                        var c = TarjetaTool.Crear(_t, nombre, ev.TryGetProperty("args", out var a) ? ResumenArgs(a) : "", SiguientePaso());
                         if (!_pendientes.TryGetValue(nombre, out var cola)) _pendientes[nombre] = cola = new Queue<TarjetaTool>();
                         cola.Enqueue(c);
                         Agregar(c.Raiz);
@@ -1088,7 +1111,7 @@ namespace AutoCadMcpPlugin.Chat
             _adjSel.IsChecked = false;
 
             _trabajando = true;
-            _enviar.Content = "Detener";
+            _enviar.Content = "DETENER";
             _estado.Text = "";
             MostrarActividad("Pensando");
             _cts = new CancellationTokenSource();
@@ -1130,7 +1153,7 @@ namespace AutoCadMcpPlugin.Chat
             {
                 _trabajando = false;
                 OcultarActividad();
-                _enviar.Content = "Enviar";
+                _enviar.Content = "ENVIAR";
                 foreach (var cola in _pendientes.Values) cola.Clear();
                 var t = _estado.Text;
                 if (t.EndsWith(" · trabajando…", StringComparison.Ordinal)) _estado.Text = t.Substring(0, t.Length - " · trabajando…".Length);
@@ -1163,7 +1186,10 @@ namespace AutoCadMcpPlugin.Chat
         {
             var nombre = _ctx.NombreDibujo;
             int n = _ctx.Seleccionados;
-            _ctxTexto.Text = "📄 " + (string.IsNullOrEmpty(nombre) ? "(sin dibujo)" : nombre) + (n > 0 ? "  ·  " + n + " seleccionado(s)" : "");
+            _ctxTexto.Inlines.Clear();
+            _ctxTexto.Inlines.Add(new System.Windows.Documents.Run(Espaciado("DIBUJO") + "  ") { Foreground = _t.Suave, FontSize = 8.5 });
+            _ctxTexto.Inlines.Add(new System.Windows.Documents.Run(string.IsNullOrEmpty(nombre) ? "(sin dibujo)" : nombre));
+            if (n > 0) _ctxTexto.Inlines.Add(new System.Windows.Documents.Run("   ·   " + n + " sel.") { Foreground = _t.Acento });
             _adjSel.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
             if (n == 0) _adjSel.IsChecked = false;
         }
