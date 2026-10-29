@@ -240,6 +240,7 @@ namespace AutoCadMcpPlugin.Chat
                         break;
                     }
 
+                    Compactar(_mensajes, MaxCharsContexto, ResultadosCompletos);
                     JsonObject resp;
                     try { resp = await proveedor.CompletarAsync(_mensajes, tools, ct).ConfigureAwait(true); }
                     catch (OperationCanceledException)
@@ -518,6 +519,74 @@ namespace AutoCadMcpPlugin.Chat
                 }
             }
             catch (Exception ex) { return ("ERROR al invocar '" + nombre + "': " + ex.Message, true); }
+        }
+
+        // ------------------------------------------------------------------------------------------ contexto largo
+
+        /// <summary>Tope de lo que se le manda al modelo, en caracteres (~4 por token: unos 60 mil tokens).</summary>
+        internal const int MaxCharsContexto = 240000;
+        /// <summary>Los resultados de herramienta más recientes que se conservan completos; los anteriores se acortan.</summary>
+        internal const int ResultadosCompletos = 8;
+        private const int RecorteResultado = 500;
+
+        /// <summary>
+        /// Que la conversación no crezca sin fin: (1) los resultados viejos de herramientas —listas de handles, catálogos— se acortan, que el
+        /// modelo ya los usó; (2) si aun así pasa del tope, se descartan los pedidos más antiguos ENTEROS (con sus herramientas y resultados, para
+        /// no dejar una llamada sin su respuesta), dejando siempre el último. Lo que se ve en pantalla no cambia. Devuelve cuántos mensajes tocó.
+        /// </summary>
+        internal static int Compactar(JsonArray mensajes, int maxChars, int completos)
+        {
+            int tocados = 0;
+            var herramientas = new List<int>();
+            for (int i = 0; i < mensajes.Count; i++)
+                if (mensajes[i]?["role"]?.ToString() == "tool") herramientas.Add(i);
+            for (int k = 0; k < herramientas.Count - completos; k++)
+            {
+                var m = (JsonObject)mensajes[herramientas[k]];
+                var c = m["content"]?.ToString() ?? "";
+                if (c.Length > RecorteResultado + 80)
+                {
+                    m["content"] = c.Substring(0, RecorteResultado) + "\n[… resultado recortado: " + (c.Length - RecorteResultado) + " caracteres más]";
+                    tocados++;
+                }
+            }
+
+            if (Tamano(mensajes) > maxChars)
+            {
+                bool quitado = false;
+                while (Tamano(mensajes) > maxChars)
+                {
+                    int inicio = -1;
+                    for (int i = 0; i < mensajes.Count; i++)
+                        if (mensajes[i]?["role"]?.ToString() == "user") { inicio = i; break; }
+                    if (inicio < 0) break;
+                    int siguiente = -1;
+                    for (int i = inicio + 1; i < mensajes.Count; i++)
+                        if (mensajes[i]?["role"]?.ToString() == "user") { siguiente = i; break; }
+                    if (siguiente < 0) break;                       // es el último pedido: no se toca
+                    for (int i = siguiente - 1; i >= inicio; i--) { mensajes.RemoveAt(i); tocados++; }
+                    quitado = true;
+                }
+                if (quitado && mensajes.Count > 0 && mensajes[0]?["role"]?.ToString() == "system")
+                {
+                    var s = mensajes[0]["content"]?.ToString() ?? "";
+                    const string nota = "\n\n(Nota: para ahorrar memoria se omitió el principio de esta conversación; lo que importa de él quedó en el dibujo.)";
+                    if (!s.Contains(nota)) mensajes[0]["content"] = s + nota;
+                }
+            }
+            return tocados;
+        }
+
+        private static int Tamano(JsonArray mensajes)
+        {
+            int n = 0;
+            foreach (var m in mensajes)
+            {
+                n += m?["content"] is JsonValue v ? (v.ToString() ?? "").Length : 0;
+                if (m?["tool_calls"] is JsonArray ll)
+                    foreach (var c in ll) n += (c?["function"]?["arguments"]?.ToString() ?? "").Length + 40;
+            }
+            return n;
         }
 
         private static double? Costo(UsoTokens uso, JsonObject precio)

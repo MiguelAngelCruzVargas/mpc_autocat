@@ -272,6 +272,41 @@ namespace AgenteTests
                 Environment.SetEnvironmentVariable("AUTOCAD_IA_ESTADO", null);
             }
 
+            Console.WriteLine("test_contexto_largo");
+            {
+                JsonArray Armar(int pedidos, int tamResultado)
+                {
+                    var a = new JsonArray { new JsonObject { ["role"] = "system", ["content"] = "SISTEMA" } };
+                    for (int i = 0; i < pedidos; i++)
+                    {
+                        a.Add(new JsonObject { ["role"] = "user", ["content"] = "pedido " + i });
+                        a.Add(ModeloGuion.Llama("list_entities", "{}"));
+                        ((JsonObject)a[a.Count - 1])["tool_calls"][0]["id"] = "t" + i;
+                        a.Add(new JsonObject { ["role"] = "tool", ["tool_call_id"] = "t" + i, ["name"] = "list_entities", ["content"] = new string('x', tamResultado) });
+                        a.Add(new JsonObject { ["role"] = "assistant", ["content"] = "listo " + i });
+                    }
+                    return a;
+                }
+                var v = Armar(12, 5000);
+                var tocados = AgenteNativo.Compactar(v, 1000000, 8);
+                var largos = v.Where(m => m["role"].ToString() == "tool").Select(m => m["content"].ToString().Length).ToList();
+                Check("los resultados viejos se acortan", largos.Take(4).All(l => l < 700), string.Join(",", largos));
+                Check("y los 8 más recientes se conservan completos", largos.Skip(4).All(l => l == 5000));
+                Check("un resultado recortado lo dice", v.First(m => m["role"].ToString() == "tool")["content"].ToString().Contains("recortado"));
+
+                var w = Armar(20, 20000);
+                AgenteNativo.Compactar(w, 100000, 8);
+                var total = w.Sum(m => (m["content"] is JsonValue c ? c.ToString().Length : 0));
+                Check("si sigue pasando del tope, se descartan los pedidos más viejos", total <= 100000 + 2000 && w.Count < 81, total + " / " + w.Count);
+                Check("siempre se conserva el último pedido", w.Last()["content"].ToString() == "listo 19" && w.Any(m => m["content"]?.ToString() == "pedido 19"));
+                Check("el sistema sigue primero y avisa que se omitió el principio", w[0]["role"].ToString() == "system" && w[0]["content"].ToString().Contains("se omitió el principio"));
+                Check("no queda un resultado de herramienta sin su llamada", w.Skip(1).First()["role"].ToString() == "user");
+                var llamadas = new HashSet<string>(w.Where(m => m["tool_calls"] != null).SelectMany(m => ((JsonArray)m["tool_calls"]).Select(c => c["id"].ToString())));
+                Check("cada resultado conservado tiene su llamada", w.Where(m => m["role"].ToString() == "tool").All(m => llamadas.Contains(m["tool_call_id"].ToString())));
+                var chica = Armar(3, 100);
+                Check("una conversación corta no se toca", AgenteNativo.Compactar(chica, 100000, 8) == 0);
+            }
+
             Console.WriteLine("test_texto_basura");
             {
                 var cliG = new ChatCliente(url);
