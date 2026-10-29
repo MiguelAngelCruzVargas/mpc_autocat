@@ -224,7 +224,7 @@ namespace AutoCadMcpPlugin.Chat
                         var real = ex.Tool ?? "";
                         if (meta && nombres.Contains(real))
                         {
-                            Emitir("nota", Obj("texto", "El modelo llamó '" + real + "' directo; se le indica que use ejecutar_herramienta."));
+                            Emitir("nota", Tecnica("El modelo llamó '" + real + "' directo; se le indica que use ejecutar_herramienta."));
                             _mensajes.Add(new JsonObject
                             {
                                 ["role"] = "user",
@@ -297,7 +297,7 @@ namespace AutoCadMcpPlugin.Chat
                         {
                             silencios++;
                             _mensajes.RemoveAt(_mensajes.Count - 1);
-                            Emitir("nota", Obj("texto", "El modelo se detuvo sin decir nada; se le pide que siga o que resuma."));
+                            Emitir("nota", Tecnica("El modelo se detuvo sin decir nada; se le pide que siga o que resuma."));
                             _mensajes.Add(new JsonObject
                             {
                                 ["role"] = "user",
@@ -420,6 +420,9 @@ namespace AutoCadMcpPlugin.Chat
             return new ProveedorOpenAI(url, clave, modelo, p.Temperatura);
         }
 
+        // Los avisos técnicos del agente (cómo descubre las herramientas, reintentos) no se muestran: ensucian la conversación.
+        private static JsonObject Tecnica(string texto) => new JsonObject { ["texto"] = texto, ["tecnica"] = true };
+
         private void PasarABajoDemanda(string sistemaMeta, string nota, Action<string, JsonObject> emitir)
         {
             if (_mensajes.Count > 0 && _mensajes[0]?["role"]?.ToString() == "system")
@@ -428,7 +431,7 @@ namespace AutoCadMcpPlugin.Chat
                 if (sistemaMeta.Length > 0 && !actual.Contains(sistemaMeta)) _mensajes[0]["content"] = actual + "\n\n" + sistemaMeta;
             }
             else _mensajes.Insert(0, new JsonObject { ["role"] = "system", ["content"] = sistemaMeta });
-            if (!string.IsNullOrEmpty(nota)) emitir("nota", Obj("texto", nota));
+            if (!string.IsNullOrEmpty(nota)) emitir("nota", Tecnica(nota));
         }
 
         private sealed class Llamada { public string Id, Nombre; public JsonObject Args; }
