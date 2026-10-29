@@ -695,7 +695,7 @@ namespace AutoCadMcpPlugin.Chat
                 _listaPermisos.Children.Add(Fila(titulo, detalle, _modoPermisos == ident, async () =>
                 {
                     _modoPermisos = ident; RefrescarPermisos();
-                    if (_cli != null) try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { modoPermisos = ident } }).ConfigureAwait(true)) { } } catch { }
+                    Preferencias.Guardar("modoPermisos", ident);
                 }));
             }
         }
@@ -703,7 +703,7 @@ namespace AutoCadMcpPlugin.Chat
         private async Task GuardarTopeAsync()
         {
             if (!double.TryParse(_tope.Text.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) || v < 0) { v = 0; _tope.Text = "0"; }
-            if (_cli != null) try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { topeUSD = v } }).ConfigureAwait(true)) { } } catch { }
+            Preferencias.Guardar("topeUSD", v);
         }
 
         private double TopeActual() =>
@@ -829,7 +829,7 @@ namespace AutoCadMcpPlugin.Chat
                 _listaPerfiles.Children.Add(Fila(char.ToUpperInvariant(item.id[0]) + item.id.Substring(1), item.tools + " herramientas" + (item.id == "todo" ? " (todas a la vez: caro en tokens y Groq/OpenAI aceptan máximo 128)" : item.id == "descubrir" ? " (todas, bajo demanda: el agente busca y usa las que necesita; la recomendada)" : item.id == "basico" ? " (dibujo simple)" : ""), item.id == _perfil, async () =>
                 {
                     _perfil = item.id; RefrescarPerfiles(); ActualizarChip();
-                    try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { perfil = _perfil } }).ConfigureAwait(true)) { } } catch { }
+                    Preferencias.Guardar("perfil", _perfil);
                 }));
             }
             _ = MostrarToolsPerfilAsync();
@@ -956,8 +956,7 @@ namespace AutoCadMcpPlugin.Chat
             ActualizarChip(); RefrescarProveedores(); ActualizarModoEntrada(); ActualizarLimites();
             if (guardar)
             {
-                try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { proveedor = p.Id } }).ConfigureAwait(true)) { } }
-                catch { /* la preferencia es una comodidad */ }
+                Preferencias.Guardar("proveedor", p.Id);          // una comodidad: si no se puede guardar, no pasa nada
             }
         }
 
@@ -968,8 +967,7 @@ namespace AutoCadMcpPlugin.Chat
             if (m == (_modelos.TryGetValue(_prov.Id, out var antes) ? antes : "")) return;
             _modelos[_prov.Id] = m;
             ActualizarChip(); ActualizarLimites();
-            try { using (await _cli.PostAsync("/api/preferencias", new { preferencias = new { modelos = _modelos } }).ConfigureAwait(true)) { } }
-            catch { }
+            Preferencias.Guardar("modelos", _modelos);
         }
 
         private async Task GuardarClaveAsync(bool borrar)
@@ -977,12 +975,11 @@ namespace AutoCadMcpPlugin.Chat
             if (_prov == null || _prov.Vivo || _cli == null) return;
             try
             {
-                if (borrar)
-                    using (await _cli.PostAsync("/api/clave", new { proveedor = _prov.Id, borrar = true }).ConfigureAwait(true)) { }
+                if (borrar) Credenciales.Borrar(_prov.Id);
                 else
                 {
                     if (_clave.Password.Trim().Length == 0) return;
-                    using (await _cli.PostAsync("/api/clave", new { proveedor = _prov.Id, clave = _clave.Password.Trim() }).ConfigureAwait(true)) { }
+                    Credenciales.Guardar(_prov.Id, _clave.Password.Trim());
                 }
                 _clave.Password = "";
                 var id = _prov.Id;

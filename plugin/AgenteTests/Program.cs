@@ -90,6 +90,32 @@ namespace AgenteTests
             Check("lo que el proveedor publica manda sobre el nombre", Capacidades.Evaluar("openrouter", "vendor/raro-1", true).Imagenes);
             Check("groq avisa su tope de 128 herramientas (aviso bajo)", c120.Avisos.Any(a => a.Nivel == "bajo" && a.Etiqueta.Contains("128")));
 
+            Console.WriteLine("test_claves_y_preferencias_en_csharp");
+            {
+                var raizTmp = Path.Combine(Path.GetTempPath(), "cred_tests_" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                var dirCred = Path.Combine(raizTmp, "AutoCadMcp");
+                Environment.SetEnvironmentVariable("AUTOCAD_IA_CREDENCIALES", dirCred);
+                var modo = Credenciales.Guardar("groq", "gsk_clave_de_prueba_123");
+                Check("guarda la clave cifrada con DPAPI", modo == "dpapi", modo);
+                Check("el archivo no contiene la clave en claro", !File.ReadAllText(Path.Combine(dirCred, "credenciales.json")).Contains("gsk_clave_de_prueba_123"));
+                Check("se lee de vuelta", Credenciales.Obtener("groq", null) == "gsk_clave_de_prueba_123");
+                var py = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("python",
+                    "-c \"import sys; sys.path.insert(0, r'" + Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..")) + "'); from agent import credenciales as c; print(c.obtener('groq'))\"")
+                { RedirectStandardOutput = true, UseShellExecute = false, EnvironmentVariables = { ["LOCALAPPDATA"] = raizTmp } });
+                var salidaPy = py.StandardOutput.ReadToEnd().Trim(); py.WaitForExit();
+                Check("Python lee lo que escribio C# (mismo formato)", salidaPy == "gsk_clave_de_prueba_123", salidaPy);
+                Check("borrar la quita", Credenciales.Borrar("groq") && Credenciales.Obtener("groq", null) == null && !Credenciales.Borrar("groq"));
+                Preferencias.Guardar("perfil", "descubrir");
+                Preferencias.Guardar("topeUSD", 0.5);
+                Preferencias.Guardar("modelos", new Dictionary<string, string> { ["groq"] = "openai/gpt-oss-120b" });
+                Preferencias.Guardar("loQueSea", "x");
+                var pr = Preferencias.Leer();
+                Check("guarda preferencias y las lee", pr["perfil"].ToString() == "descubrir" && (double)pr["topeUSD"] == 0.5 && pr["modelos"]["groq"].ToString() == "openai/gpt-oss-120b");
+                Check("lo que no esta en la lista blanca no se guarda", !pr.ContainsKey("loQueSea"));
+                Environment.SetEnvironmentVariable("AUTOCAD_IA_CREDENCIALES", null);
+                try { Directory.Delete(raizTmp, true); } catch { }
+            }
+
             Console.WriteLine("test_traduccion_a_anthropic");
             var conv = new JsonArray
             {

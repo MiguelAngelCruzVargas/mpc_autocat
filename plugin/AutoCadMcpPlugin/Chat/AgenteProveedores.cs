@@ -563,8 +563,77 @@ namespace AutoCadMcpPlugin.Chat
         [DllImport("kernel32.dll")]
         private static extern IntPtr LocalFree(IntPtr memoria);
 
-        private static string Archivo =>
-            Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Path.GetTempPath(), "AutoCadMcp", "credenciales.json");
+        [DllImport("crypt32.dll", SetLastError = true)]
+        private static extern bool CryptProtectData(ref DataBlob entrada, IntPtr descripcion, IntPtr entropia, IntPtr reservado,
+            IntPtr prompt, int flags, ref DataBlob salida);
+
+        /// <summary>La carpeta donde viven claves y preferencias (la misma que usa Python). AUTOCAD_IA_CREDENCIALES la desvía en las pruebas.</summary>
+        internal static string Directorio
+        {
+            get
+            {
+                var desvio = Environment.GetEnvironmentVariable("AUTOCAD_IA_CREDENCIALES");
+                if (!string.IsNullOrEmpty(desvio)) return desvio;
+                return Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Path.GetTempPath(), "AutoCadMcp");
+            }
+        }
+
+        private static string Archivo => Path.Combine(Directorio, "credenciales.json");
+
+        /// <summary>Guarda la clave de un proveedor cifrada con DPAPI (atada a este usuario de Windows), en el mismo formato que Python.</summary>
+        public static string Guardar(string proveedor, string clave)
+        {
+            if (string.IsNullOrWhiteSpace(proveedor)) throw new ArgumentException("Falta el proveedor.");
+            if (string.IsNullOrWhiteSpace(clave)) throw new ArgumentException("La clave está vacía.");
+            var cifrado = Cifrar(Encoding.UTF8.GetBytes(clave.Trim()));
+            var entrada = cifrado != null
+                ? new JsonObject { ["modo"] = "dpapi", ["valor"] = Convert.ToBase64String(cifrado) }
+                : new JsonObject { ["modo"] = "plano", ["valor"] = clave.Trim() };
+            var raiz = LeerTodo();
+            raiz[proveedor] = entrada;
+            EscribirTodo(raiz);
+            return entrada["modo"].ToString();
+        }
+
+        public static bool Borrar(string proveedor)
+        {
+            var raiz = LeerTodo();
+            if (!raiz.ContainsKey(proveedor)) return false;
+            raiz.Remove(proveedor);
+            EscribirTodo(raiz);
+            return true;
+        }
+
+        private static JsonObject LeerTodo()
+        {
+            try { return File.Exists(Archivo) ? (JsonNode.Parse(File.ReadAllText(Archivo, Encoding.UTF8)) as JsonObject ?? new JsonObject()) : new JsonObject(); }
+            catch (Exception) { return new JsonObject(); }
+        }
+
+        private static void EscribirTodo(JsonObject raiz)
+        {
+            Directory.CreateDirectory(Directorio);
+            File.WriteAllText(Archivo, raiz.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
+        }
+
+        private static byte[] Cifrar(byte[] datos)
+        {
+            var entrada = new DataBlob { cbData = datos.Length, pbData = Marshal.AllocHGlobal(datos.Length) };
+            var salida = new DataBlob();
+            try
+            {
+                Marshal.Copy(datos, 0, entrada.pbData, datos.Length);
+                if (!CryptProtectData(ref entrada, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, ref salida)) return null;
+                var bytes = new byte[salida.cbData];
+                Marshal.Copy(salida.pbData, bytes, 0, salida.cbData);
+                return bytes;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(entrada.pbData);
+                if (salida.pbData != IntPtr.Zero) LocalFree(salida.pbData);
+            }
+        }
 
         public static string Obtener(string proveedor, string variableEntorno)
         {
