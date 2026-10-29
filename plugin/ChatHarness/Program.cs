@@ -60,6 +60,7 @@ namespace ChatHarness
                     var perfil = Arg(args, "--perfil");
                     if (perfil != null) panel.ElegirPerfil(perfil);
                     if (args.Contains("--ajustes")) panel.AbrirAjustes();
+                    if (args.Contains("--modelo-pantalla")) panel.AbrirModeloPantalla();
                     if (args.Contains("--historial")) panel.AbrirHistorialPantalla();
                     if (args.Contains("--limites")) { await Task.Delay(1500); panel.AbrirLimitesPantalla(); }
                     if (args.Contains("--abajo")) { await Task.Delay(400); panel.BajarAjustes(); await Task.Delay(300); }

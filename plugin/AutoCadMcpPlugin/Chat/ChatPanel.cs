@@ -137,6 +137,7 @@ namespace AutoCadMcpPlugin.Chat
         internal bool AdjuntarSeleccion { set { _adjSel.IsChecked = value; } }
         internal void AbrirHistorialPantalla() => AbrirHistorial();
         internal void AbrirLimitesPantalla() { _limDetalle.Visibility = Visibility.Visible; }
+        internal void AbrirModeloPantalla() => AbrirAjustes(true);
         internal void BajarAjustes() { if (_ajustes.Children.Count > 0 && _ajustes.Children[0] is ScrollViewer sv) { sv.UpdateLayout(); sv.ScrollToEnd(); } }
         internal Task EnviarTextoAsync(string texto) { _entrada.Text = texto; return EnviarAsync(); }
         internal Task ElegirProveedorPorIdAsync(string id)
@@ -166,10 +167,10 @@ namespace AutoCadMcpPlugin.Chat
             _historialBtn.Click += (s, e) => { if (_historial.Visibility == Visibility.Visible) _historial.Visibility = Visibility.Collapsed; else AbrirHistorial(); };
             Grid.SetColumn(_historialBtn, 1);
             _provBtn.HorizontalContentAlignment = HorizontalAlignment.Stretch; _provBtn.Padding = new Thickness(9, 5, 9, 6);
-            _provBtn.Click += (s, e) => AbrirAjustes();
+            _provBtn.Click += (s, e) => { if (_ajustes.Visibility == Visibility.Visible && _ajustesSoloModelo) _ajustes.Visibility = Visibility.Collapsed; else AbrirAjustes(true); };
             ActualizarChip();
             _ajustesBtn.Content = Icono("\uE713"); _ajustesBtn.ToolTip = "Configuración"; _ajustesBtn.Margin = new Thickness(6, 0, 0, 0); _ajustesBtn.Width = 38;
-            _ajustesBtn.Click += (s, e) => { if (_ajustes.Visibility == Visibility.Visible) _ajustes.Visibility = Visibility.Collapsed; else AbrirAjustes(); };
+            _ajustesBtn.Click += (s, e) => { if (_ajustes.Visibility == Visibility.Visible && !_ajustesSoloModelo) _ajustes.Visibility = Visibility.Collapsed; else AbrirAjustes(false); };
             Grid.SetColumn(_ajustesBtn, 2);
             _nuevaBtn.Content = Icono("\uE710"); _nuevaBtn.ToolTip = "Conversación nueva"; _nuevaBtn.Margin = new Thickness(6, 0, 0, 0); _nuevaBtn.Width = 38;
             _nuevaBtn.Click += async (s, e) => await NuevaAsync().ConfigureAwait(true);
@@ -325,7 +326,7 @@ namespace AutoCadMcpPlugin.Chat
             var flecha = Icono("\uE70D", 9); flecha.Foreground = _t.Suave; flecha.Margin = new Thickness(8, 0, 0, 0); Grid.SetColumn(flecha, 2); Grid.SetRowSpan(flecha, 2);
             g.Children.Add(l0); g.Children.Add(v0); g.Children.Add(l1); g.Children.Add(v1); g.Children.Add(flecha);
             _provBtn.Content = g;
-            _provBtn.ToolTip = "Clic para cambiar de IA, de modelo, de especialidad o la clave";
+            _provBtn.ToolTip = "Clic para cambiar de IA, de modelo o la clave";
         }
 
         // ---- límites del modelo: «este modelo está limitado: no ve imágenes…» ----
@@ -409,18 +410,32 @@ namespace AutoCadMcpPlugin.Chat
         {
             bool vivo = _prov != null && _prov.Vivo;
             _seccionApi.Visibility = vivo ? Visibility.Collapsed : Visibility.Visible;
+            _seccionOpc.Visibility = vivo ? Visibility.Collapsed : Visibility.Visible;
             _vivoAviso.Visibility = vivo ? Visibility.Visible : Visibility.Collapsed;
             _entradaFila.Visibility = (!vivo || _notaAbierta) ? Visibility.Visible : Visibility.Collapsed;
             _notaBtn.Content = _notaAbierta ? "Ocultar la nota" : "Dejarle una nota";
             _adjSel.IsEnabled = !vivo;
         }
 
-        internal void AbrirAjustes()
+        // Dos pantallas con el mismo cuerpo: «Modelo» (IA, modelo y clave: lo que abre el cajetín de arriba) y
+        // «Configuración» (especialidad, permisos, tope, temperatura y licencia: lo que abre la tuerca).
+        private readonly StackPanel _gModelo = new StackPanel(), _gAjustes = new StackPanel(), _seccionOpc = new StackPanel();
+        private readonly TextBlock _ajustesTitulo = new TextBlock();
+        private Button _webBtn;
+        private bool _ajustesSoloModelo;
+
+        internal void AbrirAjustes(bool soloModelo = false)
         {
+            _ajustesSoloModelo = soloModelo;
+            _gModelo.Visibility = soloModelo ? Visibility.Visible : Visibility.Collapsed;
+            _gAjustes.Visibility = soloModelo ? Visibility.Collapsed : Visibility.Visible;
+            if (_webBtn != null) _webBtn.Visibility = soloModelo ? Visibility.Collapsed : Visibility.Visible;
+            _ajustesTitulo.Text = soloModelo ? "Modelo" : "Configuración";
             RefrescarProveedores();
             RefrescarPerfiles();
             _listaModelos.Children.Clear();
             _ajustes.Visibility = Visibility.Visible;
+            if (_ajustes.Children.Count > 0 && _ajustes.Children[0] is ScrollViewer sv) sv.ScrollToTop();
         }
 
         private void ConstruirAjustes()
@@ -433,7 +448,8 @@ namespace AutoCadMcpPlugin.Chat
             var titulo = new Grid();
             titulo.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             titulo.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            titulo.Children.Add(new TextBlock { Text = "Configuración", FontWeight = FontWeights.SemiBold, FontSize = 15, Foreground = _t.Texto, VerticalAlignment = VerticalAlignment.Center });
+            _ajustesTitulo.Text = "Configuración"; _ajustesTitulo.FontWeight = FontWeights.SemiBold; _ajustesTitulo.FontSize = 15; _ajustesTitulo.Foreground = _t.Texto; _ajustesTitulo.VerticalAlignment = VerticalAlignment.Center;
+            titulo.Children.Add(_ajustesTitulo);
             var cerrar = new Button { Content = Icono("\uE711", 12), Width = 30, ToolTip = "Cerrar" };
             cerrar.Click += (s, e) => _ajustes.Visibility = Visibility.Collapsed;
             Grid.SetColumn(cerrar, 1); titulo.Children.Add(cerrar);
@@ -452,11 +468,11 @@ namespace AutoCadMcpPlugin.Chat
             prueba.Click += async (s, e) => await LicenciaAsync("/api/licencia/prueba", new { }).ConfigureAwait(true);
             licBotones.Children.Add(activar); licBotones.Children.Add(prueba);
             _licSeccion.Children.Add(licBotones);
-            p.Children.Add(_licSeccion);
+            _gAjustes.Children.Add(_licSeccion);
 
-            p.Children.Add(Etiqueta("IA", "Con qué IA quieres trabajar"));
-            p.Children.Add(_listaProv);
-            p.Children.Add(new TextBlock
+            _gModelo.Children.Add(Etiqueta("IA", "Con qué IA quieres trabajar"));
+            _gModelo.Children.Add(_listaProv);
+            _gModelo.Children.Add(new TextBlock
             {
                 Text = "Con una IA de API (Groq, Anthropic, OpenRouter…) el chat de este panel es el agente. Con «En vivo» (Claude Code, Codex, OpenCode…) " +
                        "el agente trabaja en su propio programa y aquí solo ves sus resultados.",
@@ -489,8 +505,8 @@ namespace AutoCadMcpPlugin.Chat
             botones.Children.Add(guardar); botones.Children.Add(borrar);
             _seccionApi.Children.Add(botones);
 
-            _seccionApi.Children.Add(Etiqueta("Especialidad", "Qué herramientas ve el modelo"));
-            _seccionApi.Children.Add(_listaPerfiles);
+            _seccionOpc.Children.Add(Etiqueta("Especialidad", "Qué herramientas ve el modelo"));
+            _seccionOpc.Children.Add(_listaPerfiles);
             _verTools = new TextBlock { Text = "Ver la lista de herramientas", Foreground = _t.Acento, FontSize = 11, Cursor = Cursors.Hand, Margin = new Thickness(0, 6, 0, 0), TextDecorations = TextDecorations.Underline };
             _verTools.MouseLeftButtonUp += (s, e) =>
             {
@@ -498,30 +514,34 @@ namespace AutoCadMcpPlugin.Chat
                 _perfilTools.Visibility = abrir ? Visibility.Visible : Visibility.Collapsed;
                 _verTools.Text = abrir ? "Ocultar la lista" : "Ver la lista de herramientas";
             };
-            _seccionApi.Children.Add(_verTools);
-            _seccionApi.Children.Add(_perfilTools);
+            _seccionOpc.Children.Add(_verTools);
+            _seccionOpc.Children.Add(_perfilTools);
 
             _reglas.Content = "Reglas de dibujo del proyecto (gasta más tokens)"; _reglas.IsChecked = true; _reglas.Foreground = _t.Texto;
             _reglas.Margin = new Thickness(0, 10, 0, 0);
-            _seccionApi.Children.Add(_reglas);
+            _seccionOpc.Children.Add(_reglas);
 
-            _seccionApi.Children.Add(Etiqueta("Permisos", "Cuándo pregunta antes de modificar el dibujo"));
-            _seccionApi.Children.Add(_listaPermisos);
-            _seccionApi.Children.Add(Etiqueta("Tope de gasto", "Dólares por pedido; si lo pasa, el agente se detiene"));
+            _seccionOpc.Children.Add(Etiqueta("Permisos", "Cuándo pregunta antes de modificar el dibujo"));
+            _seccionOpc.Children.Add(_listaPermisos);
+            _seccionOpc.Children.Add(Etiqueta("Tope de gasto", "Dólares por pedido; si lo pasa, el agente se detiene"));
             EstilizarTexto(_tope); _tope.Width = 90; _tope.HorizontalAlignment = HorizontalAlignment.Left; _tope.Text = "0";
             _tope.ToolTip = "0 = sin tope. Si un pedido pasa de esta cantidad, el agente se detiene al terminar la vuelta en curso.";
             _tope.LostFocus += async (s, e) => await GuardarTopeAsync().ConfigureAwait(true);
-            _seccionApi.Children.Add(_tope);
-            _seccionApi.Children.Add(new TextBlock { Text = "0 = sin tope. Lo dibujado se queda; el agente solo deja de seguir.", Foreground = _t.Suave, FontSize = 11, Margin = new Thickness(0, 3, 0, 0), TextWrapping = TextWrapping.Wrap });
+            _seccionOpc.Children.Add(_tope);
+            _seccionOpc.Children.Add(new TextBlock { Text = "0 = sin tope. Lo dibujado se queda; el agente solo deja de seguir.", Foreground = _t.Suave, FontSize = 11, Margin = new Thickness(0, 3, 0, 0), TextWrapping = TextWrapping.Wrap });
             RefrescarPermisos();
 
-            _seccionApi.Children.Add(Etiqueta("Temperatura"));
+            _seccionOpc.Children.Add(Etiqueta("Temperatura"));
             _temp.Minimum = 0; _temp.Maximum = 1; _temp.Value = 0.2; _temp.TickFrequency = 0.1; _temp.IsSnapToTickEnabled = true;
-            _seccionApi.Children.Add(_temp);
-            p.Children.Add(_seccionApi);
+            _seccionOpc.Children.Add(_temp);
+            _gModelo.Children.Add(_seccionApi);
+            _gAjustes.Children.Add(_seccionOpc);
+            p.Children.Add(_gModelo);
+            p.Children.Add(_gAjustes);
 
             var web = new Button { Content = "Abrir todas las opciones en el navegador", Margin = new Thickness(0, 14, 0, 0) };
             web.Click += (s, e) => { if (_cli != null) try { Process.Start(new ProcessStartInfo(_cli.Base + "/") { UseShellExecute = true }); } catch { } };
+            _webBtn = web;
             p.Children.Add(web);
             var listo = new Button { Content = "Listo", Margin = new Thickness(0, 8, 0, 0), Background = _t.Acento, Foreground = _t.AcentoTexto, Padding = new Thickness(8, 6, 8, 6) };
             listo.Click += (s, e) => _ajustes.Visibility = Visibility.Collapsed;
