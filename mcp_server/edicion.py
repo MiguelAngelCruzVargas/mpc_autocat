@@ -20,6 +20,7 @@ import time
 from typing import Any, Optional
 
 import autocad_client as acad
+import comandos
 import session
 
 _HANDLE = re.compile(r"^[0-9A-Fa-f]{1,16}$")
@@ -252,3 +253,13 @@ def deshacer(operaciones: int) -> dict[str, Any]:
         out["warning"] = ("No se pudo confirmar que la operación nativa se haya revertido tras "
                           f"{_MAX_PASOS_NATIVA} pasos: revisá el dibujo (list_entities / query_entities).")
     return out
+
+
+def comando(tokens: list[Any], wait_s: float = _ESPERA_S) -> dict[str, Any]:
+    """Cualquier comando de AutoCAD (menos la lista negra de comandos.py): lo valida y lo manda
+    como los tokens de Editor.Command."""
+    try:
+        limpios = comandos.validar(tokens)
+    except comandos.ComandoError as exc:
+        raise EdicionError(str(exc)) from exc
+    return _ejecutar({"op": "command", "tokens": limpios}, wait_s)

@@ -83,7 +83,7 @@ namespace AutoCadMcpPlugin.Commands
                 throw new ArgumentException("Falta 'op' (trim, extend, fillet, join u overkill).");
             op = op.ToLowerInvariant();
 
-            GuardarEstado(doc);
+            GuardarEstado(doc, op != "command");
             var db = doc.Database;
 
             var job = new Job { Op = op, DocName = doc.Name, SeedBefore = db.Handseed.Value };
@@ -95,9 +95,10 @@ namespace AutoCadMcpPlugin.Commands
                 case "chamfer": PrepararChamfer(doc, pars, job); break;
                 case "radius_constraint": PrepararRadioRestringido(doc, pars, job); break;
                 case "join": PrepararJoin(doc, pars, job); break;
+                case "command": PrepararComando(doc, pars, job); break;
                 case "overkill": PrepararOverkill(doc, pars, job); break;
                 default:
-                    throw new ArgumentException("Operación '" + op + "' desconocida; válidas: trim, extend, fillet, chamfer, radius_constraint, join, overkill.");
+                    throw new ArgumentException("Operación '" + op + "' desconocida; válidas: trim, extend, fillet, chamfer, radius_constraint, join, overkill, command.");
             }
             SnapshotAntes(doc, job);
 
@@ -161,7 +162,7 @@ namespace AutoCadMcpPlugin.Commands
 
         /// <summary>Se rechaza en milisegundos, con el motivo, en vez de
         /// mezclar la operación con lo que la persona está haciendo.</summary>
-        private static void GuardarEstado(Document doc)
+        private static void GuardarEstado(Document doc, bool exigirPlanta = true)
         {
             if (!doc.Editor.IsQuiescent)
                 throw new InvalidOperationException(
@@ -172,6 +173,8 @@ namespace AutoCadMcpPlugin.Commands
             if (!string.IsNullOrEmpty(SysVar("REFEDITNAME")))
                 throw new InvalidOperationException("Hay una referencia en edición en sitio (REFEDIT): cerrá la edición antes.");
             // Las selecciones por punto suponen una vista en planta del espacio activo.
+            // (Un comando libre no: puede ser justo de 3D o de vista.)
+            if (!exigirPlanta) return;
             using (var v = doc.Editor.GetCurrentView())
             {
                 if (!v.ViewDirection.IsParallelTo(Vector3d.ZAxis) || Math.Abs(v.ViewTwist) > 1e-9)
@@ -412,6 +415,114 @@ namespace AutoCadMcpPlugin.Commands
             };
         }
 
+        // ------------------------------------------------------------ comando libre (run_command)
+
+        /// <summary>
+        /// Comandos que NO se ejecutan por esta vía: cargan o ejecutan código ajeno, abren otros programas, cambian la
+        /// seguridad o cierran AutoCAD. Debe ser IGUAL a comandos.DENEGADOS de Python (test_comandos.py lo comprueba).
+        /// </summary>
+        internal static readonly string[] ComandosDenegados =
+        {
+            "NETLOAD", "APPLOAD", "ARX", "LISP", "VLISP", "VLIDE", "VLLOAD", "VLRUN",
+            "VBARUN", "VBAIDE", "VBALOAD", "VBAMAN", "VBAUNLOAD", "VBASTMT",
+            "SCRIPT", "RSCRIPT", "RESUME", "ACTRUN",
+            "SHELL", "SH", "START", "STARTAPP", "BROWSER",
+            "CUI", "CUILOAD", "CUIUNLOAD", "CUIEXPORT", "CUIIMPORT", "MENU", "MENULOAD", "MENUUNLOAD",
+            "CUSTOMIZE", "ALIASEDIT", "OPTIONS", "SECURITYOPTIONS",
+            "QUIT", "EXIT", "CLOSEALL",
+        };
+
+        private static string BaseComando(string token)
+        {
+            string t = (token ?? "").Trim().TrimStart('_', '.', '\'', '*').TrimStart('-');
+            return t.ToUpperInvariant();
+        }
+
+        /// <summary>Por qué no se ejecuta, o null si se puede.</summary>
+        internal static string MotivoDenegado(IList<string> textos)
+        {
+            if (textos == null || textos.Count == 0 || string.IsNullOrWhiteSpace(textos[0]))
+                return "Falta el comando: el primer token es su nombre.";
+            string nombre = BaseComando(textos[0]);
+            if (Array.IndexOf(ComandosDenegados, nombre) >= 0)
+                return "'" + nombre + "' no se ejecuta por aquí: carga código, abre otro programa, cambia la seguridad o cierra AutoCAD.";
+            if (SystemVariableCommands.Protegidas.Contains(nombre))
+                return "'" + nombre + "' es una variable de seguridad o de carga automática: la cambia una persona.";
+            if (nombre == "SETVAR" && textos.Count > 1 && SystemVariableCommands.Protegidas.Contains(BaseComando(textos[1])))
+                return "'" + BaseComando(textos[1]) + "' es una variable de seguridad o de carga automática: la cambia una persona.";
+            foreach (var t in textos)
+            {
+                string s = (t ?? "").TrimStart();
+                if (s.StartsWith("(") || s.StartsWith("!"))
+                    return "Un token que empieza con '(' o '!' lo evalúa AutoCAD como LISP: no se permite.";
+            }
+            return null;
+        }
+
+        /// <summary>params: tokens = ["LINE", "0,0", "5,0", null]  (texto, número o null = Enter).</summary>
+        private static void PrepararComando(Document doc, JsonObject pars, Job job)
+        {
+            var arr = pars["tokens"] as JsonArray;
+            if (arr == null || arr.Count == 0)
+                throw new ArgumentException("Falta 'tokens': el comando y, uno por elemento, lo que se le contesta.");
+            if (arr.Count > 400)
+                throw new ArgumentException("Demasiados tokens (máximo 400): partí el trabajo en varios comandos.");
+            var tokens = new List<object>();
+            var textos = new List<string>();
+            foreach (var n in arr)
+            {
+                if (n == null) { tokens.Add(""); textos.Add(""); continue; }
+                var tipo = n.GetValueKind();
+                if (tipo == System.Text.Json.JsonValueKind.String)
+                {
+                    string s = n.GetValue<string>() ?? "";
+                    if (s.Length > 2000) throw new ArgumentException("Un token mide más de 2000 caracteres.");
+                    tokens.Add(s); textos.Add(s);
+                }
+                else if (tipo == System.Text.Json.JsonValueKind.Number)
+                {
+                    double d = n.GetValue<double>();
+                    tokens.Add(d); textos.Add(d.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+                else if (tipo == System.Text.Json.JsonValueKind.Null) { tokens.Add(""); textos.Add(""); }
+                else throw new ArgumentException("Cada token es texto, número o null (null = Enter).");
+            }
+            string motivo = MotivoDenegado(textos);
+            if (motivo != null) throw new ArgumentException(motivo);
+
+            // El nombre se manda en su forma de comando nativo (_.LINE, _.-LAYER): sin eso un AutoCAD en
+            // castellano no entiende «LINE» y un alias redefinido por la persona cambiaría lo que corre.
+            string primero = ((string)tokens[0]).Trim();
+            if (!primero.StartsWith("_") && !primero.StartsWith("'"))
+                primero = "_." + primero.TrimStart('.');
+            tokens[0] = primero;
+
+            // Qué había antes, para contar lo borrado (lo creado sale del Handseed).
+            job.SpaceBefore = new HashSet<ObjectId>();
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                var btr = (BlockTableRecord)tr.GetObject(doc.Database.CurrentSpaceId, OpenMode.ForRead);
+                foreach (ObjectId id in btr)
+                    if (!id.IsErased) job.SpaceBefore.Add(id);
+                tr.Commit();
+            }
+
+            // Sin diálogos: uno abierto bloquearía a AutoCAD y con él el socket. Los comandos piden todo por la línea.
+            object filedia = null, cmddia = null;
+            job.Before = ed =>
+            {
+                filedia = SysVarObj("FILEDIA"); cmddia = SysVarObj("CMDDIA");
+                try { Application.SetSystemVariable("FILEDIA", (short)0); } catch (SysException) { }
+                try { Application.SetSystemVariable("CMDDIA", (short)0); } catch (SysException) { }
+            };
+            job.After = ed =>
+            {
+                if (filedia != null) try { Application.SetSystemVariable("FILEDIA", filedia); } catch (SysException) { }
+                if (cmddia != null) try { Application.SetSystemVariable("CMDDIA", cmddia); } catch (SysException) { }
+            };
+            job.Tokens = ed => tokens.ToArray();
+        }
+
         // ------------------------------------------------------------ medición antes / después
 
         private static double[] Caja(Transaction tr, ObjectId id)
@@ -581,8 +692,10 @@ namespace AutoCadMcpPlugin.Commands
                 try { Medir(doc, job); }
                 catch (SysException ex) { job.Warning = (job.Warning ?? "") + " No se pudo medir el resultado: " + ex.Message; }
                 if (error == null && job.Created.Count + job.DeletedCount + job.Modified.Count == 0)
-                    job.Warning = (job.Warning ?? "") + " La operación no cambió nada: puede que el punto no cayera sobre el " +
-                                  "tramo correcto, que los bordes no corten al objetivo (usá extend_edges), o que la capa esté bloqueada.";
+                    job.Warning = (job.Warning ?? "") + (job.Op == "command"
+                        ? " El comando no creó, borró ni movió entidades (normal si solo cambia vistas, capas o variables)."
+                        : " La operación no cambió nada: puede que el punto no cayera sobre el " +
+                                  "tramo correcto, que los bordes no corten al objetivo (usá extend_edges), o que la capa esté bloqueada.");
             }
             job.Ms = job.Reloj.ElapsedMilliseconds;
             job.State = error == null ? "done" : "error";

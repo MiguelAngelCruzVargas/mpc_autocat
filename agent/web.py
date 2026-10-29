@@ -205,7 +205,7 @@ CAPTURAS = os.path.join(os.environ.get("TEMP", "."), "autocad_mcp_ui")
 # esto sería absurdo.
 _CONTEO: dict[str, int] = {}
 # Qué tools cuentan como «dibujar»: la misma lista que usa la interfaz (REGEX_DIBUJO en app.js).
-REGEX_DIBUJO = re.compile(r"^(create_|draw_|place_|suggest_furniture|dimension_|label_|union_|compose_|move_|offset_|mirror_|array_|copy_|rotate_|scale_)")
+REGEX_DIBUJO = re.compile(r"^(run_command|create_|draw_|place_|suggest_furniture|dimension_|label_|union_|compose_|move_|offset_|mirror_|array_|copy_|rotate_|scale_)")
 _NOMBRES_PERFIL: dict[str, list[str]] = {}      # perfil -> nombres de sus tools (se leen una vez)
 
 

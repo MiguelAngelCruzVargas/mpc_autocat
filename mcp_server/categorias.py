@@ -117,6 +117,7 @@ _r("modificar", "delete_entities", "ERASE")
 _r("modificar", "undo", "UNDO")
 _r("modificar", "find_replace_text", "FIND")
 _r("modificar", "native_status")
+_r("sistema", "run_command", "COMANDO")
 
 # ---- anotación
 _r("anotacion", "create_text", "TEXT")

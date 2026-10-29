@@ -7006,6 +7006,28 @@ def overkill_entities(handles: Optional[list[str]] = None, all: bool = False,
 
 
 @mcp.tool()
+def run_command(tokens: list[Any], wait_s: float = 30.0) -> dict[str, Any]:
+    """Ejecuta un comando de AutoCAD tal como se teclea en la línea de comandos: el control TOTAL, para lo que
+    ninguna otra tool cubre. Antes busca una tool propia (verifica y avisa mejor); esta es la salida general.
+
+    tokens: el nombre del comando y, UNO POR ELEMENTO, lo que se le contesta: puntos como "0,0" o "10,5",
+        números, opciones ("C", "Yes"), texto, y null = Enter. Ejemplos:
+          ["CIRCLE", "0,0", 5]                      círculo de radio 5
+          ["-LAYER", "Make", "MUROS", null]          capa nueva y actual (con guion: sin diálogo)
+          ["ZOOM", "Extents"]  ·  ["REGEN"]  ·  ["AUDIT", "Yes"]  ·  ["-PURGE", "All", "*", "No"]
+        Usa la versión con guion de los comandos que abren diálogo (-LAYER, -HATCH, -INSERT, -PLOT...).
+    Se ejecuta en un comando registrado (un solo paso de UNDO) con FILEDIA y CMDDIA en 0 (nada de diálogos). Devuelve
+    `created` / `deleted` / `modified` para verificar; la salida de texto de la línea de comandos NO se puede leer,
+    así que se comprueba mirando el dibujo. Un comando que queda esperando algo se cancela con ESC y lo dice en
+    `warning`: tienes que mandarle todas las respuestas en los tokens.
+    NO se ejecutan los que cargan o corren código ajeno (NETLOAD, APPLOAD, LISP, SCRIPT, SHELL...), cambian la
+    seguridad (OPTIONS, SECURELOAD, TRUSTEDPATHS...) o cierran AutoCAD (QUIT, EXIT, CLOSEALL); tampoco un token
+    que empiece con "(" o "!" (LISP). Rechaza si hay un comando en curso, el editor de bloques o REFEDIT. Si pasa de
+    wait_s sigue corriendo: native_status, no repitas."""
+    return _edicion(edicion_mod.comando, tokens, wait_s)
+
+
+@mcp.tool()
 def native_status(job_id: Optional[str] = None) -> dict[str, Any]:
     """Resultado de la última operación nativa (trim, extend, fillet, join,
     overkill) si todavía estaba en curso cuando respondió la tool: state
