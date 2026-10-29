@@ -23,6 +23,8 @@
     <Compile Include="..\AutoCadMcpPlugin\Chat\Preferencias.cs" Link="Chat\Preferencias.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\Proveedores.cs" Link="Chat\Proveedores.cs" />
     <Compile Include="..\AutoCadMcpPlugin\LicenciaGuard.cs" Link="LicenciaGuard.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\Perfiles.cs" Link="Chat\Perfiles.cs" />
+    <EmbeddedResource Include="..\AutoCadMcpPlugin\Chat\perfiles.json" LogicalName="perfiles.json" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\ChatPanel.cs" Link="Chat\ChatPanel.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\ChatTema.cs" Link="Chat\ChatTema.cs" />
   </ItemGroup>

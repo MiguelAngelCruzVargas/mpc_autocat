@@ -807,6 +807,20 @@ namespace AutoCadMcpPlugin.Chat
         }
 
         // Los nombres de las herramientas de la especialidad elegida: lo que el agente puede (y no puede) hacer.
+        // Los nombres de TODAS las herramientas (el catálogo es de Python); cada especialidad las filtra aquí, en C#.
+        private List<string> _nombresTools;
+
+        private async Task CargarNombresToolsAsync()
+        {
+            if (_nombresTools != null || _cli == null) return;
+            try
+            {
+                using (var doc = await _cli.GetAsync("/api/h/nombres").ConfigureAwait(true))
+                    _nombresTools = doc.RootElement.GetProperty("nombres").EnumerateArray().Select(x => x.GetString()).ToList();
+            }
+            catch (Exception) { _nombresTools = null; }
+        }
+
         private async Task MostrarToolsPerfilAsync()
         {
             _perfilTools.Foreground = _t.Suave;
@@ -815,9 +829,10 @@ namespace AutoCadMcpPlugin.Chat
             _perfilTools.Text = "Leyendo las herramientas de esta especialidad…";
             try
             {
-                using (var doc = await _cli.GetAsync("/api/perfil_tools?perfil=" + Uri.EscapeDataString(_perfil)).ConfigureAwait(true))
+                await CargarNombresToolsAsync().ConfigureAwait(true);
+                if (_nombresTools == null) throw new InvalidOperationException("sin catálogo");
                 {
-                    var nombres = doc.RootElement.GetProperty("tools").EnumerateArray().Select(x => x.GetString()).ToList();
+                    var nombres = Perfiles.Filtrar(_nombresTools, Perfiles.Buscar(_perfil));
                     var txt = nombres.Count + " herramientas en esta especialidad:" + (char)10 + string.Join(" · ", nombres.Select(Humanizar).Distinct());
                     _toolsPerfil[_perfil] = txt;
                     _perfilTools.Text = txt;
@@ -933,9 +948,9 @@ namespace AutoCadMcpPlugin.Chat
                     bool tieneClave = p.TryGetProperty("clave", out var c) && c.ValueKind == JsonValueKind.String && c.GetString().Length > 0;
                     _provs.Add(new ProveedorItem { Id = S("id"), ModeloSugerido = S("modeloSugerido"), Detalle = S("detalle"), Clave = tieneClave, Puente = B("puente"), Vivo = B("vivo") });
                 }
-                if (r.TryGetProperty("perfiles", out var perfs))
-                    foreach (var pf in perfs.EnumerateArray())
-                        _perfiles.Add((pf.GetProperty("id").GetString(), pf.TryGetProperty("tools", out var n) ? n.GetInt32() : 0));
+                await CargarNombresToolsAsync().ConfigureAwait(true);
+                foreach (var pf in Perfiles.Todos)
+                    _perfiles.Add((pf.Id, _nombresTools != null ? Perfiles.Filtrar(_nombresTools, pf).Count : pf.Patrones.Length));
                 string prefProv = null;
                 using (var prefs = JsonDocument.Parse(Preferencias.Leer().ToJsonString()))
                 {

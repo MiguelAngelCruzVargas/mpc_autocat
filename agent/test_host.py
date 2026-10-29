@@ -117,6 +117,20 @@ def main() -> int:
     st, d = post("/api/h/ejecutar", {"nombre": "ejecutar_herramienta", "meta": True, "args": {"__json_invalido__": "{x"}})
     check("JSON roto vuelve como error en vez de ejecutarse", d["error"] is True and "JSON" in d["texto"])
 
+    print("test_perfiles")
+    st, d = post("/api/h/preparar", {"perfil": "inventado", "proveedor": "anthropic", "incluir": ["create_line"]})
+    check("con «incluir» no hace falta que el perfil exista en Python", st == 200 and [t["function"]["name"] for t in d["tools"]] == ["create_line"], str(d)[:160])
+    st, d = post("/api/h/preparar", {"perfil": "inventado", "proveedor": "anthropic"})
+    check("sin «incluir» un perfil desconocido sigue rechazándose", st == 400)
+    c = http.client.HTTPConnection("127.0.0.1", puerto, timeout=30)
+    c.request("GET", "/api/h/nombres")
+    r = c.getresponse()
+    nombres = json.loads(r.read().decode("utf-8")).get("nombres", [])
+    check("/api/h/nombres da el nombre de todas las herramientas", r.status == 200 and "create_line" in nombres and len(nombres) == mcp.n + 2)
+    import subprocess
+    gen = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "generar_perfiles.py"), "--verificar"], capture_output=True, text=True)
+    check("plugin/.../Chat/perfiles.json (los perfiles del panel nativo) coincide con agent/cli.py", gen.returncode == 0, gen.stdout.strip())
+
     httpd.shutdown()
     if FALLAS:
         print("\n%d FALLAS:" % len(FALLAS))

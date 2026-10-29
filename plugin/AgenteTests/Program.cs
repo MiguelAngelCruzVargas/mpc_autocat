@@ -169,6 +169,17 @@ namespace AgenteTests
                 Environment.SetEnvironmentVariable("AUTOCAD_IA_CREDENCIALES", null);
             }
 
+            Console.WriteLine("test_perfiles_en_csharp");
+            {
+                var ids = Perfiles.Todos.Select(p => p.Id).ToArray();
+                Check("las 6 especialidades, en el orden de siempre", string.Join(",", ids) == "arquitectura,civil,estructura,basico,todo,descubrir", string.Join(",", ids));
+                var nombresPrueba = new[] { "create_line", "create_walls", "check_all", "delete_entities", "run_command", "create_road", "design_footing" };
+                var arq = Perfiles.Filtrar(nombresPrueba, Perfiles.Buscar("arquitectura"));
+                Check("nombre exacto o prefijo (check_ entra por prefijo)", arq.Contains("create_walls") && arq.Contains("check_all") && arq.Contains("delete_entities") && !arq.Contains("create_road"), string.Join(",", arq));
+                Check("«todo» y «descubrir» ven todas", Perfiles.Filtrar(nombresPrueba, Perfiles.Buscar("todo")).Count == nombresPrueba.Length && Perfiles.Buscar("descubrir").Patrones.Length == 0);
+                Check("un nombre que solo CONTIENE el patrón no entra", !Perfiles.Coincide("my_check_all", new[] { "check_" }) && Perfiles.Coincide("check_all", new[] { "check_" }));
+            }
+
             Console.WriteLine("test_traduccion_a_anthropic");
             var conv = new JsonArray
             {

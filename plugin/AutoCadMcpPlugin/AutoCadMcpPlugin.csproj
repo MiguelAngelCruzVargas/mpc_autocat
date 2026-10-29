@@ -79,4 +79,7 @@
     <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Chat\perfiles.json" LogicalName="perfiles.json" />
+  </ItemGroup>
 </Project>

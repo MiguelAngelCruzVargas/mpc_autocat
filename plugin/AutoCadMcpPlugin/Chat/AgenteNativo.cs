@@ -451,7 +451,7 @@ namespace AutoCadMcpPlugin.Chat
             {
                 using (var doc = await host.PostAsync("/api/h/preparar", new
                 {
-                    perfil = p.Perfil, proveedor = p.Proveedor, modelo = p.Modelo, conReglas = p.ConReglas,
+                    perfil = p.Perfil, incluir = Perfiles.Buscar(p.Perfil)?.Patrones, proveedor = p.Proveedor, modelo = p.Modelo, conReglas = p.ConReglas,
                     contexto = p.Contexto ?? "", forzarBajoDemanda = forzar,
                 }, ct).ConfigureAwait(true))
                     return (JsonObject)JsonNode.Parse(doc.RootElement.GetRawText());

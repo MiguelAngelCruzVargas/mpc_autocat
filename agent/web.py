@@ -629,6 +629,16 @@ class Handler(BaseHTTPRequestHandler):
             self._vivo_get()
             return
 
+        if self.path == "/api/h/nombres":
+            # Los nombres de TODAS las herramientas: el panel nativo filtra por especialidad y las cuenta él.
+            async def nombres(mcp: ConexionMcp) -> list[str]:
+                return [t["function"]["name"] for t in mcp.catalogo()]
+            try:
+                self._json({"nombres": MOTOR.usar(nombres)})
+            except Exception as exc:                        # noqa: BLE001
+                self._json({"error": f"No se pudo leer el catálogo: {exc}"}, 500)
+            return
+
         if self.path.startswith("/api/perfil_tools"):
             # Qué herramientas ve el modelo con una especialidad (perfil): lo que puede y no puede hacer.
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
@@ -987,7 +997,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _h_preparar(self, datos: dict[str, Any]) -> None:
         perfil = str(datos.get("perfil", "arquitectura"))
-        incluir = PERFILES.get(perfil)
+        # El panel nativo (C#) es dueño de las especialidades y manda sus patrones; sin ellos se usa el perfil por nombre.
+        explicito = datos.get("incluir")
+        incluir = [str(x) for x in explicito] if isinstance(explicito, list) else PERFILES.get(perfil)
         if incluir is None:
             self._json({"error": f"Perfil desconocido: {perfil}"}, 400)
             return
