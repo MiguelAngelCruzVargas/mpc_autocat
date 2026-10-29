@@ -23,12 +23,16 @@ Instalar
      (Always Load).
 
 Activar la licencia
-  4. Doble clic en "AutoCAD IA" del escritorio: se abre el panel en el
-     navegador. Elige tu IA y pega tu clave. La clave se guarda cifrada en tu
+  4. Abre AutoCAD: unos segundos después aparece a la derecha el panel del
+     asistente (si lo cierras, el comando MCPCHAT lo vuelve a abrir). Pulsa la
+     tuerca: elige tu IA y pega tu clave. La clave se guarda cifrada en tu
      usuario.
-  5. En el panel escribe:   activa mi licencia con la clave AIA-XXXXX-...
-     o, para probar 7 días gratis (una sola vez por equipo):   inicia mi prueba
-  6. Para ver el estado en cualquier momento:   cómo va mi licencia
+  5. En esa misma pantalla de configuración, arriba, está "Licencia": pega tu
+     clave AIA-XXXXX-... y pulsa Activar, o pulsa "Prueba gratis de 7 días"
+     (una sola vez por equipo).
+  6. El estado de la licencia se ve en esa misma pantalla en cualquier momento.
+  (El acceso directo "AutoCAD IA" del escritorio abre la versión del navegador,
+  por si la prefieres.)
 
   - Una clave sirve en 2 equipos. Si cambias de computadora, avísanos y la
     liberamos.

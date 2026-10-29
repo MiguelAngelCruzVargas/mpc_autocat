@@ -12,7 +12,7 @@
   Salida: dist\AutoCAD-IA-<version>\ y dist\AutoCAD-IA-<version>.zip
 #>
 [CmdletBinding()]
-param([switch]$SinCompilar, [string]$ServidorLicencias = '')
+param([switch]$SinCompilar, [string]$ServidorLicencias = '', [string]$Pfx = '', [string]$PfxContrasena = '')
 
 $ErrorActionPreference = 'Stop'
 $raiz = Split-Path -Parent $PSScriptRoot
@@ -76,13 +76,21 @@ else {
 Set-Content -Path (Join-Path $salida 'mcp_server\LICENCIA_OBLIGATORIA') -Value 'Este paquete exige licencia. No borrar.' -Encoding ASCII
 Get-ChildItem (Join-Path $salida 'mcp_server\*') -Include 'test_*.py', 'smoke_test.py', 'run_tests.py', 'preview*.py' -File | Remove-Item -Force
 Copiar-Carpeta (Join-Path $raiz 'agent') (Join-Path $salida 'agent') ($basura + 'test_agent.py')
+Get-ChildItem (Join-Path $salida 'agent\test_*.py') -File -ErrorAction SilentlyContinue | Remove-Item -Force
 New-Item -ItemType Directory -Force -Path (Join-Path $salida 'tools') | Out-Null
-foreach ($f in 'instalar.ps1', 'registrar_clientes.py', 'lanzar_silencioso.bat', 'run_code_acceso.py') {
+foreach ($f in 'instalar.ps1', 'firmar_plugin.ps1', 'registrar_clientes.py', 'lanzar_silencioso.bat', 'run_code_acceso.py') {
     Copy-Item (Join-Path $raiz "tools\$f") (Join-Path $salida 'tools')
 }
-foreach ($f in 'iniciar.py', 'AutoCAD-IA.vbs', 'AutoCAD-IA.bat', 'CLAUDE.md', 'INSTALAR.bat', 'LEEME.txt') {
+foreach ($f in 'iniciar.py', 'iniciar_en_autocad.py', 'AutoCAD-IA.vbs', 'AutoCAD-IA.bat', 'CLAUDE.md', 'INSTALAR.bat', 'LEEME.txt') {
     $p = Join-Path $raiz $f
     if (Test-Path $p) { Copy-Item $p $salida }
+}
+
+# --- Firma del DLL (opcional): con un certificado real (-Pfx) el plugin no vuelve a preguntar "Unsigned Executable File"
+if ($Pfx) {
+    & (Join-Path $PSScriptRoot 'firmar_plugin.ps1') -Pfx $Pfx -Contrasena $PfxContrasena -Carpeta $bundle
+} else {
+    Write-Warning 'Paquete SIN firmar (sin -Pfx): AutoCAD preguntara "Unsigned Executable File" la primera vez y con cada version nueva.'
 }
 
 # --- Zip

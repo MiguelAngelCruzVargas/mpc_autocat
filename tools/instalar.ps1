@@ -173,6 +173,10 @@ if (-not (Test-Path $pyVenv)) {
 & $pyVenv -m pip install --quiet --disable-pip-version-check -r (Join-Path $raiz 'mcp_server\requirements.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Falló la instalación de dependencias (¿hay internet?).' }
 Ok 'dependencias instaladas'
+# El panel de chat dentro de AutoCAD (se abre solo al arrancar; comando MCPCHAT) arranca el servidor con ESTE Python: se anota una vez.
+$chatIni = Join-Path $raiz 'iniciar_en_autocad.py'
+if (Test-Path $chatIni) { & $pyVenv $chatIni --registrar | Out-Null; Ok 'chat dentro de AutoCAD registrado (el panel arranca el servidor cuando hace falta)' }
+else { Aviso 'Falta iniciar_en_autocad.py: el panel de chat de AutoCAD no podra arrancar el servidor.' }
 
 # --------------------------------------------------------------------- 4
 Paso 4 'Plugin de AutoCAD'
@@ -227,8 +231,9 @@ Write-Host '==============================================================' -For
 Write-Host ' Listo.' -ForegroundColor Green
 Write-Host '   1. Abrí AutoCAD: en la línea de comandos debe decir'
 Write-Host '      [MCP] Plugin cargado. Escuchando en 127.0.0.1:8765'
-Write-Host '   2. Doble clic en "AutoCAD IA" del escritorio: ahí elegís la IA'
-Write-Host '      (OpenRouter, OpenAI, Anthropic, DeepSeek, local...) y pegás tu clave.'
+Write-Host '   2. Unos segundos despues de abrir AutoCAD aparece solo el panel del asistente (el comando'
+Write-Host '      MCPCHAT lo vuelve a abrir). En la tuerca elegis la IA, pegas tu clave y, si hace falta, activas la licencia.'
+Write-Host '      (El acceso directo "AutoCAD IA" del escritorio abre la version del navegador.)'
 Write-Host '   3. Para usar Claude Desktop, Claude Code u OpenCode directamente,'
 Write-Host '      reinicialos: ya traen las herramientas de AutoCAD.'
 Write-Host '   Aviso: es un asistente de ayuda; revisá siempre lo que dibuja.'
