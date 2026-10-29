@@ -883,7 +883,17 @@ namespace AutoCadMcpPlugin.Chat
             }
             catch (ChatError e) { AgregarAviso(e.Message); }
             catch (OperationCanceledException) { }
-            catch (Exception e) when (!_cts.IsCancellationRequested) { AgregarAviso("Se cortó la conexión: " + e.Message); }
+            catch (Exception e) when (!_cts.IsCancellationRequested)
+            {
+                AgregarAviso("Se cortó la conexión: " + e.Message);
+                // El servidor pudo reiniciarse: se vuelve a levantar y a conectar solo, sin tener que abrir el panel de nuevo.
+                try
+                {
+                    var (url, _) = await _asegurar().ConfigureAwait(true);
+                    if (url != null) { _cli = new ChatCliente(url); AgregarAviso("Reconecté con el servidor del chat. Envía el mensaje otra vez."); }
+                }
+                catch (Exception) { }
+            }
             finally
             {
                 _trabajando = false;
