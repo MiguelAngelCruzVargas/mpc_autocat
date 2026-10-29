@@ -278,7 +278,7 @@ namespace AutoCadMcpPlugin.Chat
                     }
                     Emitir("uso", uso);
 
-                    var texto = resp["content"]?.ToString() ?? "";
+                    var texto = LimpiarTexto(resp["content"]?.ToString() ?? "");
                     if (texto.Length > 0) Emitir("texto", Obj("texto", texto));
 
                     var llamadas = LlamadasDe(resp);
@@ -494,6 +494,20 @@ namespace AutoCadMcpPlugin.Chat
                 return (uso.Entrada * precio["entrada"].GetValue<double>() + uso.Salida * precio["salida"].GetValue<double>()) / 1e6;
             }
             catch (Exception) { return null; }
+        }
+
+        /// <summary>
+        /// Un modelo chico a veces escupe una tira de espacios de ancho cero (U+200B...) y paréntesis: en pantalla es un mensaje
+        /// «vacío» con basura. Se quitan; si no queda ninguna letra ni número, es un silencio (y el bucle le pide seguir).
+        /// </summary>
+        internal static string LimpiarTexto(string t)
+        {
+            if (string.IsNullOrEmpty(t)) return "";
+            t = Regex.Replace(t, "[\u200B-\u200F\u2060-\u2064\uFEFF]", "").Replace('\u202F', ' ');
+            t = Regex.Replace(t, @"\(\s*\)", "");                 // paréntesis vacíos que deja la basura
+            t = Regex.Replace(t, @"[ \t]{2,}", " ").Trim();
+            foreach (var c in t) if (char.IsLetterOrDigit(c)) return t;
+            return "";
         }
 
         private static JsonObject Obj(string clave, string valor) => new JsonObject { [clave] = valor };

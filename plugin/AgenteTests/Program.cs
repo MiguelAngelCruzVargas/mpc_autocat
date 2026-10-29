@@ -220,6 +220,24 @@ namespace AgenteTests
                       AgenteNativo.ComandoOk("{\"state\":\"done\",\"ok\":true}") && !AgenteNativo.ComandoOk("{\"ok\":false,\"error\":\"x\"}") && !AgenteNativo.ComandoOk("no es json"));
             }
 
+            Console.WriteLine("test_texto_basura");
+            {
+                var cliG = new ChatCliente(url);
+                var agG = new AgenteNativo(() => cliG, Path.Combine(dir, "g.json"));
+                var mG = new ModeloGuion(
+                    () => ModeloGuion.Llama("buscar_herramientas", "{\"flujo\":\"casa\"}"),
+                    () => ModeloGuion.Texto("\u200B\u200B\u200B\u200B (   ) \u200B"),
+                    () => ModeloGuion.Texto("Listo."));
+                agG.FabricaProveedor = (prep, p) => mG;
+                var evG = new List<JsonElement>();
+                await agG.EjecutarAsync(ped, e => evG.Add(e.Clone()), CancellationToken.None);
+                Check("una tira de espacios de ancho cero no sale como mensaje: es un silencio y se le pide seguir",
+                      Hay(evG, "nota", "sin decir nada") && Tipos(evG).Count(x => x == "texto") == 1, string.Join(",", Tipos(evG)));
+                Check("y el texto de verdad llega", Hay(evG, "texto", "Listo"));
+                Check("LimpiarTexto deja el texto normal intacto y vacía la basura",
+                      AgenteNativo.LimpiarTexto("Círculo creado (radio 10 u).") == "Círculo creado (radio 10 u)." && AgenteNativo.LimpiarTexto("\u200B\u200B ( ) \u200B") == "" && AgenteNativo.LimpiarTexto("Entidades \u200B\u200B (   ) \u200B") == "Entidades");
+            }
+
             Console.WriteLine("test_historial");
             var archivo = Path.Combine(dir, "h.json");
             var cli = new ChatCliente(url);

@@ -167,6 +167,29 @@ def main() -> int:
     check("los argumentos que el modelo manda como TEXTO se leen igual", (n, a) == ("x", {"k": 1}))
     check("las tres herramientas son las únicas con ese nombre", descubrir.NOMBRES == {"buscar_herramientas", "describir_herramienta", "ejecutar_herramienta"})
 
+    print("test_argumentos_envueltos")
+    con = ConexionFalsa()
+    d = descubrir.Descubridor(con)
+    d._por_nombre = {
+        "create_circle": {"name": "create_circle", "description": "c", "parameters": {"type": "object", "required": ["x", "y"],
+                          "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "layer": {"type": "string"}}}},
+        "create_object": {"name": "create_object", "description": "o", "parameters": {"type": "object", "required": ["entity_type"],
+                          "properties": {"entity_type": {"type": "string"}, "properties": {"type": "object"}}}},
+    }
+    txt, err = asyncio.run(d.atender("ejecutar_herramienta", {"nombre": "create_circle", "argumentos": {"properties": {"x": 1, "y": 2}}}))
+    check("{\"properties\": {...}} (la forma del esquema) se desenvuelve y la herramienta corre con los argumentos reales",
+          not err and con.ejecutadas[-1] == ("create_circle", {"x": 1, "y": 2}), str(con.ejecutadas[-1:]))
+    asyncio.run(d.atender("ejecutar_herramienta", {"nombre": "create_circle", "argumentos": {"arguments": {"x": 3, "y": 4}}}))
+    check("también «arguments» y similares", con.ejecutadas[-1] == ("create_circle", {"x": 3, "y": 4}))
+    asyncio.run(d.atender("ejecutar_herramienta", {"nombre": "create_object", "argumentos": {"properties": {"Radius": 5}}}))
+    check("pero si «properties» ES un parámetro de la herramienta, se respeta", con.ejecutadas[-1] == ("create_object", {"properties": {"Radius": 5}}))
+    asyncio.run(d.atender("ejecutar_herramienta", {"nombre": "create_circle", "argumentos": {"x": 1, "y": 2, "layer": "A"}}))
+    check("y los argumentos normales no se tocan", con.ejecutadas[-1] == ("create_circle", {"x": 1, "y": 2, "layer": "A"}))
+    txt, err = asyncio.run(d.atender("describir_herramienta", {"nombre": "create_circle"}))
+    info = json.loads(txt)
+    check("describir_herramienta da la forma exacta de lo obligatorio", info["argumentos_requeridos"] == {"x": "<number>", "y": "<number>"}, txt[:200])
+    check("y avisa que los argumentos van sueltos", "SUELTOS" in info["nota"])
+
     print("test_el_perfil_descubrir")
     from .cli import PERFILES
     check("existe el perfil «descubrir» (todas, bajo demanda)", PERFILES.get("descubrir") == [])

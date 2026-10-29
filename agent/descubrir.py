@@ -63,6 +63,16 @@ META: list[dict[str, Any]] = [
 NOMBRES = {m["function"]["name"] for m in META}
 
 
+ENVOLTURAS = ("properties", "arguments", "parameters", "params", "args", "input")
+
+
+def _esqueleto(params: Any) -> dict[str, str]:
+    """Los argumentos obligatorios de una herramienta con su tipo: lo mínimo que hay que mandar."""
+    props = (params or {}).get("properties") or {}
+    req = set((params or {}).get("required") or [])
+    return {k: "<" + str((v or {}).get("type", "valor")) + ">" for k, v in props.items() if k in req}
+
+
 def _recortar(texto: str, limite: int = 8000) -> str:
     if len(texto) <= limite:
         return texto
@@ -95,6 +105,18 @@ class Descubridor:
             return real, inner if isinstance(inner, dict) else {}
         return nombre, args
 
+    def _desenvolver(self, real: str, inner: Any) -> Any:
+        """Quita la envoltura que un modelo chico le pone a los argumentos: {"properties": {...}} (la forma del esquema),
+        {"arguments": {...}}, {"parameters": {...}}... Solo si esa clave NO es un parámetro de la herramienta
+        (create_object, por ejemplo, SÍ tiene uno llamado `properties`)."""
+        if not isinstance(inner, dict) or len(inner) != 1:
+            return inner
+        (clave, valor), = inner.items()
+        props = ((self._catalogo().get(real) or {}).get("parameters") or {}).get("properties") or {}
+        if clave in ENVOLTURAS and clave not in props and isinstance(valor, dict):
+            return valor
+        return inner
+
     async def atender(self, nombre: str, args: dict[str, Any]) -> tuple[str, bool]:
         """(texto, hubo_error). Los errores vuelven al modelo como texto para que los corrija."""
         if "__json_invalido__" in args:
@@ -109,10 +131,17 @@ class Descubridor:
             t = self._catalogo().get(n)
             if t is None:
                 return (f"No existe la herramienta '{n}'. Usa buscar_herramientas.", True)
+            params = t.get("parameters", {})
+            # Un modelo chico copia la FORMA de lo que ve: si le llega un esquema JSON con «properties», manda
+            # {"properties": {...}} en vez de los argumentos. Por eso se le da, aparte, la forma exacta de lo que tiene que mandar.
             return (json.dumps({"nombre": n, "descripcion": _recortar(t.get("description", ""), 2500),
-                                "parametros": t.get("parameters", {})}, ensure_ascii=False), False)
+                                "argumentos_requeridos": _esqueleto(params),
+                                "nota": "Manda los argumentos SUELTOS en `argumentos` (p. ej. {\"x1\": 0, \"y1\": 0}), sin envolverlos en "
+                                        "«properties» ni en otra clave. Los opcionales solo si hacen falta.",
+                                "parametros": params}, ensure_ascii=False), False)
         if nombre == "ejecutar_herramienta":
             real, inner = self.visible(nombre, args)
+            inner = self._desenvolver(real, inner)
             if real in NO_PERMITIDAS:
                 return (f"'{real}' no está disponible en este chat: usa las herramientas de oficio.", True)
             if real not in self._catalogo():
