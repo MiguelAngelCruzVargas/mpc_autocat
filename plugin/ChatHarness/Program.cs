@@ -73,6 +73,7 @@ namespace ChatHarness
                         else { lic["plan"] = partes[0]; if (partes[0] != "perpetua") lic["licencia_hasta"] = hasta; }
                         panel.SimularLicencia(lic.ToJsonString());
                     }
+                    var imagenPrueba = Arg(args, "--imagen"); if (imagenPrueba != null) { await Task.Delay(600); panel.AdjuntarImagenArchivo(imagenPrueba); }
                     if (args.Contains("--ajustes")) panel.AbrirAjustes();
                     if (args.Contains("--modelo-pantalla")) panel.AbrirModeloPantalla();
                     if (args.Contains("--historial")) panel.AbrirHistorialPantalla();

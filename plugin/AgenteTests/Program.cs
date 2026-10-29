@@ -197,6 +197,30 @@ namespace AgenteTests
                 Check("una copia que no exige licencia (desarrollo) sigue funcionando", !Hay(evOk, "aviso", "Sin licencia"));
             }
 
+            Console.WriteLine("test_imagenes_adjuntas");
+            {
+                const string png = "data:image/png;base64,iVBORw0KGgo=";
+                var sinImg = AgenteNativo.MensajeUsuario("hola", new List<string>());
+                Check("sin imagenes el mensaje sigue siendo texto", sinImg["content"].ToString() == "hola");
+                var conImg = AgenteNativo.MensajeUsuario("mira", new List<string> { png, png });
+                var partes = (JsonArray)conImg["content"];
+                Check("con imagenes: una parte de texto y una image_url por imagen", partes.Count == 3 && partes[0]["type"].ToString() == "text" && partes[1]["image_url"]["url"].ToString() == png);
+                var convImg = new JsonArray { conImg };
+                var cambiados = AgenteNativo.QuitarImagenes(convImg);
+                Check("al terminar el pedido las imagenes se cambian por una nota (no se guardan ni se reenvian)", cambiados == 1 && convImg[0]["content"].ToString().Contains("[2 imágenes adjuntas") && !convImg.ToJsonString().Contains("base64"));
+                var (_, tr) = ProveedorAnthropic.Traducir(new JsonArray { AgenteNativo.MensajeUsuario("mira", new List<string> { png }) });
+                var bloque = tr[0]["content"][1];
+                Check("Anthropic recibe el bloque image con su media_type y el base64", bloque["type"].ToString() == "image" && bloque["source"]["media_type"].ToString() == "image/png" && bloque["source"]["data"].ToString() == "iVBORw0KGgo=");
+                Check("un texto suelto no se toca al traducir", ProveedorAnthropic.ContenidoAnthropic("hola").ToString() == "hola");
+
+                var sinVista = new ModeloGuion(() => ModeloGuion.Texto("listo"));
+                var (evImg, _) = await Correr(url, new PedidoAgente { Mensaje = "mira", Proveedor = "groq", Modelo = "openai/gpt-oss-120b", Imagenes = new List<string> { png } }, () => sinVista, dir);
+                Check("con un modelo que no ve imagenes avisa y manda solo el texto", Hay(evImg, "aviso", "no ve imágenes") && !sinVista.Ultimos[0].Contains("image_url"), sinVista.Ultimos.Count > 0 ? sinVista.Ultimos[0] : "(sin llamada)");
+                var conVista = new ModeloGuion(() => ModeloGuion.Texto("listo"));
+                var (evVe, _) = await Correr(url, new PedidoAgente { Mensaje = "mira", Proveedor = "anthropic", Modelo = "claude-sonnet-5-5", Imagenes = new List<string> { png } }, () => conVista, dir);
+                Check("con un modelo que ve, la imagen llega como image_url y sin aviso", !Hay(evVe, "aviso", "no ve imágenes") && conVista.Ultimos[0].Contains("image_url"), conVista.Ultimos.Count > 0 ? conVista.Ultimos[0] : "(sin llamada)");
+            }
+
             Console.WriteLine("test_traduccion_a_anthropic");
             var conv = new JsonArray
             {

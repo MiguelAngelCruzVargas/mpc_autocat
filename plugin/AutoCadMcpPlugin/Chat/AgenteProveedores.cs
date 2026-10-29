@@ -323,6 +323,30 @@ namespace AutoCadMcpPlugin.Chat
             return AMensajeOpenAI(datos as JsonObject);
         }
 
+        /// <summary>Las partes texto + image_url (OpenAI) a bloques text + image con base64 (Anthropic). Un texto suelto queda igual.</summary>
+        internal static JsonNode ContenidoAnthropic(JsonNode contenido)
+        {
+            if (!(contenido is JsonArray partes)) return contenido?.DeepClone() ?? "";
+            var bloques = new JsonArray();
+            foreach (var parte in partes)
+            {
+                var tipo = parte?["type"]?.ToString();
+                if (tipo == "text") bloques.Add(new JsonObject { ["type"] = "text", ["text"] = parte["text"]?.ToString() ?? "" });
+                else if (tipo == "image_url")
+                {
+                    var url = parte["image_url"]?["url"]?.ToString() ?? "";
+                    var m = System.Text.RegularExpressions.Regex.Match(url, @"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", System.Text.RegularExpressions.RegexOptions.Singleline);
+                    if (!m.Success) continue;
+                    bloques.Add(new JsonObject
+                    {
+                        ["type"] = "image",
+                        ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = m.Groups[1].Value, ["data"] = m.Groups[2].Value },
+                    });
+                }
+            }
+            return bloques;
+        }
+
         /// <summary>Del formato de la conversación (OpenAI) al de Anthropic: system aparte, tool_use y tool_result en bloques.</summary>
         internal static (string sistema, JsonArray conversacion) Traducir(JsonArray mensajes)
         {
@@ -341,7 +365,7 @@ namespace AutoCadMcpPlugin.Chat
                         sistema.Append(m["content"]?.ToString());
                         break;
                     case "user":
-                        salida.Add(new JsonObject { ["role"] = "user", ["content"] = m["content"]?.DeepClone() ?? "" });
+                        salida.Add(new JsonObject { ["role"] = "user", ["content"] = ContenidoAnthropic(m["content"]) });
                         break;
                     case "assistant":
                     {

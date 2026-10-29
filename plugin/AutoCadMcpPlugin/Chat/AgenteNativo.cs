@@ -25,6 +25,8 @@ namespace AutoCadMcpPlugin.Chat
         public double TopeUSD;
         /// <summary>destructivo (por omisión: borrar, purgar, cerrar, comandos libres), todo (cada herramienta que toca el dibujo) o nada.</summary>
         public string ModoPermisos = "destructivo";
+        /// <summary>Imágenes adjuntas (data URL). Solo se mandan si el modelo las ve; si no, se avisa y se manda el texto.</summary>
+        public List<string> Imagenes = new List<string>();
     }
 
     /// <summary>
@@ -236,7 +238,13 @@ namespace AutoCadMcpPlugin.Chat
                     _mensajes.Insert(0, new JsonObject { ["role"] = "system", ["content"] = prep["sistema"]?.ToString() ?? "" });
                 else
                     _mensajes[0]["content"] = prep["sistema"]?.ToString() ?? "";
-                _mensajes.Add(new JsonObject { ["role"] = "user", ["content"] = _avisoDeshacer.Length > 0 ? _avisoDeshacer + "\n\n" + p.Mensaje : p.Mensaje });
+                var imagenes = p.Imagenes ?? new List<string>();
+                if (imagenes.Count > 0 && !Capacidades.Evaluar(p.Proveedor, p.Modelo).Imagenes)
+                {
+                    Emitir("aviso", Obj("texto", "Este modelo no ve imágenes: mandé solo el texto (" + imagenes.Count + " imagen(es) sin enviar). Elige uno que las vea para usarlas."));
+                    imagenes = new List<string>();
+                }
+                _mensajes.Add(MensajeUsuario(_avisoDeshacer.Length > 0 ? _avisoDeshacer + "\n\n" + p.Mensaje : p.Mensaje, imagenes));
                 _avisoDeshacer = "";
                 if (meta) PasarABajoDemanda(sistemaMeta, prep["nota"]?.ToString(), Emitir);
 
@@ -449,6 +457,7 @@ namespace AutoCadMcpPlugin.Chat
             }
             finally
             {
+                QuitarImagenes(_mensajes);          // el modelo ya las vio en este pedido: no se vuelven a mandar (cuestan tokens) ni se guardan en disco
                 Guardar();
                 try { Emitir("fin", new JsonObject()); } catch (Exception) { }
             }
@@ -556,6 +565,39 @@ namespace AutoCadMcpPlugin.Chat
         /// <summary>Los resultados de herramienta más recientes que se conservan completos; los anteriores se acortan.</summary>
         internal const int ResultadosCompletos = 8;
         private const int RecorteResultado = 500;
+
+        /// <summary>El mensaje del usuario: texto solo, o (con imágenes) una lista de partes texto + image_url, el formato estándar de visión.</summary>
+        internal static JsonObject MensajeUsuario(string texto, IList<string> imagenes)
+        {
+            if (imagenes == null || imagenes.Count == 0) return new JsonObject { ["role"] = "user", ["content"] = texto };
+            var partes = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = texto } };
+            foreach (var url in imagenes)
+                partes.Add(new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = url } });
+            return new JsonObject { ["role"] = "user", ["content"] = partes };
+        }
+
+        /// <summary>Cambia las imágenes de los mensajes por una nota de texto («[2 imágenes adjuntas]»): el historial no carga base64 ni lo reenvía en cada vuelta.</summary>
+        internal static int QuitarImagenes(JsonArray mensajes)
+        {
+            int cambiados = 0;
+            foreach (var n in mensajes)
+            {
+                if (!(n is JsonObject m) || m["role"]?.ToString() != "user" || !(m["content"] is JsonArray partes)) continue;
+                var texto = new StringBuilder(); int imgs = 0;
+                foreach (var parte in partes)
+                {
+                    var tipo = parte?["type"]?.ToString();
+                    if (tipo == "text") { if (texto.Length > 0) texto.Append("\n"); texto.Append(parte["text"]?.ToString()); }
+                    else if (tipo == "image_url") imgs++;
+                }
+                if (imgs == 0) continue;
+                if (texto.Length > 0) texto.Append("\n\n");
+                texto.Append(imgs == 1 ? "[1 imagen adjunta en este pedido]" : "[" + imgs + " imágenes adjuntas en este pedido]");
+                m["content"] = texto.ToString();
+                cambiados++;
+            }
+            return cambiados;
+        }
 
         /// <summary>
         /// Que la conversación no crezca sin fin: (1) los resultados viejos de herramientas —listas de handles, catálogos— se acortan, que el

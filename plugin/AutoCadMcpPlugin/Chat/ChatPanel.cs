@@ -11,6 +11,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 namespace AutoCadMcpPlugin.Chat
@@ -138,6 +139,7 @@ namespace AutoCadMcpPlugin.Chat
         internal void ElegirPerfil(string id) { _perfil = id; }
         internal bool AdjuntarSeleccion { set { _adjSel.IsChecked = value; } }
         internal void AbrirHistorialPantalla() => AbrirHistorial();
+        internal bool BotonImagenActivo => _imgBtn.IsEnabled;
         internal void SimularLicencia(string json) { using (var d = JsonDocument.Parse(json)) MostrarLicencia(d.RootElement); }
         internal void AbrirLimitesPantalla() { _limDetalle.Visibility = Visibility.Visible; }
         internal void AbrirModeloPantalla() => AbrirAjustes(true);
@@ -245,6 +247,7 @@ namespace AutoCadMcpPlugin.Chat
             ent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             ent.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             ent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            ent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             // como la línea de comandos de AutoCAD: un indicador a la izquierda y el texto en un recuadro de filo fino
             var indicador = new TextBlock { Text = "›", FontFamily = Mono, FontSize = 18, Foreground = _t.Acento, Margin = new Thickness(10, 3, 0, 0), VerticalAlignment = VerticalAlignment.Top };
             var caja = new Grid();
@@ -265,10 +268,18 @@ namespace AutoCadMcpPlugin.Chat
             _enviar.Margin = new Thickness(4, 4, 4, 4); _enviar.Padding = new Thickness(12, 4, 12, 4);
             _enviar.Background = _t.Acento; _enviar.Foreground = _t.AcentoTexto; _enviar.BorderBrush = _t.Acento; _enviar.VerticalAlignment = VerticalAlignment.Stretch;
             _enviar.Click += async (s, e) => { if (_trabajando) Detener(); else await EnviarAsync().ConfigureAwait(true); };
-            Grid.SetColumn(_enviar, 2);
-            ent.Children.Add(indicador); ent.Children.Add(caja); ent.Children.Add(_enviar);
+            Grid.SetColumn(_enviar, 3);
+            _imgBtn.Content = Icono("\uE723", 14); _imgBtn.Style = _estiloFantasma; _imgBtn.Margin = new Thickness(0, 4, 0, 4); _imgBtn.Width = 32;
+            ToolTipService.SetShowOnDisabled(_imgBtn, true);
+            _imgBtn.Click += (s, e) => ElegirImagenes();
+            Grid.SetColumn(_imgBtn, 2);
+            _entrada.PreviewKeyDown += (s, e) =>
+            {
+                if (e.Key == Key.V && (Keyboard.Modifiers & ModifierKeys.Control) != 0 && PegarImagenDelPortapapeles()) e.Handled = true;
+            };
+            ent.Children.Add(indicador); ent.Children.Add(caja); ent.Children.Add(_imgBtn); ent.Children.Add(_enviar);
             var entBorde = new Border { Background = _t.Fondo, BorderBrush = _t.Borde, BorderThickness = new Thickness(1), Margin = new Thickness(10, 8, 10, 10), Child = ent };
-            var pie = new Border { BorderBrush = _t.Borde, BorderThickness = new Thickness(0, 1, 0, 0), Background = _t.Panel, Child = new StackPanel { Children = { _actividad, _estado, _vivoAviso, entBorde } } };
+            var pie = new Border { BorderBrush = _t.Borde, BorderThickness = new Thickness(0, 1, 0, 0), Background = _t.Panel, Child = new StackPanel { Children = { _actividad, _estado, _vivoAviso, _adjuntos, entBorde } } };
             Grid.SetRow(pie, 3); Grid.SetRowSpan(pie, 2); raiz.Children.Add(pie);
             // la configuración cubre todo el panel (dibujo, conversación y caja de escribir): es una pantalla aparte
             Grid.SetRow(_ajustes, 1); Grid.SetRowSpan(_ajustes, 4); Panel.SetZIndex(_ajustes, 10); raiz.Children.Add(_ajustes);
@@ -332,6 +343,94 @@ namespace AutoCadMcpPlugin.Chat
             _provBtn.ToolTip = "Clic para cambiar de IA, de modelo o la clave";
         }
 
+        // ---- imágenes adjuntas: un croquis o una foto de referencia, solo para modelos que ven ----
+        private readonly Button _imgBtn = new Button();
+        private readonly WrapPanel _adjuntos = new WrapPanel { Margin = new Thickness(10, 6, 10, 0), Visibility = Visibility.Collapsed };
+        private readonly List<ImagenAdjunta> _imagenes = new List<ImagenAdjunta>();
+        private const int MaxImagenes = 4;
+
+        private bool ModeloVeImagenes => _prov != null && !_prov.Vivo && !_prov.Puente && Capacidades.Evaluar(_prov.Id, _modelo.Text.Trim()).Imagenes;
+
+        /// <summary>El botón siempre se ve; si el modelo no ve imágenes (o no hay licencia) queda apagado y su ayuda dice por qué.</summary>
+        private void ActualizarBotonImagen()
+        {
+            bool bloqueado = _licObligatoria && !_licValida;
+            bool ve = ModeloVeImagenes;
+            _imgBtn.IsEnabled = ve && !bloqueado;
+            _imgBtn.Opacity = _imgBtn.IsEnabled ? 1.0 : 0.4;
+            _imgBtn.ToolTip = bloqueado ? "Sin licencia" : _prov == null ? "Adjuntar una imagen"
+                : _prov.Vivo || _prov.Puente ? "Con tu agente en vivo no se adjuntan imágenes desde aquí"
+                : ve ? "Adjuntar una imagen (también puedes pegarla con Ctrl+V)"
+                : "Este modelo no ve imágenes: elige uno que las vea (las listas de modelos marcan los que no)";
+            if (!ve && _imagenes.Count > 0)
+            {
+                _imagenes.Clear(); RefrescarAdjuntos();
+                AgregarNota("Se quitaron las imágenes adjuntas: este modelo no las ve.");
+            }
+        }
+
+        private void ElegirImagenes()
+        {
+            if (!_imgBtn.IsEnabled) return;
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Adjuntar imágenes", Multiselect = true,
+                Filter = "Imágenes|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp|Todos los archivos|*.*",
+            };
+            if (dlg.ShowDialog() != true) return;
+            foreach (var f in dlg.FileNames) AdjuntarImagenArchivo(f);
+        }
+
+        internal void AdjuntarImagenArchivo(string ruta)
+        {
+            try
+            {
+                if (!ModeloVeImagenes) { AgregarAviso("Este modelo no ve imágenes: elige uno que las vea para adjuntarlas."); return; }
+                if (_imagenes.Count >= MaxImagenes) { AgregarAviso("Máximo " + MaxImagenes + " imágenes por pedido."); return; }
+                _imagenes.Add(ImagenAdjunta.DesdeArchivo(ruta));
+                RefrescarAdjuntos();
+            }
+            catch (Exception ex) { AgregarAviso("No pude adjuntar la imagen: " + ex.Message); }
+        }
+
+        private bool PegarImagenDelPortapapeles()
+        {
+            try
+            {
+                if (!_imgBtn.IsEnabled || !Clipboard.ContainsImage()) return false;
+                if (_imagenes.Count >= MaxImagenes) { AgregarAviso("Máximo " + MaxImagenes + " imágenes por pedido."); return true; }
+                var src = Clipboard.GetImage();
+                if (src == null) return false;
+                _imagenes.Add(ImagenAdjunta.Desde(src, "pegada.png", true));
+                RefrescarAdjuntos();
+                return true;
+            }
+            catch (Exception ex) { AgregarAviso("No pude pegar la imagen: " + ex.Message); return true; }
+        }
+
+        private void RefrescarAdjuntos()
+        {
+            _adjuntos.Children.Clear();
+            foreach (var img in _imagenes.ToList())
+            {
+                var celda = new Grid { Margin = new Thickness(0, 0, 6, 0), ToolTip = img.Nombre };
+                celda.Children.Add(new Border
+                {
+                    BorderBrush = _t.Borde, BorderThickness = new Thickness(1), Background = _t.Tarjeta, Width = 50, Height = 50,
+                    Child = new System.Windows.Controls.Image { Source = img.Miniatura, Stretch = Stretch.UniformToFill },
+                });
+                var quitar = new Button
+                {
+                    Content = Icono("\uE711", 8), Width = 16, Height = 16, Padding = new Thickness(0), Background = _t.Panel, Foreground = _t.Texto,
+                    BorderBrush = _t.Borde, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, ToolTip = "Quitar",
+                };
+                quitar.Click += (s, e) => { _imagenes.Remove(img); RefrescarAdjuntos(); };
+                celda.Children.Add(quitar);
+                _adjuntos.Children.Add(celda);
+            }
+            _adjuntos.Visibility = _imagenes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         // ---- límites del modelo: «este modelo está limitado: no ve imágenes…» ----
         private readonly Border _limites = new Border { Visibility = Visibility.Collapsed, BorderThickness = new Thickness(1), Margin = new Thickness(8, 0, 8, 8), Padding = new Thickness(8, 5, 8, 5), Cursor = Cursors.Hand };
         private readonly TextBlock _limResumen = new TextBlock { FontFamily = new FontFamily("Consolas"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap };
@@ -354,6 +453,7 @@ namespace AutoCadMcpPlugin.Chat
         /// <summary>Dice qué le falta al modelo elegido (sin imágenes, pequeño, no es de chat…): se evalúa aquí, en C#, con Capacidades.</summary>
         private void ActualizarLimites()
         {
+            ActualizarBotonImagen();
             void Ocultar() { _limites.Visibility = Visibility.Collapsed; _limAjustes.Visibility = Visibility.Collapsed; }
             var modelo = _modelo.Text.Trim();
             if (_prov == null || _prov.Vivo || modelo.Length == 0) { Ocultar(); return; }
@@ -783,6 +883,7 @@ namespace AutoCadMcpPlugin.Chat
             _entrada.IsEnabled = !bloqueado;
             _enviar.IsEnabled = !bloqueado || _trabajando;
             _adjSel.IsEnabled = !bloqueado && !(_prov != null && _prov.Vivo);
+            ActualizarBotonImagen();
             if (bloqueado) _placeholder.Text = "Sin licencia: actívala en la configuración (la tuerca)";
             else _placeholder.Text = _prov != null && _prov.Vivo ? "Mensaje para tu agente…" : "Escribe tu instrucción…";
         }
@@ -1172,7 +1273,7 @@ namespace AutoCadMcpPlugin.Chat
             };
         }
 
-        private void AgregarUsuario(string texto, string adjunto = null)
+        private void AgregarUsuario(string texto, string adjunto = null, List<BitmapSource> miniaturas = null)
         {
             // Lo que se restaura del historial trae el bloque «[Contexto de AutoCAD]...» pegado al mensaje: se separa
             // para no mostrar la lista de handles.
@@ -1192,6 +1293,13 @@ namespace AutoCadMcpPlugin.Chat
             pila.Children.Add(new TextBlock { Text = texto, TextWrapping = TextWrapping.Wrap, Foreground = _t.Texto, FontSize = 13, LineHeight = 19, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
             if (adjunto != null)
                 pila.Children.Add(new TextBlock { Text = adjunto, FontFamily = Mono, Foreground = _t.Suave, FontSize = 10, Margin = new Thickness(0, 4, 0, 0) });
+            if (miniaturas != null && miniaturas.Count > 0)
+            {
+                var fila = new WrapPanel { Margin = new Thickness(0, 5, 0, 0) };
+                foreach (var m in miniaturas)
+                    fila.Children.Add(new Border { BorderBrush = _t.Borde, BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 4, 0), Width = 40, Height = 40, Child = new System.Windows.Controls.Image { Source = m, Stretch = Stretch.UniformToFill } });
+                pila.Children.Add(fila);
+            }
             Agregar(pila);
         }
 
@@ -1580,6 +1688,7 @@ namespace AutoCadMcpPlugin.Chat
         {
             if (_trabajando || _cli == null || _prov == null) return;
             var texto = _entrada.Text.Trim();
+            if (texto.Length == 0 && _imagenes.Count > 0) texto = "Mira la imagen adjunta y úsala como referencia.";
             if (texto.Length == 0) return;
             if (_prov.Vivo)
             {
@@ -1610,7 +1719,12 @@ namespace AutoCadMcpPlugin.Chat
             }
             DesactivarDeshacer();
             QuitarSugerencias();
-            AgregarUsuario(texto, sel > 0 ? "📎 " + sel + " entidad(es) de AutoCAD" : null);
+            var misImagenes = _imagenes.ToList();
+            var notaAdj = new List<string>();
+            if (sel > 0) notaAdj.Add(sel + " entidad(es) de AutoCAD");
+            if (misImagenes.Count > 0) notaAdj.Add(misImagenes.Count + " imagen(es)");
+            AgregarUsuario(texto, notaAdj.Count > 0 ? "📎 " + string.Join(" · ", notaAdj) : null, misImagenes.Select(i => i.Miniatura).ToList());
+            _imagenes.Clear(); RefrescarAdjuntos();
             _entrada.Clear();
             _adjSel.IsChecked = false;
 
@@ -1637,6 +1751,7 @@ namespace AutoCadMcpPlugin.Chat
                     {
                         Mensaje = mensaje, Proveedor = _prov.Id, Modelo = _modelo.Text.Trim(), Perfil = _perfil,
                         ConReglas = _reglas.IsChecked == true, Temperatura = _temp.Value, ModoPermisos = _modoPermisos, TopeUSD = TopeActual(),
+                        Imagenes = misImagenes.Select(i => i.DataUrl).ToList(),
                     }, Procesar, _cts.Token).ConfigureAwait(true);
                 }
             }
