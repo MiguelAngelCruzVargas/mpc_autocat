@@ -73,6 +73,7 @@ namespace AutoCadMcpPlugin
             // aplica al documento actual y a cada uno que se active después.
             EnableLineweightDisplay();
             Application.DocumentManager.DocumentActivated += OnDocumentActivated;
+            ProgramarChatAutomatico();
         }
 
         public void Terminate()
@@ -125,6 +126,42 @@ namespace AutoCadMcpPlugin
             {
                 // Que no se pueda anotar el puerto no justifica no arrancar:
                 // con el puerto por defecto el cliente lo encuentra igual.
+            }
+        }
+
+        // ---- el chat se abre solo al arrancar AutoCAD (sin teclear MCPCHAT cada vez)
+
+        private static DateTime _chatDesde;
+
+        /// <summary>
+        /// Abre el panel del chat unos segundos después de que AutoCAD esté ocioso con un dibujo abierto. Se apaga creando
+        /// el archivo %LOCALAPPDATA%\AutoCadMcp\sin_chat_automatico (o cerrando el panel: AutoCAD recuerda que se cerró
+        /// solo en esa sesión; el comando MCPCHAT lo vuelve a mostrar).
+        /// </summary>
+        private static void ProgramarChatAutomatico()
+        {
+            try
+            {
+                var marca = Path.Combine(Path.GetDirectoryName(PortFilePath), "sin_chat_automatico");
+                if (File.Exists(marca)) return;
+                Application.Idle += AbrirChatCuandoEsteListo;
+            }
+            catch (System.Exception) { }
+        }
+
+        private static void AbrirChatCuandoEsteListo(object sender, EventArgs e)
+        {
+            try
+            {
+                if (Application.DocumentManager.MdiActiveDocument == null) return;
+                if (_chatDesde == default(DateTime)) { _chatDesde = DateTime.UtcNow; return; }
+                if ((DateTime.UtcNow - _chatDesde).TotalSeconds < 4) return;     // deja que AutoCAD termine de cargar
+                Application.Idle -= AbrirChatCuandoEsteListo;
+                Commands.ChatNativo.Mostrar();
+            }
+            catch (System.Exception)
+            {
+                Application.Idle -= AbrirChatCuandoEsteListo;
             }
         }
 
