@@ -43,6 +43,7 @@ namespace AutoCadMcpPlugin.Chat
         private readonly Func<Task<(string url, string problema)>> _asegurar;
         private readonly ChatTema _t;
         private ChatCliente _cli;
+        private AgenteNativo _agente;       // el bucle del agente, en C# (los puentes a CLIs siguen por el servidor)
 
         // controles
         private readonly Button _provBtn = new Button(), _modeloBtn = new Button(), _ajustesBtn = new Button(), _nuevaBtn = new Button();
@@ -489,6 +490,7 @@ namespace AutoCadMcpPlugin.Chat
                 return;
             }
             _cli = new ChatCliente(url);
+            _agente = new AgenteNativo(() => _cli);
             try
             {
                 await CargarEstadoAsync().ConfigureAwait(true);
@@ -624,19 +626,21 @@ namespace AutoCadMcpPlugin.Chat
 
         private async Task RestaurarAsync()
         {
-            using (var doc = await _cli.GetAsync("/api/historial").ConfigureAwait(true))
+            await Task.Yield();
+            var eventos = _agente.Eventos;
+            if (eventos.Count == 0) return;
+            QuitarSugerencias();
+            foreach (var nodo in eventos.Skip(Math.Max(0, eventos.Count - 120)))
             {
-                var eventos = doc.RootElement.GetProperty("eventos").EnumerateArray().ToList();
-                if (eventos.Count == 0) return;
-                QuitarSugerencias();
-                foreach (var ev in eventos.Skip(Math.Max(0, eventos.Count - 120)))
+                using (var doc = JsonDocument.Parse(nodo.ToJsonString()))
                 {
+                    var ev = doc.RootElement;
                     var tipo = Texto(ev, "tipo");
                     if (tipo == "usuario") AgregarUsuario(Texto(ev, "texto"));
                     else Procesar(ev);
                 }
-                AgregarNota("Conversación anterior restaurada. «＋» la borra.");
             }
+            AgregarNota("Conversación anterior restaurada. «＋» la borra.");
         }
 
         private static string Texto(JsonElement e, string clave) =>
@@ -868,18 +872,24 @@ namespace AutoCadMcpPlugin.Chat
             _cts = new CancellationTokenSource();
             try
             {
-                await _cli.ChatAsync(new
+                var mensaje = contexto == null ? texto : contexto + "\n\n" + texto;
+                if (_prov.Puente)
                 {
-                    mensaje = contexto == null ? texto : contexto + "\n\n" + texto,
-                    imagenes = new string[0],
-                    proveedor = _prov.Id,
-                    modelo = _modelo.Text.Trim(),
-                    perfil = _perfil,
-                    conReglas = _reglas.IsChecked == true,
-                    temperatura = _temp.Value,
-                    topeUSD = 0,
-                    contexto = "",
-                }, Procesar, _cts.Token).ConfigureAwait(true);
+                    // Un puente a un CLI (Claude Code) lo maneja el servidor Python: no hay bucle nuestro de por medio.
+                    await _cli.ChatAsync(new
+                    {
+                        mensaje, imagenes = new string[0], proveedor = _prov.Id, modelo = _modelo.Text.Trim(), perfil = _perfil,
+                        conReglas = _reglas.IsChecked == true, temperatura = _temp.Value, topeUSD = 0, contexto = "",
+                    }, Procesar, _cts.Token).ConfigureAwait(true);
+                }
+                else
+                {
+                    await _agente.EjecutarAsync(new PedidoAgente
+                    {
+                        Mensaje = mensaje, Proveedor = _prov.Id, Modelo = _modelo.Text.Trim(), Perfil = _perfil,
+                        ConReglas = _reglas.IsChecked == true, Temperatura = _temp.Value,
+                    }, Procesar, _cts.Token).ConfigureAwait(true);
+                }
             }
             catch (ChatError e) { AgregarAviso(e.Message); }
             catch (OperationCanceledException) { }
@@ -908,14 +918,15 @@ namespace AutoCadMcpPlugin.Chat
         private void Detener()
         {
             try { _cts?.Cancel(); } catch { }
-            if (_cli != null) _ = _cli.PostAsync("/api/cancelar", new { }).ContinueWith(t => { var _ = t.Exception; });
+            if (_cli != null && _prov != null && _prov.Puente) _ = _cli.PostAsync("/api/cancelar", new { }).ContinueWith(t => { var _ = t.Exception; });
             AgregarNota("Detenido. Lo que ya se dibujó queda en el DWG: revísalo antes de seguir.");
         }
 
         private async Task NuevaAsync()
         {
             if (_trabajando || _cli == null) return;
-            try { using (await _cli.PostAsync("/api/reset", new { }).ConfigureAwait(true)) { } } catch { }
+            _agente?.Reiniciar();
+            try { using (await _cli.PostAsync("/api/reset", new { }).ConfigureAwait(true)) { } } catch { }      // la sesión de los puentes
             _pendientes.Clear();
             _tokens = _vueltas = 0; _costo = 0;
             _estado.Text = "";

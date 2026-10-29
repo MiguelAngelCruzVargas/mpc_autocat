@@ -693,6 +693,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         datos = self._leer_json()
 
+        if self.path == "/api/h/preparar":
+            self._h_preparar(datos)
+            return
+        if self.path == "/api/h/ejecutar":
+            self._h_ejecutar(datos)
+            return
+
         if self.path == "/api/clave":
             proveedor = str(datos.get("proveedor", ""))
             clave = str(datos.get("clave", ""))
@@ -971,6 +978,89 @@ class Handler(BaseHTTPRequestHandler):
                     "skipped": r.get("skipped", [])})
 
     # ------------------------------------------------------------ chat
+
+    # ------------------------------------------------------------------ anfitrión de herramientas (agente nativo)
+    #
+    # El agente del panel NATIVO (C#, dentro de AutoCAD) lleva el bucle, los proveedores y la conversación; de este lado
+    # solo necesita lo que sigue siendo de Python: el catálogo de las ~300 herramientas, ejecutarlas y el texto de
+    # sistema (reglas de dibujo). Dos endpoints, sin estado: la conversación NO vive aquí.
+
+    def _h_preparar(self, datos: dict[str, Any]) -> None:
+        perfil = str(datos.get("perfil", "arquitectura"))
+        incluir = PERFILES.get(perfil)
+        if incluir is None:
+            self._json({"error": f"Perfil desconocido: {perfil}"}, 400)
+            return
+        proveedor = str(datos.get("proveedor", ""))
+        preset = providers.PRESETS.get(proveedor)
+        if preset is None:
+            self._json({"error": f"Proveedor desconocido: {proveedor!r}."}, 400)
+            return
+        modelo = str(datos.get("modelo") or preset.get("modelo", ""))
+        limite = descubrir.LIMITES.get(proveedor)
+        forzar = bool(datos.get("forzarBajoDemanda"))
+        sistema = _system_prompt(bool(datos.get("conReglas", True)), int(datos.get("limiteReglas") or 0))
+        contexto = str(datos.get("contexto") or "").strip()[:2000]
+        if contexto:
+            sistema += "\n\n--- Contexto fijo de este proyecto (lo definió la persona) ---\n" + contexto
+        out: dict[str, Any] = {}
+
+        async def trabajo(mcp: ConexionMcp) -> None:
+            tools = mcp.catalogo(incluir=incluir or None, limite_descripcion=int(datos.get("limiteDescripcion") or 0))
+            nota = ""
+            meta = False
+            if forzar:
+                meta = True
+                nota = "El proveedor rechazó la cantidad de herramientas: el agente las busca y usa bajo demanda (todas siguen disponibles)."
+            elif perfil == "descubrir":
+                meta = True
+                nota = (f"Herramientas bajo demanda: el agente busca y usa las que necesita (todas siguen disponibles; "
+                        f"cada pedido manda 3 herramientas en vez de {len(tools)}).")
+            elif limite and len(tools) > limite:
+                meta = True
+                nota = (f"Este proveedor acepta {limite} herramientas por pedido y la especialidad trae {len(tools)}: "
+                        "el agente busca y usa las herramientas bajo demanda (todas siguen disponibles).")
+            out.update({
+                "tools": descubrir.META if meta else tools, "total": len(tools), "bajoDemanda": meta, "nota": nota,
+                "nombres": [t["function"]["name"] for t in mcp.catalogo()],
+            })
+
+        try:
+            MOTOR.usar(trabajo)
+        except Exception as exc:                        # noqa: BLE001
+            self._json({"error": f"No pude leer las herramientas: {exc}"}, 500)
+            return
+        out.update({
+            "sistema": sistema, "sistemaMeta": descubrir.TEXTO_SISTEMA,
+            "url": preset.get("url", ""), "env": preset.get("env", ""), "modelo": modelo,
+            "formato": "anthropic" if proveedor == "anthropic" else "openai",
+            "patronDemasiadas": descubrir.PATRON_DEMASIADAS.pattern,
+            "regexDibujo": REGEX_DIBUJO.pattern,
+            "enAutocad": bool(EN_AUTOCAD),
+            "precio": providers.precio_de(proveedor, modelo),
+        })
+        self._json(out)
+
+    def _h_ejecutar(self, datos: dict[str, Any]) -> None:
+        nombre = str(datos.get("nombre", ""))
+        args = datos.get("args") if isinstance(datos.get("args"), dict) else {}
+        meta = bool(datos.get("meta"))
+        salida: dict[str, Any] = {}
+
+        async def trabajo(mcp: ConexionMcp) -> None:
+            if meta and nombre in descubrir.NOMBRES:
+                texto, error = await descubrir.Descubridor(mcp).atender(nombre, args)
+            elif nombre in descubrir.NO_PERMITIDAS:
+                texto, error = (f"'{nombre}' no está disponible en este chat: usa las herramientas de oficio.", True)
+            else:
+                texto, error = await mcp.ejecutar(nombre, args)
+            salida.update({"texto": texto, "error": bool(error)})
+
+        try:
+            MOTOR.usar(trabajo)
+        except Exception as exc:                        # noqa: BLE001
+            salida = {"texto": f"ERROR al invocar '{nombre}': {exc}", "error": True}
+        self._json(salida)
 
     def _chat(self, datos: dict[str, Any]) -> None:
         """Corre una vuelta del agente y emite los eventos por SSE.

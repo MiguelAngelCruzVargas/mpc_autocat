@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Pruebas del agente nativo (el bucle en C#) con un modelo de mentira, contra el servidor Python de herramientas
+       (agent/web.py) que el panel usa de anfitrión. No se instala ni se distribuye.
+         dotnet run en plugin/AgenteTests, con la URL del servidor de pruebas como argumento.  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>AgenteTests</RootNamespace>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\AutoCadMcpPlugin\Chat\ChatCliente.cs" Link="Chat\ChatCliente.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\AgenteNativo.cs" Link="Chat\AgenteNativo.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\AgenteProveedores.cs" Link="Chat\AgenteProveedores.cs" />
+  </ItemGroup>
+</Project>
