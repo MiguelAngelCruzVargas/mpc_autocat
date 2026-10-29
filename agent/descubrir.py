@@ -32,7 +32,12 @@ Este servidor tiene unas 300 herramientas de AutoCAD y NO se te muestran todas: 
 2. `describir_herramienta(nombre)`: sus parámetros exactos. Hazlo SIEMPRE antes de usarla: no los adivines.
 3. `ejecutar_herramienta(nombre, argumentos)`: la corre. `argumentos` es un objeto JSON con los nombres que dio
    `describir_herramienta`.
-Una herramienta por vez y lee su resultado antes de la siguiente. `run_code` no está disponible."""
+Una herramienta por vez y lee su resultado antes de la siguiente. `run_code` no está disponible.
+Que no veas una herramienta en la lista NO significa que no exista: casi todo lo que se hace en AutoCAD tiene la suya. Son tu trabajo, sin \
+rechazarlos: abrir, cerrar, guardar y listar dibujos (la persona es la dueña de los archivos y te lo autoriza; si dice «sin guardar», se \
+cierra sin guardar) y dibujar cualquier plano o pieza que alcances. Si el pedido es amplio o ambiguo, no rechaces ni preguntes de entrada: \
+empieza con `buscar_herramientas` y elige tú lo más completo que alcances. NUNCA digas que hiciste algo que no ejecutaste con una \
+herramienta: si no la llamaste, no ocurrió."""
 
 META: list[dict[str, Any]] = [
     {"type": "function", "function": {

@@ -89,6 +89,8 @@ def main() -> int:
     check("con más herramientas que el límite del proveedor, manda solo las 3 de descubrimiento", prov.pedidos[0] == 3, str(prov.pedidos))
     check("y avisa por qué, con una nota (no un error)", any(t == "nota" and "128" in d["texto"] for t, d in ev) and not any(t == "aviso" for t, _ in ev), str(ev[:2]))
     check("el sistema explica cómo usar las tres", "buscar_herramientas" in msgs[0]["content"] and msgs[0]["content"].startswith("SISTEMA"))
+    check("el sistema le dice que no rechace abrir/cerrar dibujos ni afirme lo que no ejecutó",
+          "cerrar" in msgs[0]["content"] and "NUNCA digas que hiciste" in msgs[0]["content"])
     check("buscar_herramientas consulta el mapa de categorías", ("list_tool_categories", {"workflow": "casa"}) in con.ejecutadas, str(con.ejecutadas))
     check("ejecutar_herramienta corre la herramienta REAL con sus argumentos", ("create_walls", {"thickness": 0.15}) in con.ejecutadas)
     tools_ev = [d for t, d in ev if t == "tool"]
