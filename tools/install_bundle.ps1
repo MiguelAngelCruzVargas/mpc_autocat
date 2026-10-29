@@ -38,6 +38,9 @@ param(
     [switch]$SkipBuild,
     [switch]$CloseAutoCad,
     [switch]$Reopen,
+    [switch]$Firmar,             # firma el DLL tras instalarlo (tools\firmar_plugin.ps1): sin esto AutoCAD pregunta "Unsigned Executable File" cada vez que cambia
+    [string]$Pfx = '',           # con un certificado real (.pfx); sin el, -Firmar usa uno AUTOFIRMADO de este equipo
+    [string]$PfxContrasena = '',
     [int]$CloseTimeoutSeconds = 90
 )
 
@@ -164,6 +167,10 @@ if (Test-Path (Join-Path $net10 'AutoCadMcpPlugin.dll')) {
 $count = (Get-ChildItem -Recurse -File $target | Measure-Object).Count
 Write-Output ""
 Write-Output "Bundle instalado en: $target"
+if ($Firmar) {
+    $firma = Join-Path $PSScriptRoot 'firmar_plugin.ps1'
+    if ($Pfx) { & $firma -Pfx $Pfx -Contrasena $PfxContrasena -Carpeta $target } else { & $firma -Autofirmado -Carpeta $target }
+}
 
 # Chat dentro de AutoCAD (comando MCPCHAT): anota donde estan Python y la interfaz del agente (iniciar_en_autocad.py,
 # la misma interfaz web, en un panel), para que el comando la pueda arrancar solo. Sin Python en el PATH el chat no se registra; el resto del plugin no se entera.
