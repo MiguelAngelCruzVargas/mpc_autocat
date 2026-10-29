@@ -770,6 +770,69 @@ namespace AutoCadMcpPlugin.Chat
             }
         }
 
+        // Una acción destructiva pide permiso con una tarjeta (no con un diálogo: los emergentes no abren dentro de una paleta).
+        private void MostrarPermiso(JsonElement ev)
+        {
+            var id = Texto(ev, "id");
+            var nombre = Texto(ev, "nombre");
+            var detalle = ev.TryGetProperty("args", out var a) ? ResumenArgs(a) : "";
+            var pila = new StackPanel();
+            pila.Children.Add(new TextBlock { Text = "⚠ Pide permiso para ejecutar", Foreground = _t.Suave, FontSize = 11 });
+            pila.Children.Add(new TextBlock { Text = nombre, FontFamily = new FontFamily("Consolas"), FontWeight = FontWeights.SemiBold, Foreground = _t.Texto, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+            if (detalle.Length > 0)
+                pila.Children.Add(new TextBlock { Text = detalle, FontFamily = new FontFamily("Consolas"), FontSize = 11, Foreground = _t.Suave, TextWrapping = TextWrapping.Wrap });
+            var respuesta = new TextBlock { Foreground = _t.Texto, FontSize = 12, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 4, 0, 0) };
+            var botones = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+            Button B(string texto, int decision)
+            {
+                var b = new Button { Content = texto, Margin = new Thickness(0, 0, 6, 4), Padding = new Thickness(8, 3, 8, 3) };
+                b.Click += (s, e) =>
+                {
+                    botones.Visibility = Visibility.Collapsed;
+                    respuesta.Text = decision == 0 ? "✗ Rechazado" : decision == 2 ? "✓ Permitido (y no vuelvo a preguntar por esta herramienta en esta conversación)" : "✓ Permitido";
+                    respuesta.Visibility = Visibility.Visible;
+                    _agente?.ResolverPermiso(id, decision);
+                };
+                return b;
+            }
+            botones.Children.Add(B("Permitir", 1));
+            botones.Children.Add(B("Rechazar", 0));
+            botones.Children.Add(B("Permitir siempre esta (en esta conversación)", 2));
+            pila.Children.Add(botones);
+            pila.Children.Add(respuesta);
+            Agregar(new Border
+            {
+                BorderBrush = _t.Mal, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Background = _t.Tarjeta,
+                Padding = new Thickness(8, 5, 8, 5), Margin = new Thickness(0, 3, 14, 3), Child = pila,
+            });
+        }
+
+        // «Deshacer este pedido»: vuelve a la marca de UNDO que se puso antes de que el pedido tocara el dibujo.
+        private readonly List<Button> _botonesDeshacer = new List<Button>();
+
+        private void MostrarDeshacer()
+        {
+            var pila = new StackPanel { Margin = new Thickness(0, 4, 14, 6) };
+            var b = new Button { Content = "↶ Deshacer este pedido", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 3, 8, 3) };
+            _botonesDeshacer.Add(b);
+            b.Click += async (s, e) =>
+            {
+                b.IsEnabled = false;
+                if (_agente == null) return;
+                var (ok, mensaje) = await _agente.DeshacerAsync().ConfigureAwait(true);
+                if (ok) AgregarNota("↶ " + mensaje); else { AgregarAviso(mensaje); b.IsEnabled = true; }
+            };
+            pila.Children.Add(b);
+            pila.Children.Add(new TextBlock { Text = "Revierte todo lo que hizo este pedido (también lo que edites a mano después).", Foreground = _t.Suave, FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 2, 0, 0) });
+            Agregar(pila);
+        }
+
+        private void DesactivarDeshacer()
+        {
+            foreach (var bt in _botonesDeshacer) bt.IsEnabled = false;
+            _botonesDeshacer.Clear();
+        }
+
         private static string ResumenArgs(JsonElement args)
         {
             if (args.ValueKind != JsonValueKind.Object) return "";
@@ -823,6 +886,12 @@ namespace AutoCadMcpPlugin.Chat
                 case "aviso":
                     AgregarAviso(Texto(ev, "texto"));
                     break;
+                case "permiso":
+                    MostrarPermiso(ev);
+                    break;
+                case "deshacer":
+                    MostrarDeshacer();
+                    break;
                 case "nota":
                     AgregarNota("ℹ " + Texto(ev, "texto"));
                     break;
@@ -861,6 +930,7 @@ namespace AutoCadMcpPlugin.Chat
                 sel = _ctx.Seleccionados;
                 contexto = _ctx.DescribirSeleccion(30);
             }
+            DesactivarDeshacer();
             QuitarSugerencias();
             AgregarUsuario(texto, sel > 0 ? "📎 " + sel + " entidad(es) de AutoCAD" : null);
             _entrada.Clear();
@@ -926,6 +996,7 @@ namespace AutoCadMcpPlugin.Chat
         {
             if (_trabajando || _cli == null) return;
             _agente?.Reiniciar();
+            DesactivarDeshacer();
             try { using (await _cli.PostAsync("/api/reset", new { }).ConfigureAwait(true)) { } } catch { }      // la sesión de los puentes
             _pendientes.Clear();
             _tokens = _vueltas = 0; _costo = 0;

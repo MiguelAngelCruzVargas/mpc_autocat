@@ -168,6 +168,58 @@ namespace AgenteTests
                 Check("y conserva lo hablado", agS.Mensajes.Any(m => m["content"]?.ToString() == "hi"));
             }
 
+            Console.WriteLine("test_permisos");
+            {
+                var cliP = new ChatCliente(url);
+                var agP = new AgenteNativo(() => cliP, Path.Combine(dir, "p.json"));
+                var llamarBorrar = new Func<ModeloGuion>(() => new ModeloGuion(
+                    () => ModeloGuion.Llama("delete_entities", "{\"handles\":[\"FFFFFF9\"]}"),
+                    () => ModeloGuion.Texto("hecho")));
+                var mP = llamarBorrar();
+                agP.FabricaProveedor = (prep, p) => mP;
+                var evP = new List<JsonElement>();
+                int decision = 0;
+                await agP.EjecutarAsync(ped2, e => { evP.Add(e.Clone()); if (e.GetProperty("tipo").GetString() == "permiso") agP.ResolverPermiso(e.GetProperty("id").GetString(), decision); }, CancellationToken.None);
+                Check("borrar pide permiso (tarjeta con la herramienta y sus argumentos)",
+                      evP.Any(e => e.GetProperty("tipo").GetString() == "permiso" && e.GetProperty("nombre").GetString() == "delete_entities" && e.GetProperty("args").GetProperty("handles").GetArrayLength() == 1));
+                var res = evP.First(e => e.GetProperty("tipo").GetString() == "resultado");
+                Check("rechazado: no se ejecuta y el modelo lo sabe", res.GetProperty("error").GetBoolean() && res.GetProperty("texto").GetString().Contains("RECHAZÓ"));
+                Check("el permiso va ANTES de la tarjeta de la herramienta", Tipos(evP).ToList().IndexOf("permiso") < Tipos(evP).ToList().IndexOf("tool"));
+
+                // permitir una vez: se ejecuta (aquí falla porque no hay AutoCAD, pero NO por rechazo)
+                mP = llamarBorrar(); decision = 1; evP.Clear();
+                await agP.EjecutarAsync(ped2, e => { evP.Add(e.Clone()); if (e.GetProperty("tipo").GetString() == "permiso") agP.ResolverPermiso(e.GetProperty("id").GetString(), decision); }, CancellationToken.None);
+                Check("permitido: se ejecuta de verdad (no es un rechazo)", !evP.First(e => e.GetProperty("tipo").GetString() == "resultado").GetProperty("texto").GetString().Contains("RECHAZÓ"));
+
+                // permitir siempre: la segunda vez no pregunta
+                mP = llamarBorrar(); decision = 2; evP.Clear();
+                await agP.EjecutarAsync(ped2, e => { evP.Add(e.Clone()); if (e.GetProperty("tipo").GetString() == "permiso") agP.ResolverPermiso(e.GetProperty("id").GetString(), decision); }, CancellationToken.None);
+                mP = llamarBorrar(); evP.Clear();
+                await agP.EjecutarAsync(ped2, e => evP.Add(e.Clone()), CancellationToken.None);
+                Check("«permitir siempre» no vuelve a preguntar en la conversación", !Tipos(evP).Contains("permiso") && Tipos(evP).Contains("resultado"));
+                agP.Reiniciar();
+                mP = llamarBorrar(); evP.Clear();
+                await agP.EjecutarAsync(ped2, e => { evP.Add(e.Clone()); if (e.GetProperty("tipo").GetString() == "permiso") agP.ResolverPermiso(e.GetProperty("id").GetString(), 0); }, CancellationToken.None);
+                Check("y «＋» (conversación nueva) lo olvida", Tipos(evP).Contains("permiso"));
+
+                // detener mientras espera el permiso: cuenta como rechazo y no se cuelga
+                mP = llamarBorrar(); evP.Clear();
+                var ctsP = new CancellationTokenSource();
+                var tarea = agP.EjecutarAsync(ped2, e => { evP.Add(e.Clone()); if (e.GetProperty("tipo").GetString() == "permiso") ctsP.Cancel(); }, ctsP.Token);
+                var termino = await Task.WhenAny(tarea, Task.Delay(15000)) == tarea;
+                Check("«Detener» con un permiso pendiente no cuelga el agente", termino && Tipos(evP).Last() == "fin");
+
+                // las herramientas de dibujo y las consultas NO preguntan
+                mP = new ModeloGuion(() => ModeloGuion.Llama("create_line", "{\"x1\":0}"), () => ModeloGuion.Llama("list_layers", "{}"), () => ModeloGuion.Texto("ok"));
+                agP.FabricaProveedor = (prep, p) => mP;
+                evP.Clear();
+                await agP.EjecutarAsync(ped2, e => evP.Add(e.Clone()), CancellationToken.None);
+                Check("dibujar y consultar no piden permiso", !Tipos(evP).Contains("permiso"));
+                Check("sin AutoCAD no hay marca de UNDO: no se ofrece «Deshacer»", !Tipos(evP).Contains("deshacer"));
+                Check("ComandoOk entiende la respuesta de run_command",
+                      AgenteNativo.ComandoOk("{\"state\":\"done\",\"ok\":true}") && !AgenteNativo.ComandoOk("{\"ok\":false,\"error\":\"x\"}") && !AgenteNativo.ComandoOk("no es json"));
+            }
+
             Console.WriteLine("test_historial");
             var archivo = Path.Combine(dir, "h.json");
             var cli = new ChatCliente(url);

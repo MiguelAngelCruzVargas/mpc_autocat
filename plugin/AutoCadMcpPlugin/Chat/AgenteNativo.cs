@@ -49,6 +49,14 @@ namespace AutoCadMcpPlugin.Chat
         private JsonArray _eventos = new JsonArray();
         private const int MaxEventos = 600;
 
+        // Permisos y «Deshacer este pedido». Las listas vienen del servidor (agent/permisos.py: una sola fuente).
+        private Regex _destructivas = new Regex("$^");
+        private Regex _soloLectura = new Regex("^");
+        private readonly Dictionary<string, TaskCompletionSource<int>> _permisos = new Dictionary<string, TaskCompletionSource<int>>();
+        private readonly HashSet<string> _siempre = new HashSet<string>();     // herramientas que la persona dejó correr sin preguntar, en ESTA conversación
+        private bool _hayMarca;                                                  // hay una marca de UNDO puesta por el pedido en curso o el último
+        private string _avisoDeshacer = "";
+
         private static readonly string[] Meta = { "buscar_herramientas", "describir_herramienta", "ejecutar_herramienta" };
 
         public AgenteNativo(Func<ChatCliente> host, string archivo = null)
@@ -72,7 +80,65 @@ namespace AutoCadMcpPlugin.Chat
         {
             _mensajes = new JsonArray();
             _eventos = new JsonArray();
+            _siempre.Clear();
+            _hayMarca = false;
+            _avisoDeshacer = "";
             try { if (File.Exists(_archivo)) File.Delete(_archivo); } catch (Exception) { }
+        }
+
+        // ------------------------------------------------------------------------------------------ permisos y deshacer
+
+        /// <summary>La persona contestó una tarjeta de permiso: 0 = rechazar, 1 = permitir, 2 = permitir esa herramienta siempre en esta conversación.</summary>
+        public void ResolverPermiso(string id, int decision)
+        {
+            TaskCompletionSource<int> tcs;
+            lock (_permisos) { if (!_permisos.TryGetValue(id ?? "", out tcs)) return; }
+            tcs.TrySetResult(decision);
+        }
+
+        /// <summary>
+        /// Deshace TODO lo que hizo el último pedido: vuelve a la marca de UNDO que se puso antes de su primera herramienta que tocaba el
+        /// dibujo (UNDO Back). No cuenta pasos, así que no le importan las lecturas de en medio ni cuántas operaciones fueron.
+        /// </summary>
+        public async Task<(bool ok, string mensaje)> DeshacerAsync()
+        {
+            var host = _host();
+            if (host == null) return (false, "No hay conexión con el servidor de herramientas.");
+            if (!_hayMarca) return (false, "No hay nada que deshacer: ese pedido no cambió el dibujo.");
+            var (texto, error) = await EjecutarHerramienta(host, "run_command", Comando("UNDO", "Back"), false).ConfigureAwait(true);
+            if (error || !ComandoOk(texto))
+                return (false, "AutoCAD no pudo deshacerlo: " + (texto.Length > 200 ? texto.Substring(0, 200) : texto));
+            _hayMarca = false;
+            _avisoDeshacer = "[La persona deshizo tu último pedido con «Deshacer»: todo lo que dibujaste en él se revirtió. El dibujo está como estaba antes.]";
+            Anotar("nota", new JsonObject { ["tipo"] = "nota", ["texto"] = "Pedido deshecho: el dibujo volvió a como estaba antes." });
+            Guardar();
+            return (true, "Pedido deshecho: el dibujo volvió a como estaba antes.");
+        }
+
+        private static JsonObject Comando(params string[] tokens)
+        {
+            var arr = new JsonArray();
+            foreach (var t in tokens) arr.Add(t);
+            return new JsonObject { ["tokens"] = arr };
+        }
+
+        /// <summary>run_command contesta {"ok": true|false, "state": ...}: un fallo no llega como excepción.</summary>
+        internal static bool ComandoOk(string texto)
+        {
+            try
+            {
+                var o = JsonNode.Parse(texto) as JsonObject;
+                if (o == null) return false;
+                if (o["ok"] is JsonValue v && v.TryGetValue<bool>(out var b)) return b;
+                return o["state"]?.ToString() != "error";
+            }
+            catch (Exception) { return false; }
+        }
+
+        private async Task<bool> PonerMarca(ChatCliente host)
+        {
+            var (texto, error) = await EjecutarHerramienta(host, "run_command", Comando("UNDO", "Mark"), false).ConfigureAwait(true);
+            return !error && ComandoOk(texto);
         }
 
         // ------------------------------------------------------------------------------------------ el bucle
@@ -108,6 +174,10 @@ namespace AutoCadMcpPlugin.Chat
                 var regexDibujo = new Regex(prep["regexDibujo"]?.ToString() ?? "^$");
                 var demasiadas = new Regex(prep["patronDemasiadas"]?.ToString() ?? "maximum number of items", RegexOptions.IgnoreCase);
                 bool enAutocad = prep["enAutocad"]?.GetValue<bool>() ?? false;
+                _destructivas = new Regex(prep["destructivas"]?.ToString() ?? "$^");
+                _soloLectura = new Regex(prep["soloLectura"]?.ToString() ?? "^");
+                _hayMarca = false;
+                bool marcaIntentada = false;
                 var precio = prep["precio"] as JsonObject;
                 string sistemaMeta = prep["sistemaMeta"]?.ToString() ?? "";
 
@@ -119,7 +189,8 @@ namespace AutoCadMcpPlugin.Chat
                     _mensajes.Insert(0, new JsonObject { ["role"] = "system", ["content"] = prep["sistema"]?.ToString() ?? "" });
                 else
                     _mensajes[0]["content"] = prep["sistema"]?.ToString() ?? "";
-                _mensajes.Add(new JsonObject { ["role"] = "user", ["content"] = p.Mensaje });
+                _mensajes.Add(new JsonObject { ["role"] = "user", ["content"] = _avisoDeshacer.Length > 0 ? _avisoDeshacer + "\n\n" + p.Mensaje : p.Mensaje });
+                _avisoDeshacer = "";
                 if (meta) PasarABajoDemanda(sistemaMeta, prep["nota"]?.ToString(), Emitir);
 
                 int invalidas = 0, silencios = 0;
@@ -251,8 +322,39 @@ namespace AutoCadMcpPlugin.Chat
                         string visible = ll.Nombre;
                         JsonObject argsVisibles = ll.Args;
                         if (meta && Meta.Contains(ll.Nombre)) (visible, argsVisibles) = Visible(ll.Nombre, ll.Args);
+                        // Lo destructivo (borrar, purgar, cerrar, deshacer, comandos libres) pide permiso CADA vez, con una tarjeta en el
+                        // panel (los diálogos emergentes no abren dentro de una paleta de AutoCAD). Dibujar no pregunta: se revierte con «Deshacer».
+                        bool rechazada = false;
+                        if (_destructivas.IsMatch(visible) && !_siempre.Contains(visible))
+                        {
+                            var idPermiso = Guid.NewGuid().ToString("N").Substring(0, 8);
+                            var tcs = new TaskCompletionSource<int>();
+                            lock (_permisos) _permisos[idPermiso] = tcs;
+                            Emitir("permiso", new JsonObject { ["id"] = idPermiso, ["nombre"] = visible, ["args"] = argsVisibles.DeepClone() });
+                            int decision;
+                            using (ct.Register(() => tcs.TrySetResult(0)))
+                                decision = await tcs.Task.ConfigureAwait(true);
+                            lock (_permisos) _permisos.Remove(idPermiso);
+                            if (decision == 2) _siempre.Add(visible);
+                            rechazada = decision == 0;
+                        }
                         Emitir("tool", new JsonObject { ["nombre"] = visible, ["args"] = argsVisibles.DeepClone() });
-                        var (salida, error) = await EjecutarHerramienta(host, ll.Nombre, ll.Args, meta).ConfigureAwait(true);
+                        string salida; bool error;
+                        if (rechazada)
+                        {
+                            salida = "La persona RECHAZÓ esta acción (no se ejecutó). No la repitas ni busques otro camino para lograr lo mismo: pregúntale qué prefiere hacer.";
+                            error = true;
+                        }
+                        else
+                        {
+                            // Antes de la primera herramienta que toca el dibujo: una marca de UNDO para poder deshacer el pedido entero.
+                            if (!marcaIntentada && !_soloLectura.IsMatch(visible))
+                            {
+                                marcaIntentada = true;
+                                _hayMarca = await PonerMarca(host).ConfigureAwait(true);
+                            }
+                            (salida, error) = await EjecutarHerramienta(host, ll.Nombre, ll.Args, meta).ConfigureAwait(true);
+                        }
                         Emitir("resultado", new JsonObject { ["nombre"] = visible, ["texto"] = salida, ["error"] = error });
                         if (!error && regexDibujo.IsMatch(visible)) dibujo = true;
                         _mensajes.Add(new JsonObject { ["role"] = "tool", ["tool_call_id"] = ll.Id, ["name"] = ll.Nombre, ["content"] = salida });
@@ -272,6 +374,7 @@ namespace AutoCadMcpPlugin.Chat
                     var (s, e) = await EjecutarHerramienta(host, "zoom_extents", new JsonObject(), false).ConfigureAwait(true);
                     Emitir("nota", Obj("texto", e ? "No pude ajustar la vista: " + (s.Length > 120 ? s.Substring(0, 120) : s) : "Vista ajustada para mostrar lo dibujado."));
                 }
+                if (_hayMarca) Emitir("deshacer", new JsonObject());
             }
             catch (OperationCanceledException)
             {

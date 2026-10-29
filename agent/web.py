@@ -22,7 +22,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
-from . import credenciales, descubrir, providers, puentes
+from . import credenciales, descubrir, permisos, providers, puentes
 from .cli import ENTREGABLES, PERFILES, _system_prompt
 from .loop import conversar
 from .mcp_link import ConexionMcp, SERVIDOR_DEFECTO
@@ -1042,6 +1042,7 @@ class Handler(BaseHTTPRequestHandler):
             "formato": "anthropic" if proveedor == "anthropic" else "openai",
             "patronDemasiadas": descubrir.PATRON_DEMASIADAS.pattern,
             "regexDibujo": REGEX_DIBUJO.pattern,
+            "destructivas": permisos.DESTRUCTIVAS.pattern, "soloLectura": permisos.SOLO_LECTURA.pattern,
             "enAutocad": bool(EN_AUTOCAD),
             "precio": providers.precio_de(proveedor, modelo),
         })

@@ -68,6 +68,7 @@ def main() -> int:
     print("test_preparar")
     perfil = next(p for p, inc in PERFILES.items() if inc and p != "descubrir")
     st, d = post("/api/h/preparar", {"perfil": perfil, "proveedor": "anthropic"})
+    d0 = d
     check("devuelve el catálogo del perfil y su sistema", st == 200 and d["tools"] and "AutoCAD" in d["sistema"], str(d)[:200])
     check("proveedor sin límite conocido: no va bajo demanda", d["bajoDemanda"] is False and d["nota"] == "")
     check("anthropic usa su formato", d["formato"] == "anthropic")
@@ -85,6 +86,18 @@ def main() -> int:
     check("perfil desconocido: 400", st == 400)
     st, d = post("/api/h/preparar", {"perfil": perfil, "proveedor": "no_existe"})
     check("proveedor desconocido: 400", st == 400)
+
+    print("test_permisos")
+    from . import permisos
+    check("el servidor manda las dos listas (una sola fuente)", d0["destructivas"] == permisos.DESTRUCTIVAS.pattern and d0["soloLectura"] == permisos.SOLO_LECTURA.pattern)
+    for n in ("delete_entities", "purge_database_objects", "close_document", "undo", "run_command", "merge_layers", "set_system_variable", "detach_xref"):
+        check(f"{n} pide permiso", permisos.pide_permiso(n))
+    for n in ("create_line", "create_wall_network", "place_furniture", "save_drawing", "set_layer", "get_entity", "list_layers", "ejecutar_herramienta"):
+        check(f"{n} NO pide permiso", not permisos.pide_permiso(n))
+    for n in ("get_entity", "list_layers", "check_all", "capture_viewport", "export_pdf", "buscar_herramientas", "save_drawing"):
+        check(f"{n} no toca el dibujo", not permisos.toca_el_dibujo(n))
+    for n in ("create_line", "delete_entities", "set_layer", "suggest_electrical", "run_command", "ejecutar_herramienta"):
+        check(f"{n} sí lo toca (o no se sabe)", permisos.toca_el_dibujo(n))
 
     print("test_ejecutar")
     st, d = post("/api/h/ejecutar", {"nombre": "create_line", "args": {"x1": 0}})
