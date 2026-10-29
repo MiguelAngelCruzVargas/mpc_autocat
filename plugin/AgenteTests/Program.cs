@@ -245,6 +245,33 @@ namespace AgenteTests
                 Check("resumen de riesgo: comando libre", AgenteNativo.ResumenRiesgo("run_command", JsonNode.Parse("{\"tokens\":[\"ERASE\",\"ALL\",null]}") as JsonObject).StartsWith("Comando de AutoCAD: ERASE ALL"));
             }
 
+            Console.WriteLine("test_varias_conversaciones");
+            {
+                var estado = Path.Combine(dir, "estado");
+                Directory.CreateDirectory(estado);
+                Environment.SetEnvironmentVariable("AUTOCAD_IA_ESTADO", estado);
+                File.WriteAllText(Path.Combine(estado, "chat_nativo.json"),
+                    "{\"mensajes\":[],\"eventos\":[{\"tipo\":\"usuario\",\"texto\":\"[Contexto de AutoCAD] x\\n\\ndibuja una casa de 9x12\"}]}");
+                var primera = Conversaciones.RutaActiva();
+                Check("la conversación única de antes pasa a la lista", !File.Exists(Path.Combine(estado, "chat_nativo.json")) && File.Exists(primera));
+                Check("el título es el primer pedido, sin el bloque de contexto", Conversaciones.Listar().Single().Titulo == "dibuja una casa de 9x12");
+                var cliC = new ChatCliente(url);
+                var agC = new AgenteNativo(() => cliC, Conversaciones.Nueva());
+                var mC = new ModeloGuion(() => ModeloGuion.Texto("hola"));
+                agC.FabricaProveedor = (prep, p) => mC;
+                agC.EjecutarAsync(new PedidoAgente { Mensaje = "segundo tema", Proveedor = "groq", Modelo = "falso", Perfil = "arquitectura" }, e => { }, CancellationToken.None).GetAwaiter().GetResult();
+                var lista = Conversaciones.Listar();
+                Check("«＋» no borra la anterior: ahora hay dos", lista.Count == 2, lista.Count.ToString());
+                Check("la más reciente primero", lista[0].Titulo == "segundo tema");
+                Check("RutaActiva devuelve la que está abierta", Conversaciones.RutaActiva() == agC.Ruta);
+                Conversaciones.Activar(primera);
+                Check("se puede volver a la anterior", Conversaciones.RutaActiva() == primera);
+                Conversaciones.Borrar(primera);
+                Check("borrar una la quita de la lista", Conversaciones.Listar().Count == 1);
+                Check("una conversación vacía no aparece en la lista", Conversaciones.Listar().All(c => c.Pedidos > 0));
+                Environment.SetEnvironmentVariable("AUTOCAD_IA_ESTADO", null);
+            }
+
             Console.WriteLine("test_texto_basura");
             {
                 var cliG = new ChatCliente(url);

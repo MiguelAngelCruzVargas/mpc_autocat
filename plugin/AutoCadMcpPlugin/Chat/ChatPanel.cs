@@ -80,6 +80,10 @@ namespace AutoCadMcpPlugin.Chat
         private string _modoPermisos = "destructivo";
         private readonly StackPanel _listaPermisos = new StackPanel();
         private readonly TextBox _tope = new TextBox();
+        // varias conversaciones: la pantalla del historial
+        private readonly Grid _historial = new Grid();
+        private readonly StackPanel _listaHistorial = new StackPanel();
+        private readonly Button _historialBtn = new Button();
         private readonly StackPanel _licSeccion = new StackPanel { Visibility = Visibility.Collapsed };
         private readonly TextBlock _licEstado = new TextBlock();
         private readonly TextBox _licClave = new TextBox();
@@ -152,18 +156,22 @@ namespace AutoCadMcpPlugin.Chat
             cab.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             cab.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             cab.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            cab.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             _estiloFantasma = ChatEstilos.Fantasma(_t); _estiloCajetin = ChatEstilos.Cajetin(_t);
-            _provBtn.Style = _estiloCajetin; _ajustesBtn.Style = _estiloCajetin; _nuevaBtn.Style = _estiloCajetin;
+            _provBtn.Style = _estiloCajetin; _ajustesBtn.Style = _estiloCajetin; _nuevaBtn.Style = _estiloCajetin; _historialBtn.Style = _estiloCajetin;
+            _historialBtn.Content = Icono("\uE81C"); _historialBtn.ToolTip = "Conversaciones anteriores"; _historialBtn.Margin = new Thickness(6, 0, 0, 0); _historialBtn.Width = 38;
+            _historialBtn.Click += (s, e) => { if (_historial.Visibility == Visibility.Visible) _historial.Visibility = Visibility.Collapsed; else AbrirHistorial(); };
+            Grid.SetColumn(_historialBtn, 1);
             _provBtn.HorizontalContentAlignment = HorizontalAlignment.Stretch; _provBtn.Padding = new Thickness(9, 5, 9, 6);
             _provBtn.Click += (s, e) => AbrirAjustes();
             ActualizarChip();
             _ajustesBtn.Content = Icono("\uE713"); _ajustesBtn.ToolTip = "Configuración"; _ajustesBtn.Margin = new Thickness(6, 0, 0, 0); _ajustesBtn.Width = 38;
             _ajustesBtn.Click += (s, e) => { if (_ajustes.Visibility == Visibility.Visible) _ajustes.Visibility = Visibility.Collapsed; else AbrirAjustes(); };
-            Grid.SetColumn(_ajustesBtn, 1);
+            Grid.SetColumn(_ajustesBtn, 2);
             _nuevaBtn.Content = Icono("\uE710"); _nuevaBtn.ToolTip = "Conversación nueva"; _nuevaBtn.Margin = new Thickness(6, 0, 0, 0); _nuevaBtn.Width = 38;
             _nuevaBtn.Click += async (s, e) => await NuevaAsync().ConfigureAwait(true);
-            Grid.SetColumn(_nuevaBtn, 2);
-            cab.Children.Add(_provBtn); cab.Children.Add(_ajustesBtn); cab.Children.Add(_nuevaBtn);
+            Grid.SetColumn(_nuevaBtn, 3);
+            cab.Children.Add(_provBtn); cab.Children.Add(_historialBtn); cab.Children.Add(_ajustesBtn); cab.Children.Add(_nuevaBtn);
             var cabBorde = new Border { Background = _t.Panel, Child = cab };
             Grid.SetRow(cabBorde, 0); raiz.Children.Add(cabBorde);
 
@@ -254,6 +262,8 @@ namespace AutoCadMcpPlugin.Chat
             Grid.SetRow(pie, 3); Grid.SetRowSpan(pie, 2); raiz.Children.Add(pie);
             // la configuración cubre todo el panel (dibujo, conversación y caja de escribir): es una pantalla aparte
             Grid.SetRow(_ajustes, 1); Grid.SetRowSpan(_ajustes, 4); Panel.SetZIndex(_ajustes, 10); raiz.Children.Add(_ajustes);
+            ConstruirHistorial();
+            Grid.SetRow(_historial, 1); Grid.SetRowSpan(_historial, 4); Panel.SetZIndex(_historial, 10); raiz.Children.Add(_historial);
 
             MostrarSugerencias();
             ActualizarContexto();
@@ -449,6 +459,90 @@ namespace AutoCadMcpPlugin.Chat
             _ajustes.Children.Add(sv);
         }
 
+        // ------------------------------------------------------------------------------------------ varias conversaciones
+
+        private void ConstruirHistorial()
+        {
+            _historial.Visibility = Visibility.Collapsed;
+            _historial.Background = _t.Fondo;
+            var sv = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            var p = new StackPanel { Margin = new Thickness(10, 8, 10, 12) };
+            var titulo = new Grid();
+            titulo.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            titulo.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            titulo.Children.Add(new TextBlock { Text = "Conversaciones", FontWeight = FontWeights.SemiBold, FontSize = 15, Foreground = _t.Texto, VerticalAlignment = VerticalAlignment.Center });
+            var cerrar = new Button { Content = Icono("\uE711", 12), Width = 30, ToolTip = "Cerrar" };
+            cerrar.Click += (s, e) => _historial.Visibility = Visibility.Collapsed;
+            Grid.SetColumn(cerrar, 1); titulo.Children.Add(cerrar);
+            p.Children.Add(titulo);
+            p.Children.Add(_listaHistorial);
+            sv.Content = p;
+            _historial.Children.Add(sv);
+        }
+
+        private void AbrirHistorial()
+        {
+            _ajustes.Visibility = Visibility.Collapsed;
+            _listaHistorial.Children.Clear();
+            var actual = _agente?.Ruta;
+            var lista = Conversaciones.Listar();
+            if (lista.Count == 0)
+                _listaHistorial.Children.Add(new TextBlock { Text = "Todavía no hay conversaciones guardadas.", Foreground = _t.Suave, Margin = new Thickness(0, 14, 0, 0), TextWrapping = TextWrapping.Wrap });
+            int n = 0;
+            foreach (var c in lista)
+            {
+                var conv = c; n++;
+                bool abierta = string.Equals(conv.Ruta, actual, StringComparison.OrdinalIgnoreCase);
+                var fila = new Grid { Margin = new Thickness(0, 0, 0, 3) };
+                fila.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                fila.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var texto = new StackPanel();
+                var cab = new StackPanel { Orientation = Orientation.Horizontal };
+                cab.Children.Add(new TextBlock { Text = (abierta ? "›" : " ") + n.ToString("00"), FontFamily = Mono, FontSize = 10.5, Foreground = abierta ? _t.Acento : _t.Suave, Width = 30, VerticalAlignment = VerticalAlignment.Center });
+                cab.Children.Add(new TextBlock { Text = conv.Titulo, Foreground = _t.Texto, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 250 });
+                texto.Children.Add(cab);
+                texto.Children.Add(new TextBlock { Text = conv.Fecha.ToString("dd/MM  HH:mm") + "  ·  " + conv.Pedidos + (conv.Pedidos == 1 ? " pedido" : " pedidos"), FontFamily = Mono, FontSize = 9.5, Foreground = _t.Suave, Margin = new Thickness(30, 2, 0, 0) });
+                var abrir = new Button { Content = texto, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(6, 7, 6, 7), Style = _estiloFantasma };
+                abrir.Click += async (s, e) => await AbrirConversacionAsync(conv.Ruta).ConfigureAwait(true);
+                var borrar = new Button { Content = Icono("\uE74D", 12), Width = 32, Margin = new Thickness(4, 0, 0, 0), ToolTip = "Borrar esta conversación", Style = _estiloFantasma };
+                borrar.Click += (s, e) => BorrarConversacion(conv.Ruta);
+                Grid.SetColumn(borrar, 1);
+                fila.Children.Add(abrir); fila.Children.Add(borrar);
+                _listaHistorial.Children.Add(fila);
+            }
+            _historial.Visibility = Visibility.Visible;
+        }
+
+        private async Task AbrirConversacionAsync(string ruta)
+        {
+            if (_trabajando) { AgregarNota("Espera a que termine el pedido en curso (o detenlo) para cambiar de conversación."); _historial.Visibility = Visibility.Collapsed; return; }
+            _historial.Visibility = Visibility.Collapsed;
+            if (_agente != null && string.Equals(_agente.Ruta, ruta, StringComparison.OrdinalIgnoreCase)) return;
+            Conversaciones.Activar(ruta);
+            _agente = new AgenteNativo(() => _cli, ruta);
+            _lista.Children.Clear(); _pendientes.Clear(); DesactivarDeshacer();
+            _tokens = _vueltas = 0; _costo = 0; _estado.Text = "";
+            _hayConversacion = false;
+            _primerAsistente = true; _nPaso = 0;
+            await RestaurarAsync().ConfigureAwait(true);
+            if (_agente.Eventos.Count == 0) MostrarSugerencias();
+        }
+
+        private void BorrarConversacion(string ruta)
+        {
+            if (_trabajando) return;
+            bool eraLaAbierta = _agente != null && string.Equals(_agente.Ruta, ruta, StringComparison.OrdinalIgnoreCase);
+            Conversaciones.Borrar(ruta);
+            if (eraLaAbierta)
+            {
+                _agente = new AgenteNativo(() => _cli, Conversaciones.Nueva());
+                _lista.Children.Clear(); _pendientes.Clear(); DesactivarDeshacer();
+                _tokens = _vueltas = 0; _costo = 0; _estado.Text = "";
+                MostrarSugerencias();
+            }
+            AbrirHistorial();
+        }
+
         private void RefrescarPermisos()
         {
             _listaPermisos.Children.Clear();
@@ -618,7 +712,7 @@ namespace AutoCadMcpPlugin.Chat
                 return;
             }
             _cli = new ChatCliente(url);
-            _agente = new AgenteNativo(() => _cli);
+            _agente = new AgenteNativo(() => _cli, Conversaciones.RutaActiva());
             try
             {
                 await CargarEstadoAsync().ConfigureAwait(true);
@@ -1269,7 +1363,8 @@ namespace AutoCadMcpPlugin.Chat
         private async Task NuevaAsync()
         {
             if (_trabajando || _cli == null) return;
-            _agente?.Reiniciar();
+            // La conversación anterior se queda en la lista; solo se empieza otra (si la de ahora ya está vacía, se sigue en ella).
+            if (_agente != null && _agente.Eventos.Count > 0) _agente = new AgenteNativo(() => _cli, Conversaciones.Nueva());
             DesactivarDeshacer();
             try { using (await _cli.PostAsync("/api/reset", new { }).ConfigureAwait(true)) { } } catch { }      // la sesión de los puentes
             _pendientes.Clear();

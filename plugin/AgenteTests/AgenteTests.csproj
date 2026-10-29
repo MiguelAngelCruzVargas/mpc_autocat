@@ -14,5 +14,6 @@
     <Compile Include="..\AutoCadMcpPlugin\Chat\ChatCliente.cs" Link="Chat\ChatCliente.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\AgenteNativo.cs" Link="Chat\AgenteNativo.cs" />
     <Compile Include="..\AutoCadMcpPlugin\Chat\AgenteProveedores.cs" Link="Chat\AgenteProveedores.cs" />
+    <Compile Include="..\AutoCadMcpPlugin\Chat\Conversaciones.cs" Link="Chat\Conversaciones.cs" />
   </ItemGroup>
 </Project>

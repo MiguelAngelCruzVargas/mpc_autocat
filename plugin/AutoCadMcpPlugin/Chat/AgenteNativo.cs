@@ -75,6 +75,9 @@ namespace AutoCadMcpPlugin.Chat
         /// <summary>La conversación tal como se le manda al modelo (las pruebas la miran).</summary>
         internal JsonArray Mensajes => _mensajes;
 
+        /// <summary>El archivo de esta conversación.</summary>
+        public string Ruta => _archivo;
+
         /// <summary>Lo que se vio en pantalla, para reconstruirla al abrir el panel.</summary>
         public IReadOnlyList<JsonNode> Eventos => _eventos.ToList();
 
