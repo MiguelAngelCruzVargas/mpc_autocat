@@ -842,21 +842,28 @@ namespace AutoCadMcpPlugin.Chat
             _listaModelos.Children.Add(new TextBlock { Text = "Pidiendo la lista de modelos…", Foreground = _t.Suave, Margin = new Thickness(0, 6, 0, 0) });
             try
             {
-                using (var doc = await _cli.PostAsync("/api/modelos", new { proveedor = _prov.Id }).ConfigureAwait(true))
+                List<ModeloFila> filas;
+                if (Proveedores.Buscar(_prov.Id) != null) filas = await Proveedores.ListarModelosAsync(_prov.Id).ConfigureAwait(true);
+                else
                 {
-                    _listaModelos.Children.Clear();
-                    foreach (var m in doc.RootElement.GetProperty("modelos").EnumerateArray().Take(80))
+                    // un puente a un CLI: su lista de alias la tiene el servidor
+                    filas = new List<ModeloFila>();
+                    using (var doc = await _cli.PostAsync("/api/modelos", new { proveedor = _prov.Id }).ConfigureAwait(true))
+                        foreach (var m in doc.RootElement.GetProperty("modelos").EnumerateArray())
+                            filas.Add(new ModeloFila { Modelo = m.GetProperty("modelo").GetString(), Estado = m.TryGetProperty("estado", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : "" });
+                }
+                _listaModelos.Children.Clear();
+                foreach (var m in filas.Take(80))
+                {
+                    var nombre = m.Modelo;
+                    var detalle = (m.Estado == "?" ? "" : m.Estado) + (m.Imagenes ? "" : (m.Estado.Length > 0 && m.Estado != "?" ? " · " : "") + "sin imágenes");
+                    var b = Fila(nombre, detalle, nombre == _modelo.Text.Trim(), async () =>
                     {
-                        var nombre = m.GetProperty("modelo").GetString();
-                        var estado = m.TryGetProperty("estado", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : "";
-                        var b = Fila(nombre, estado == "?" ? "" : estado, nombre == _modelo.Text.Trim(), async () =>
-                        {
-                            _modelo.Text = nombre; await GuardarModeloAsync().ConfigureAwait(true);
-                            await ListarModelosAsync().ConfigureAwait(true);
-                        });
-                        b.Margin = new Thickness(0, 4, 0, 0);
-                        _listaModelos.Children.Add(b);
-                    }
+                        _modelo.Text = nombre; await GuardarModeloAsync().ConfigureAwait(true);
+                        await ListarModelosAsync().ConfigureAwait(true);
+                    });
+                    b.Margin = new Thickness(0, 4, 0, 0);
+                    _listaModelos.Children.Add(b);
                 }
             }
             catch (Exception ex)
@@ -909,11 +916,14 @@ namespace AutoCadMcpPlugin.Chat
             {
                 var r = doc.RootElement;
                 _provs.Clear(); _perfiles.Clear(); _modelos.Clear();
+                // Los proveedores con API y sus claves se conocen aquí mismo (C#); del servidor solo vienen los puentes y «En vivo».
+                foreach (var pr0 in Proveedores.Presets)
+                    _provs.Add(new ProveedorItem { Id = pr0.Id, ModeloSugerido = pr0.ModeloSugerido, Detalle = "", Clave = Credenciales.TieneGuardada(pr0.Id) });
                 foreach (var p in r.GetProperty("proveedores").EnumerateArray())
                 {
                     string S(string k) => p.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : "";
                     bool B(string k) => p.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.True;
-                    // La clave llega enmascarada («gsk_…ZxX4») o null: lo que importa es si existe.
+                    if (Proveedores.Buscar(S("id")) != null) continue;
                     bool tieneClave = p.TryGetProperty("clave", out var c) && c.ValueKind == JsonValueKind.String && c.GetString().Length > 0;
                     _provs.Add(new ProveedorItem { Id = S("id"), ModeloSugerido = S("modeloSugerido"), Detalle = S("detalle"), Clave = tieneClave, Puente = B("puente"), Vivo = B("vivo") });
                 }
@@ -921,8 +931,9 @@ namespace AutoCadMcpPlugin.Chat
                     foreach (var pf in perfs.EnumerateArray())
                         _perfiles.Add((pf.GetProperty("id").GetString(), pf.TryGetProperty("tools", out var n) ? n.GetInt32() : 0));
                 string prefProv = null;
-                if (r.TryGetProperty("preferencias", out var pr) && pr.ValueKind == JsonValueKind.Object)
+                using (var prefs = JsonDocument.Parse(Preferencias.Leer().ToJsonString()))
                 {
+                    var pr = prefs.RootElement;
                     if (pr.TryGetProperty("proveedor", out var pp) && pp.ValueKind == JsonValueKind.String) prefProv = pp.GetString();
                     if (pr.TryGetProperty("perfil", out var pe) && pe.ValueKind == JsonValueKind.String) _perfil = pe.GetString();
                     if (pr.TryGetProperty("conReglas", out var cr)) _reglas.IsChecked = cr.ValueKind != JsonValueKind.False;

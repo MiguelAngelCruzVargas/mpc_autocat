@@ -595,6 +595,13 @@ namespace AutoCadMcpPlugin.Chat
             return entrada["modo"].ToString();
         }
 
+        /// <summary>¿Hay una clave GUARDADA (no de entorno) para este proveedor?</summary>
+        public static bool TieneGuardada(string proveedor)
+        {
+            try { return !string.IsNullOrEmpty(Revelar(LeerTodo()[proveedor])); }
+            catch (Exception) { return false; }
+        }
+
         public static bool Borrar(string proveedor)
         {
             var raiz = LeerTodo();

@@ -116,6 +116,38 @@ namespace AgenteTests
                 try { Directory.Delete(raizTmp, true); } catch { }
             }
 
+            Console.WriteLine("test_lista_de_modelos_en_csharp");
+            {
+                const string json = "{\"data\":[{\"id\":\"vendor/raro-1\",\"architecture\":{\"input_modalities\":[\"text\",\"image\"]}},"
+                    + "{\"id\":\"openai/gpt-oss-120b\"},{\"id\":\"claude-sonnet-5-5\"},{\"name\":\"solo-nombre\"},{\"id\":\"x/solo-texto\",\"architecture\":{\"modality\":\"text->text\"}}]}";
+                var filas = Proveedores.Analizar(json);
+                Check("lee id y name", filas.Count == 5 && filas[3].Modelo == "solo-nombre");
+                Check("la visión publicada manda (vendor/raro-1 ve imagenes por su arquitectura)", filas[0].Imagenes);
+                Check("sin dato publicado se reconoce por el nombre", !filas[1].Imagenes && filas[2].Imagenes);
+                Check("modality «text->text» no ve imagenes", !filas[4].Imagenes);
+                Check("también entiende {models:[...]} y una lista suelta", Proveedores.Analizar("{\"models\":[{\"id\":\"a\"}]}").Count == 1 && Proveedores.Analizar("[\"a\",\"b\"]").Count == 2);
+                Check("los 7 proveedores y su modelo sugerido", Proveedores.Presets.Count == 7 && Proveedores.Buscar("groq").ModeloSugerido == "openai/gpt-oss-120b" && Proveedores.Buscar("nadie") == null);
+                try
+                {
+                    var puerto = 0;
+                    using (var tmp = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0)) { tmp.Start(); puerto = ((System.Net.IPEndPoint)tmp.LocalEndpoint).Port; tmp.Stop(); }
+                    var oyente = new System.Net.HttpListener(); oyente.Prefixes.Add("http://127.0.0.1:" + puerto + "/"); oyente.Start();
+                    string pedidoAuth = null; string ruta = null;
+                    var servidor = Task.Run(async () =>
+                    {
+                        var ctx = await oyente.GetContextAsync();
+                        ruta = ctx.Request.Url.AbsolutePath; pedidoAuth = ctx.Request.Headers["Authorization"];
+                        var cuerpo = System.Text.Encoding.UTF8.GetBytes(json); ctx.Response.ContentType = "application/json"; ctx.Response.OutputStream.Write(cuerpo, 0, cuerpo.Length); ctx.Response.Close();
+                    });
+                    Environment.SetEnvironmentVariable("GROQ_API_KEY", "gsk_de_entorno");
+                    var viaHttp = await Proveedores.ListarModelosAsync("groq", "http://127.0.0.1:" + puerto + "/v1");
+                    await servidor; oyente.Stop();
+                    Environment.SetEnvironmentVariable("GROQ_API_KEY", null);
+                    Check("pide /models con la clave como Bearer", ruta == "/v1/models" && pedidoAuth == "Bearer gsk_de_entorno" && viaHttp.Count == 5, ruta + " " + pedidoAuth);
+                }
+                catch (System.Net.HttpListenerException ex) { Console.WriteLine("  (sin prueba por HTTP: " + ex.Message + ")"); }
+            }
+
             Console.WriteLine("test_traduccion_a_anthropic");
             var conv = new JsonArray
             {
