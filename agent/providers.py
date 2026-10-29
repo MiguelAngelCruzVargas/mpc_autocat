@@ -44,7 +44,8 @@ PRESETS: dict[str, dict[str, str]] = {
     "deepseek": {
         "url": "https://api.deepseek.com/v1",
         "env": "DEEPSEEK_API_KEY",
-        "modelo": "deepseek-chat",
+        # Los nombres viejos (deepseek-chat, deepseek-reasoner) se retiran; la lista real sale de /models.
+        "modelo": "deepseek-flash",
     },
     "together": {
         "url": "https://api.together.xyz/v1",

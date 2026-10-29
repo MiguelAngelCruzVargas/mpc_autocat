@@ -62,6 +62,9 @@ namespace AutoCadMcpPlugin.Chat
             Cargar();
         }
 
+        /// <summary>La conversación tal como se le manda al modelo (las pruebas la miran).</summary>
+        internal JsonArray Mensajes => _mensajes;
+
         /// <summary>Lo que se vio en pantalla, para reconstruirla al abrir el panel.</summary>
         public IReadOnlyList<JsonNode> Eventos => _eventos.ToList();
 
@@ -110,8 +113,12 @@ namespace AutoCadMcpPlugin.Chat
 
                 Emitir("inicio", new JsonObject { ["tools"] = prep["total"]?.GetValue<int>() ?? tools.Count, ["modelo"] = proveedor.Modelo });
 
-                if (_mensajes.Count == 0)
-                    _mensajes.Add(new JsonObject { ["role"] = "system", ["content"] = prep["sistema"]?.ToString() ?? "" });
+                // El texto de sistema se renueva en CADA pedido: una conversación empezada con una versión vieja (con reglas que
+                // ya se quitaron) no puede quedarse con ella para siempre.
+                if (_mensajes.Count == 0 || _mensajes[0]?["role"]?.ToString() != "system")
+                    _mensajes.Insert(0, new JsonObject { ["role"] = "system", ["content"] = prep["sistema"]?.ToString() ?? "" });
+                else
+                    _mensajes[0]["content"] = prep["sistema"]?.ToString() ?? "";
                 _mensajes.Add(new JsonObject { ["role"] = "user", ["content"] = p.Mensaje });
                 if (meta) PasarABajoDemanda(sistemaMeta, prep["nota"]?.ToString(), Emitir);
 
@@ -206,6 +213,9 @@ namespace AutoCadMcpPlugin.Chat
                     var llamadas = LlamadasDe(resp);
                     var asistente = new JsonObject { ["role"] = "assistant", ["content"] = texto.Length > 0 ? (JsonNode)texto : null };
                     if (llamadas.Count > 0) asistente["tool_calls"] = resp["tool_calls"]?.DeepClone();
+                    // DeepSeek (modo de razonamiento, el de fábrica en sus modelos V4): con herramientas, el razonamiento de CADA
+                    // turno hay que devolverlo en los pedidos siguientes o responde 400. Los que no lo traen no lo notan.
+                    if (resp["reasoning_content"] != null) asistente["reasoning_content"] = resp["reasoning_content"].DeepClone();
                     _mensajes.Add(asistente);
 
                     if (llamadas.Count == 0)

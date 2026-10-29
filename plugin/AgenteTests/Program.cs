@@ -141,6 +141,33 @@ namespace AgenteTests
             (ev, _) = await Correr(url, ped2, () => new ModeloGuion(() => ModeloGuion.Texto("no debería llegar")), dir, cts.Token);
             Check("cancelado antes de empezar: avisa y no llama al modelo", Hay(ev, "aviso", "Cancelado") && _ultimoModelo.Llamadas == 0);
 
+            Console.WriteLine("test_razonamiento_de_deepseek");
+            {
+                var cliR = new ChatCliente(url);
+                var agR = new AgenteNativo(() => cliR, Path.Combine(dir, "r.json"));
+                var mR = new ModeloGuion(
+                    () => { var m = ModeloGuion.Llama("buscar_herramientas", "{\"flujo\":\"casa\"}"); m["reasoning_content"] = "pienso: busco el flujo"; return m; },
+                    () => { var m = ModeloGuion.Texto("Listo."); m["reasoning_content"] = "pienso: ya terminé"; return m; });
+                agR.FabricaProveedor = (prep, p) => mR;
+                await agR.EjecutarAsync(ped, e => { }, CancellationToken.None);
+                var asist = agR.Mensajes.Where(m => m["role"].ToString() == "assistant").ToList();
+                Check("el razonamiento de cada turno se guarda para devolverlo (DeepSeek responde 400 si falta)",
+                      asist.Count == 2 && asist[0]["reasoning_content"]?.ToString() == "pienso: busco el flujo" && asist[1]["reasoning_content"]?.ToString() == "pienso: ya terminé");
+            }
+
+            Console.WriteLine("test_el_sistema_se_renueva");
+            {
+                var archivoS = Path.Combine(dir, "s.json");
+                File.WriteAllText(archivoS, "{\"mensajes\":[{\"role\":\"system\",\"content\":\"REGLA VIEJA\"},{\"role\":\"user\",\"content\":\"hola\"},{\"role\":\"assistant\",\"content\":\"hi\"}],\"eventos\":[]}");
+                var cliS = new ChatCliente(url);
+                var agS = new AgenteNativo(() => cliS, archivoS);
+                var mS = new ModeloGuion(() => ModeloGuion.Texto("ok"));
+                agS.FabricaProveedor = (prep, p) => mS;
+                await agS.EjecutarAsync(ped2, e => { }, CancellationToken.None);
+                Check("una conversación vieja recibe el texto de sistema NUEVO", !agS.Mensajes[0]["content"].ToString().Contains("REGLA VIEJA") && agS.Mensajes.Count(m => m["role"].ToString() == "system") == 1);
+                Check("y conserva lo hablado", agS.Mensajes.Any(m => m["content"]?.ToString() == "hi"));
+            }
+
             Console.WriteLine("test_historial");
             var archivo = Path.Combine(dir, "h.json");
             var cli = new ChatCliente(url);
