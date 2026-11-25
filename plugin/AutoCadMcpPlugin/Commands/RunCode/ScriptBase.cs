@@ -27,8 +27,40 @@ namespace AutoCadMcpPlugin.Commands.RunCode
         private readonly StringBuilder _salida = new StringBuilder();
         private bool _recortada;
 
+        /// <summary>Tiempo máximo de un run_code (ACAD_MCP_RUN_CODE_TIMEOUT, 45 s por omisión; menor que el del socket).</summary>
+        internal static readonly int SegundosMaximos = LeerSegundos();
+
+        internal static string MensajeTiempo =>
+            "run_code superó su tiempo máximo (" + SegundosMaximos + " s) dentro de un bucle y se detuvo: no se aplicó nada.";
+
+        private static int LeerSegundos()
+        {
+            var raw = System.Environment.GetEnvironmentVariable("ACAD_MCP_RUN_CODE_TIMEOUT");
+            return int.TryParse(raw, out var n) && n > 0 ? n : 45;
+        }
+
+        private readonly System.Diagnostics.Stopwatch _reloj = new System.Diagnostics.Stopwatch();
+        private bool _agotado;
+
+        internal bool TiempoAgotado => _agotado;
+
+        /// <summary>
+        /// Lo inserta el compilador al principio de CADA bucle del código de la IA (RunCodeCompiler.Presupuesto).
+        /// Pasado el tiempo tira una excepción, y la vuelve a tirar en cada vuelta siguiente aunque el código la
+        /// atrape; si aun así Run termina, Ejecutar lo da por fallido y descarta la transacción.
+        /// </summary>
+        protected void __Paso()
+        {
+            if (_agotado || _reloj.ElapsedMilliseconds > SegundosMaximos * 1000L)
+            {
+                _agotado = true;
+                throw new System.TimeoutException(MensajeTiempo);
+            }
+        }
+
         internal void Init(Document documento, Transaction transaccion)
         {
+            _reloj.Restart();
             doc = documento;
             db = documento.Database;
             ed = documento.Editor;

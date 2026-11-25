@@ -39,6 +39,22 @@ def _discover_port() -> int:
 
 
 PORT = _discover_port()
+
+# El plugin genera un token al arrancar y lo anota junto a "port": sin él, el puerto no atiende
+# (cualquier programa o página web podría mandarle comandos a 127.0.0.1).
+TOKEN_FILE = os.path.join(os.path.dirname(PORT_FILE), "token")
+
+
+def _leer_token() -> str:
+    """El token de la sesión de AutoCAD en curso ('' si no hay archivo: plugin viejo o AutoCAD cerrado)."""
+    explicit = os.environ.get("ACAD_MCP_TOKEN")
+    if explicit:
+        return explicit.strip()
+    try:
+        with open(TOKEN_FILE, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
 # Tiene que ser MAYOR que el timeout de ejecucion del plugin
 # (ACAD_MCP_EXEC_TIMEOUT, 60s por defecto): si el cliente abandona
 # primero, el plugin termina escribiendo sobre un socket ya cerrado.
@@ -230,7 +246,7 @@ def _do_call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any
     params = dict(params or {})
     if VER_DIBUJAR[0]:
         params["_live"] = True          # el plugin repinta tras cada comando
-    request = {"id": str(uuid.uuid4()), "cmd": cmd, "params": params}
+    request = {"id": str(uuid.uuid4()), "cmd": cmd, "params": params, "token": _leer_token()}
     payload = (json.dumps(request) + "\n").encode("utf-8")
     ficha = ojos.anotar_envio(cmd, params)
 
@@ -286,7 +302,13 @@ def _do_call(cmd: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any
 
     if not response.get("ok"):
         ojos.anotar_fin(ficha, "error", str(response.get("error", "")))
-        raise AutoCadError(response.get("error", "Error desconocido en el plugin de AutoCAD."))
+        error = str(response.get("error", "Error desconocido en el plugin de AutoCAD."))
+        if error.startswith("TOKEN:") and not request["token"]:
+            raise AutoCadError(
+                f"El plugin de AutoCAD pide un token de acceso y no se encontró el archivo {TOKEN_FILE}. "
+                "Reinicia AutoCAD para que el plugin lo vuelva a anotar (y comprueba que el plugin y este "
+                "servidor sean de la misma versión).")
+        raise AutoCadError(error)
     ojos.anotar_fin(ficha, "ok")
     # session lleva la cuenta de lo dibujado sin guardar y avisa cruzado el
     # umbral — el aviso viaja en el resultado del propio comando que dibujó.

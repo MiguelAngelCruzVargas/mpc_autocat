@@ -97,6 +97,19 @@ def text_width(content: str, height: float) -> float:
     return len(content) * height * 0.92
 
 
+# Sello obligatorio de los dibujos estructurales que salen de las herramientas de diseño (zapatas, plantas de
+# cimentación y de losas): son un PREDIMENSIONAMIENTO y los firma un Director Responsable de Obra o Corresponsable.
+SELLO_ESTRUCTURAL = "PREDIMENSIONAMIENTO \u2014 REVISAR Y FIRMAR POR DRO / CORRESPONSABLE"
+
+
+def sello_estructural(x: float, y: float, upm: float, text_mm: float = 3.0) -> float:
+    """Escribe el sello SELLO_ESTRUCTURAL con su esquina superior izquierda en (x, y) (texto de text_mm en papel).
+    Devuelve la y de abajo del renglón."""
+    h = text_mm * upm
+    text(SELLO_ESTRUCTURAL, x, y - h, h, layer=LAYER_TEXTOS)
+    return y - 1.6 * h
+
+
 # ------------------------------------------------------------ líneas
 
 def break_line(p0, p1, upm: float, layer: str, lw: int = 18,

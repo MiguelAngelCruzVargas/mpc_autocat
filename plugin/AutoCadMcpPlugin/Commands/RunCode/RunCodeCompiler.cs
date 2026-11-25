@@ -36,6 +36,69 @@ namespace AutoCadMcpPlugin.Commands.RunCode
         public bool FromCache;
     }
 
+    /// <summary>
+    /// Agrega «__Paso();» al principio del cuerpo de cada for / foreach / while / do del código de la IA, sin saltos
+    /// de línea (las líneas de las excepciones siguen coincidiendo). No cubre recursión ni una sola llamada larga.
+    /// </summary>
+    internal sealed class Presupuesto : Microsoft.CodeAnalysis.CSharp.CSharpSyntaxRewriter
+    {
+        private readonly TextSpan _usuario;
+        public Presupuesto(TextSpan usuario) { _usuario = usuario; }
+
+        private static Microsoft.CodeAnalysis.CSharp.Syntax.BlockSyntax ConPaso(
+            Microsoft.CodeAnalysis.CSharp.Syntax.StatementSyntax cuerpo)
+        {
+            var paso = SyntaxFactory.ParseStatement("__Paso();");
+            return SyntaxFactory.Block(paso, cuerpo);
+        }
+
+        private bool Del(SyntaxNode n) => _usuario.Contains(n.Span);
+
+        public override SyntaxNode VisitForStatement(Microsoft.CodeAnalysis.CSharp.Syntax.ForStatementSyntax node)
+        {
+            bool del = Del(node);
+            var n = (Microsoft.CodeAnalysis.CSharp.Syntax.ForStatementSyntax)base.VisitForStatement(node);
+            return del ? n.WithStatement(ConPaso(n.Statement)) : n;
+        }
+
+        public override SyntaxNode VisitForEachStatement(Microsoft.CodeAnalysis.CSharp.Syntax.ForEachStatementSyntax node)
+        {
+            bool del = Del(node);
+            var n = (Microsoft.CodeAnalysis.CSharp.Syntax.ForEachStatementSyntax)base.VisitForEachStatement(node);
+            return del ? n.WithStatement(ConPaso(n.Statement)) : n;
+        }
+
+        public override SyntaxNode VisitForEachVariableStatement(Microsoft.CodeAnalysis.CSharp.Syntax.ForEachVariableStatementSyntax node)
+        {
+            bool del = Del(node);
+            var n = (Microsoft.CodeAnalysis.CSharp.Syntax.ForEachVariableStatementSyntax)base.VisitForEachVariableStatement(node);
+            return del ? n.WithStatement(ConPaso(n.Statement)) : n;
+        }
+
+        public override SyntaxNode VisitWhileStatement(Microsoft.CodeAnalysis.CSharp.Syntax.WhileStatementSyntax node)
+        {
+            bool del = Del(node);
+            var n = (Microsoft.CodeAnalysis.CSharp.Syntax.WhileStatementSyntax)base.VisitWhileStatement(node);
+            return del ? n.WithStatement(ConPaso(n.Statement)) : n;
+        }
+
+        public override SyntaxNode VisitDoStatement(Microsoft.CodeAnalysis.CSharp.Syntax.DoStatementSyntax node)
+        {
+            bool del = Del(node);
+            var n = (Microsoft.CodeAnalysis.CSharp.Syntax.DoStatementSyntax)base.VisitDoStatement(node);
+            return del ? n.WithStatement(ConPaso(n.Statement)) : n;
+        }
+
+        // goto hacia atrás también arma un bucle: se le pone el chequeo antes de saltar.
+        public override SyntaxNode VisitGotoStatement(Microsoft.CodeAnalysis.CSharp.Syntax.GotoStatementSyntax node)
+        {
+            bool del = Del(node);
+            var n = base.VisitGotoStatement(node);
+            if (!del || !(node.Parent is Microsoft.CodeAnalysis.CSharp.Syntax.BlockSyntax)) return n;
+            return SyntaxFactory.Block(SyntaxFactory.ParseStatement("__Paso();"), (Microsoft.CodeAnalysis.CSharp.Syntax.StatementSyntax)n);
+        }
+    }
+
     internal static class RunCodeCompiler
     {
         /// <summary>
@@ -124,7 +187,11 @@ namespace AutoCadMcpPlugin.Commands.RunCode
             {
                 // Con el PDB, una excepción en el código de la IA trae
                 // "codigo.cs:línea N" en el stack: se le puede decir dónde falló.
-                var emitido = compilacion.Emit(pe, pdb,
+                // Se emite una copia con un chequeo de tiempo al principio de cada bucle (__Paso de ScriptBase).
+                // Los errores y el filtro ya se vieron sobre el código ORIGINAL, así que la IA no ve nada de esto.
+                var conPresupuesto = arbol.WithRootAndOptions(new Presupuesto(userSpan).Visit(arbol.GetRoot()), arbol.Options);
+                var compilacionEmit = compilacion.ReplaceSyntaxTree(arbol, conPresupuesto);
+                var emitido = compilacionEmit.Emit(pe, pdb,
                     options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb));
                 if (!emitido.Success)
                 {

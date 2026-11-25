@@ -164,4 +164,7 @@ def draw_footing_tables(z: dict[str, Any], x: float, y: float, upm: float, qa: f
                                        col_widths=[w(v * k) for v in (12, 132, 18, 30)])
     tablas.append(t4)
     yy = _fondo(t4, yy)
+    # Sello obligatorio: es un predimensionamiento, lo revisa y firma un DRO / corresponsable.
+    import detalle as dt_mod
+    yy = dt_mod.sello_estructural(x, yy - w(4), upm)
     return {"box": [x, yy, x + w(width_mm), y], "tables": tablas}

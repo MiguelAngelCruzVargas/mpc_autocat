@@ -76,8 +76,8 @@ namespace AutoCadMcpPlugin.Commands.RunCode
 
             if (!IgualesEnTiempoConstante(calculado, esperado))
             {
-                // Frena el probar contraseñas en serie. Es el hilo de AutoCAD,
-                // pero un segundo por intento fallido es un costo aceptable.
+                // Frena el probar contraseñas en serie. CommandDispatcher la verifica
+                // antes en el hilo del socket: esta espera no congela AutoCAD.
                 Thread.Sleep(1000);
                 throw new InvalidOperationException("run_code: contraseña incorrecta.");
             }

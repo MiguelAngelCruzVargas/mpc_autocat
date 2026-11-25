@@ -142,10 +142,36 @@ namespace AutoCadMcpPlugin
                 catch (IOException) { mt = DateTime.MinValue; }
                 if (_estado != null && mt == _mtime && (DateTime.UtcNow - _leidoEn).TotalSeconds < 20) return _estado;
                 _estado = Calcular(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                // Calcular pudo reescribir "visto": se toma la fecha nueva para no recalcular en la próxima llamada.
+                try { mt = File.Exists(Archivo) ? File.GetLastWriteTimeUtc(Archivo) : DateTime.MinValue; }
+                catch (IOException) { }
                 _mtime = mt;
                 _leidoEn = DateTime.UtcNow;
                 return _estado;
             }
+        }
+
+        /// <summary>
+        /// Guarda en licencia.json la hora más alta vista (como licencia.py con tocar_reloj): sin esto, usando solo el
+        /// panel, "visto" quedaba en 0 y atrasar el reloj alargaba la prueba. Conserva el resto del archivo; si no se
+        /// puede escribir, no frena nada.
+        /// </summary>
+        private static void AnotarVisto(long ahora)
+        {
+            try
+            {
+                var d = JsonNode.Parse(File.ReadAllText(Archivo)) as JsonObject;
+                if (d == null) return;
+                double previo = 0;
+                try { if (d["visto"] != null) previo = d["visto"].GetValue<double>(); } catch (Exception) { }
+                if (ahora <= previo) return;
+                d["visto"] = (double)ahora;
+                var tmp = Archivo + ".tmp";
+                File.WriteAllText(tmp, d.ToJsonString(), new UTF8Encoding(false));
+                if (File.Exists(Archivo)) File.Delete(Archivo);
+                File.Move(tmp, Archivo);
+            }
+            catch (Exception) { }
         }
 
         private static JsonObject Mal(string motivo, string mensaje, string plan = null)
@@ -178,8 +204,13 @@ namespace AutoCadMcpPlugin
             string plan = p["plan"]?.GetValue<string>();
             if (p["maquina"]?.GetValue<string>() != IdEquipo())
                 return Mal("otro_equipo", "Esta licencia esta activada para otro equipo. Activala aqui con tu clave.", plan);
-            if (ahora < visto - 2 * 3600)
+            // "emitido" va FIRMADO en el token: atrasar el reloj por debajo de la fecha en que el servidor lo dio no se
+            // puede tapar editando licencia.json (a "visto" sí, por eso son las dos).
+            double emitido = p["emitido"]?.GetValue<double>() ?? 0;
+            if (ahora < visto - 2 * 3600 || ahora < emitido - 2 * 3600)
                 return Mal("reloj", "El reloj del equipo esta atrasado respecto a la ultima vez que se uso. Corrige la fecha y hora de Windows.", plan);
+            if (ahora > visto + 60)
+                AnotarVisto(ahora);
             double hasta = p["valido_hasta"]?.GetValue<double>() ?? 0;
             double? lic = p["licencia_hasta"] == null ? (double?)null : p["licencia_hasta"].GetValue<double>();
             if (ahora > hasta)

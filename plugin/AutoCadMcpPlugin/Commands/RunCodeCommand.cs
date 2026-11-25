@@ -91,10 +91,58 @@ namespace AutoCadMcpPlugin.Commands
             if (compileOnly)
                 return Cerrar(r, reloj, "compile_only", description, code);
 
+            GuardarAntes(doc, r);
             Ejecutar(doc, comp.ScriptType, r);
             bool fallo = r["aborted"]?.GetValue<bool>() ?? false;
             return Cerrar(r, reloj, fallo ? "excepción" : "ok", description, code,
                           fallo ? r["exception"]?["message"]?.GetValue<string>() : null);
+        }
+
+        /// <summary>
+        /// La contraseña se comprueba TAMBIÉN en el hilo del socket, antes de pasar al de AutoCAD: así la espera de
+        /// 1 s por intento fallido (RunCodeAccess.Verify) no congela la interfaz. Solo lee run_code.json y calcula
+        /// un hash: no toca la API de AutoCAD. Si es correcta, Run la vuelve a comprobar (barato) en el hilo de UI.
+        /// </summary>
+        public static void VerificarAntes(JsonObject pars)
+        {
+            string password = pars["password"]?.GetValue<string>() ?? "";
+            try
+            {
+                RunCodeAccess.Verify(password);
+            }
+            catch (InvalidOperationException ex)
+            {
+                RunCodeAccess.Log("rechazo", pars["description"]?.GetValue<string>() ?? "", 0,
+                                  pars["code"]?.GetValue<string>() ?? "", ex.Message);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Red de seguridad: el código corre en el hilo de AutoCAD y un bucle mal escrito puede colgarlo (el chequeo de
+        /// tiempo de ScriptBase solo cubre bucles, no recursión ni llamadas largas a la API). Si el dibujo ya tiene
+        /// archivo, se guarda antes (como QSAVE, con .bak); si es un «Dibujo1» sin guardar, solo se avisa.
+        /// </summary>
+        private static void GuardarAntes(Document doc, JsonObject r)
+        {
+            var db = doc.Database;
+            try
+            {
+                string path = doc.IsNamedDrawing ? doc.Name : null;
+                if (string.IsNullOrEmpty(path) || !path.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase)
+                    || !File.Exists(path) || doc.IsReadOnly)
+                {
+                    r["autosave"] = "omitido: el dibujo no tiene archivo .dwg propio (o es de solo lectura); guárdalo con save_drawing";
+                    return;
+                }
+                try { db.CloseInput(true); } catch (Autodesk.AutoCAD.Runtime.Exception) { }
+                db.SaveAs(path, true, DwgVersion.Current, db.SecurityParameters);
+                r["autosave"] = path;
+            }
+            catch (Exception ex)
+            {
+                r["autosave"] = "falló: " + ex.Message;
+            }
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -127,6 +175,8 @@ namespace AutoCadMcpPlugin.Commands
                         script = (ScriptBase)Activator.CreateInstance(tipo);
                         script.Init(doc, tr);
                         object valor = script.Run();
+                        if (script.TiempoAgotado)
+                            throw new TimeoutException(ScriptBase.MensajeTiempo);
                         // Se serializa ANTES del commit: si devuelve entidades
                         // abiertas en esta transacción, después ya están cerradas.
                         r["result"] = Serializar(valor, 0);

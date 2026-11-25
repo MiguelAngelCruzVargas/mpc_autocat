@@ -430,7 +430,53 @@ namespace AutoCadMcpPlugin.Commands
             "CUI", "CUILOAD", "CUIUNLOAD", "CUIEXPORT", "CUIIMPORT", "MENU", "MENULOAD", "MENUUNLOAD",
             "CUSTOMIZE", "ALIASEDIT", "OPTIONS", "SECURITYOPTIONS",
             "QUIT", "EXIT", "CLOSEALL",
+            "OPEN", "SAVEAS", "SAVE", "WBLOCK", "HYPERLINK", "XREF", "XATTACH", "IMPORT", "EXPORT",
         };
+
+        /// <summary>
+        /// Editor.Command toma los tokens que sobran como comandos NUEVOS (["REGEN", "SCRIPT", "x.scr"] encadenaría
+        /// SCRIPT): en cualquier posición se rechazan los denegados, salvo los que también son opciones de otros
+        /// comandos (eXit de PEDIT; Save/Import/Export de -LAYER Estado). IGUAL a comandos.DENEGADOS_EN_CUALQUIER_TOKEN.
+        /// </summary>
+        internal static readonly string[] DenegadosEnCualquierToken = Array.FindAll(ComandosDenegados,
+            c => c != "EXIT" && c != "SAVE" && c != "IMPORT" && c != "EXPORT");
+
+        /// <summary>Un espacio vale Enter: estas palabras se rechazan aun dentro de un token. IGUAL a comandos.EJECUTAN_CODIGO.</summary>
+        internal static readonly string[] EjecutanCodigo =
+        {
+            "NETLOAD", "APPLOAD", "ARX", "LISP", "VLISP", "VLIDE", "VLLOAD", "VLRUN",
+            "VBARUN", "VBAIDE", "VBALOAD", "VBAMAN", "VBASTMT",
+            "SCRIPT", "RSCRIPT", "ACTRUN", "SHELL", "SH", "START", "STARTAPP", "BROWSER",
+            "CUILOAD", "MENULOAD", "MENU", "OPEN",
+        };
+
+        /// <summary>Archivos de código o de script. IGUAL a comandos.EXTENSIONES_CODIGO.</summary>
+        internal static readonly string[] ExtensionesCodigo =
+        {
+            ".scr", ".lsp", ".fas", ".vlx", ".dll", ".arx", ".dbx", ".crx", ".dvb", ".mnl", ".cuix", ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".js",
+        };
+
+        private static string MotivoToken(string t, int i)
+        {
+            string s = (t ?? "").Trim();
+            if (s.Length == 0) return null;
+            string b = BaseComando(s);
+            if (i > 0 && Array.IndexOf(DenegadosEnCualquierToken, b) >= 0)
+                return "El token " + i + " ('" + s + "') es un comando prohibido: Editor.Command lo correría como un comando NUEVO. Manda un solo comando por llamada.";
+            if (i > 0 && SystemVariableCommands.Protegidas.Contains(b))
+                return "El token " + i + " ('" + s + "') es una variable de seguridad: escrita en la línea de comandos la cambiaría.";
+            string[] palabras = s.Replace(';', ' ').Replace(',', ' ').Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+            for (int j = 0; j < palabras.Length; j++)
+                if ((i > 0 || j > 0) && Array.IndexOf(EjecutanCodigo, BaseComando(palabras[j])) >= 0)
+                    return "El token " + i + " lleva '" + palabras[j] + "', un comando que carga o ejecuta código: no se permite.";
+            if (s.StartsWith("\\\\") || s.StartsWith("//"))
+                return "El token " + i + " es una ruta de red (UNC): no se permite.";
+            string baja = s.ToLowerInvariant();
+            foreach (var ext in ExtensionesCodigo)
+                if (baja.Contains(ext) && (baja.EndsWith(ext) || baja.Contains(ext + " ") || baja.Contains(ext + "\"") || baja.Contains(ext + "'")))
+                    return "El token " + i + " nombra un archivo de código o de script (" + ext + "): no se permite.";
+            return null;
+        }
 
         private static string BaseComando(string token)
         {
@@ -455,6 +501,11 @@ namespace AutoCadMcpPlugin.Commands
                 string s = (t ?? "").TrimStart();
                 if (s.StartsWith("(") || s.StartsWith("!"))
                     return "Un token que empieza con '(' o '!' lo evalúa AutoCAD como LISP: no se permite.";
+            }
+            for (int i = 0; i < textos.Count; i++)
+            {
+                string m = MotivoToken(textos[i], i);
+                if (m != null) return m;
             }
             return null;
         }

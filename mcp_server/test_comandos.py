@@ -79,6 +79,20 @@ def test_lista_negra() -> None:
     rechazado("demasiados tokens", ["LINE"] + ["0,0"] * comandos.MAX_TOKENS)
     rechazado("token enorme", ["TEXT", "x" * (comandos.MAX_LARGO + 1)])
     rechazado("comando vacío", ["   "])
+    # Encadenar comandos: Editor.Command corre los tokens que sobran como comandos nuevos.
+    rechazado("SCRIPT encadenado tras REGEN", ["REGEN", "SCRIPT", r"C:\x.scr"])
+    rechazado("APPLOAD encadenado", ["ZOOM", "Extents", "_.APPLOAD", "x"])
+    rechazado("NETLOAD con prefijo en medio", ["REGEN", "'_NETLOAD"])
+    rechazado("SCRIPT dentro de un token con espacio", ["REGEN", "0,0 SCRIPT"])
+    rechazado("SCRIPT tras el nombre en el primer token", ["REGEN SCRIPT"])
+    rechazado("variable protegida encadenada", ["REGEN", "SECURELOAD", 0])
+    for c in ("OPEN", "SAVEAS", "WBLOCK", "-HYPERLINK", "XATTACH", "-XREF", "IMPORT", "EXPORT"):
+        rechazado(f"{c} como comando", [c, "x"])
+    rechazado("OPEN encadenado", ["REGEN", "OPEN", r"C:\a.dwg"])
+    rechazado("ruta UNC", ["-INSERT", r"\\servidor\c\b.dwg", "0,0"])
+    rechazado("archivo .lsp", ["-INSERT", r"C:\x\acad.lsp"])
+    rechazado("archivo .dll", ["REGEN", r"C:\x\a.dll"])
+    rechazado("archivo .scr con comillas", ["-INSERT", r'"C:\x.scr"'])
 
 
 def test_permitido() -> None:
@@ -100,6 +114,12 @@ def test_permitido() -> None:
     con_plugin(p, lambda: server.run_command(["ZOOM", "Extents"]))
     check("ZOOM, REGEN y compañía se permiten", p.llamadas[0][1]["tokens"], ["ZOOM", "Extents"])
     check("SETVAR de una variable normal se permite", comandos.motivo_denegado(["SETVAR", "LTSCALE", "50"]), None)
+    check("UNDO Mark / Back del agente se permite", comandos.motivo_denegado(["UNDO", "Mark"]), None)
+    check("PEDIT con eXit se permite", comandos.motivo_denegado(["PEDIT", "2B0", "Close", "eXit"]), None)
+    check("-LAYER Estado Save se permite", comandos.motivo_denegado(["-LAYER", "State", "Save", "E1", "", ""]), None)
+    check("texto con paréntesis y comas se permite", comandos.motivo_denegado(["-TEXT", "0,0", "2", "0", "Recámara 2 (3.5 x 4)"]), None)
+    check("archivo .json no es .js", comandos.motivo_denegado(["-INSERT", r"C:\x\datos.json"]), None)
+    check("-INSERT de un bloque local se permite", comandos.motivo_denegado(["-INSERT", "PUERTA", "0,0", "1", "1", "0"]), None)
     check("la tool está registrada en una categoría", "run_command" in server.mcp._tool_manager._tools, True)
 
 
@@ -110,6 +130,14 @@ def test_igual_que_el_plugin() -> None:
     bloque = re.search(r"ComandosDenegados\s*=\s*\{(.*?)\};", src, re.S).group(1)
     del_cs = tuple(re.findall(r'"([A-Z0-9]+)"', bloque))
     check("C# y Python niegan los mismos comandos", del_cs, comandos.DENEGADOS)
+    bloque = re.search(r"EjecutanCodigo\s*=\s*\{(.*?)\};", src, re.S).group(1)
+    check("y las mismas palabras dentro de un token", tuple(re.findall(r'"([A-Z0-9]+)"', bloque)), comandos.EJECUTAN_CODIGO)
+    bloque = re.search(r"ExtensionesCodigo\s*=\s*\{(.*?)\};", src, re.S).group(1)
+    check("y las mismas extensiones de código", tuple(re.findall(r'"(\.[a-z0-9]+)"', bloque)), comandos.EXTENSIONES_CODIGO)
+    bloque = re.search(r"DenegadosEnCualquierToken\s*=.*?\);", src, re.S).group(0)
+    fuera = tuple(re.findall(r'c != "([A-Z]+)"', bloque))
+    check("y exceptúan las mismas en cualquier token", tuple(c for c in comandos.DENEGADOS if c not in fuera),
+          comandos.DENEGADOS_EN_CUALQUIER_TOKEN)
     sv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugin", "AutoCadMcpPlugin", "Commands", "SystemVariableCommands.cs")
     src = open(sv, encoding="utf-8").read()
     bloque = re.search(r"Protegidas\s*=\s*new HashSet<string>\((.*?)\};", src, re.S).group(1)

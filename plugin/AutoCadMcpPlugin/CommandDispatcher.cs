@@ -12,6 +12,9 @@ namespace AutoCadMcpPlugin
     /// </summary>
     public static class CommandDispatcher
     {
+        /// <summary>Respuesta de error sin id (pedido rechazado antes de leerlo).</summary>
+        public static string ErrorResponse(string error) => BuildResponse(null, false, null, error);
+
         public static string Dispatch(string requestJson)
         {
             string id = null;
@@ -28,6 +31,8 @@ namespace AutoCadMcpPlugin
                 // Licencia: license_status siempre responde; el resto se exige solo en el build vendido (constante LICENCIA).
                 if (cmd == "license_status") return BuildResponse(id, true, LicenciaGuard.Estado(), null);
                 LicenciaGuard.Exigir(cmd);
+                // run_code: la contraseña (y su espera de 1 s si está mal) se comprueba acá, fuera del hilo de AutoCAD.
+                if (cmd == "run_code") AutoCadMcpPlugin.Commands.RunCodeCommand.VerificarAntes(pars);
 
                 JsonObject result = RunOnDocumentThread(cmd, pars);
                 return BuildResponse(id, true, result, null);

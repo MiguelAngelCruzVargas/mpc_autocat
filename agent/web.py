@@ -231,6 +231,18 @@ def _puerto_plugin() -> int:
         return 8765
 
 
+def _token_plugin() -> str:
+    """El token que el plugin anotó junto a 'port' (sin él el plugin no atiende)."""
+    explicito = os.environ.get("ACAD_MCP_TOKEN")
+    if explicito:
+        return explicito.strip()
+    try:
+        with open(os.path.join(os.path.dirname(_ACAD_PORT_FILE), "token"), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
 def _verificar_autocad(timeout: float = 1.5) -> dict[str, Any]:
     """Chequeo rápido e independiente del bucle del agente.
 
@@ -245,7 +257,7 @@ def _verificar_autocad(timeout: float = 1.5) -> dict[str, Any]:
     puerto = _puerto_plugin()
     try:
         with socket.create_connection((_ACAD_HOST, puerto), timeout=timeout) as sock:
-            pedido = json.dumps({"id": "estado-ui", "cmd": "ping", "params": {}})
+            pedido = json.dumps({"id": "estado-ui", "cmd": "ping", "params": {}, "token": _token_plugin()})
             sock.sendall(pedido.encode("utf-8") + b"\n")
             sock.settimeout(timeout)
             buffer = b""

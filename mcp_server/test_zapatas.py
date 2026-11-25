@@ -221,6 +221,9 @@ def test_cuadros() -> None:
           all(f[3] in ("CUMPLE", "") for f in filas[1:]) and len(filas) >= 10, filas)
     t = zapatas_cuadros.draw_footing_tables(z, 0, 0, 0.02, qa=15.0)
     check("cuadros apilados hacia abajo", t["box"][1] < t["box"][3], t["box"])
+    check("la columna de cuadros lleva el sello de predimensionamiento (DRO / corresponsable)",
+          any("PREDIMENSIONAMIENTO" in str(e.get("text", "")) and "DRO" in str(e.get("text", ""))
+              for e in preview.DRAWN if e.get("cmd") == "create_text"))
     notas = zapatas_cuadros.general_notes(z, 15.0)
     check("las notas citan el recubrimiento de ACI", any("20.5.1.3.1" in n for n in notas))
 

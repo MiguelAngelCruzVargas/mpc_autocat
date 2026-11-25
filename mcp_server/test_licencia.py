@@ -125,6 +125,14 @@ def main() -> int:
     reloj.dias(5)
     lanza("la prueba termina a los 7 dias", lambda: svc.prueba("d" * 64), 402)
     check("otro equipo tiene su propia prueba", bool(svc.prueba("e" * 64)["token"]), True)
+    # ---- prueba: tope de pruebas NUEVAS por IP (borrar licencia.json o cambiar el MachineGuid no da otra)
+    check("1a prueba nueva desde una IP", bool(svc.prueba("1" * 64, "203.0.113.5")["token"]), True)
+    check("2a prueba nueva desde la misma IP", bool(svc.prueba("2" * 64, "203.0.113.5")["token"]), True)
+    lanza("la 3a prueba nueva desde la misma IP en el mes se rechaza", lambda: svc.prueba("3" * 64, "203.0.113.5"), 429)
+    check("pedir otra vez una prueba ya iniciada no cuenta contra la IP", bool(svc.prueba("1" * 64, "203.0.113.5")["token"]), True)
+    check("otra IP si puede", bool(svc.prueba("4" * 64, "198.51.100.7")["token"]), True)
+    reloj.dias(31)
+    check("pasado el mes la IP vuelve a poder", bool(svc.prueba("5" * 64, "203.0.113.5")["token"]), True)
 
     # ---- cliente: estado local
     licencia.CARPETA = tmp
@@ -205,6 +213,25 @@ def main() -> int:
         check("renovar sin servidor no levanta", True, True)
     finally:
         srv.shutdown()
+
+    # ---- la renovación va en un hilo aparte: no frena el comando
+    import threading as _th
+    import time as _t
+    real = licencia.renovar_si_hace_falta
+    soltar = _th.Event()
+    licencia.renovar_si_hace_falta = lambda: soltar.wait(5)  # type: ignore[assignment]
+    licencia._RENOVACION.update(hilo=None, ultimo=0.0)
+    try:
+        t0 = _t.time()
+        h = licencia._renovar_en_fondo({"por_renovar": True, "motivo": "ok"}, t0)
+        check("renovar no bloquea (vuelve enseguida con el hilo en marcha)", (h is not None and h.is_alive(), _t.time() - t0 < 1), (True, True))
+        check("mientras corre no se lanza otro", licencia._renovar_en_fondo({"por_renovar": True}, t0 + 1) is h, True)
+        soltar.set()
+        h.join(2)
+        check("y tras terminar no se repite antes de 10 minutos", licencia._renovar_en_fondo({"por_renovar": True}, t0 + 5), None)
+        check("sin nada por renovar no arranca hilo", licencia._renovar_en_fondo({"motivo": "ok"}, t0 + 10_000), None)
+    finally:
+        licencia.renovar_si_hace_falta = real  # type: ignore[assignment]
 
     if FAILED:
         print("\nFALLARON:")

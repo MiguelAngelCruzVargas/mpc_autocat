@@ -83,6 +83,38 @@ namespace AutoCadMcpPlugin
             Application.DocumentManager.DocumentActivated -= OnDocumentActivated;
             _server?.Stop();
             try { if (File.Exists(PortFilePath)) File.Delete(PortFilePath); } catch { }
+            try { if (File.Exists(TokenFilePath)) File.Delete(TokenFilePath); } catch { }
+        }
+
+        /// <summary>
+        /// Token de acceso al puerto (TcpServer.Token), junto al archivo "port". %LOCALAPPDATA% ya es solo del
+        /// usuario; además, en net48, se le quitan los permisos heredados y queda solo para el usuario actual.
+        /// </summary>
+        internal static string TokenFilePath => Path.Combine(Path.GetDirectoryName(PortFilePath), "token");
+
+        private static void PublishToken()
+        {
+            try
+            {
+                File.WriteAllText(TokenFilePath, TcpServer.Token);
+#if NETFRAMEWORK
+                try
+                {
+                    var sec = new System.Security.AccessControl.FileSecurity();
+                    sec.SetAccessRuleProtection(true, false);
+                    sec.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                        System.Security.Principal.WindowsIdentity.GetCurrent().User,
+                        System.Security.AccessControl.FileSystemRights.FullControl,
+                        System.Security.AccessControl.AccessControlType.Allow));
+                    File.SetAccessControl(TokenFilePath, sec);
+                }
+                catch (System.Exception) { }
+#endif
+            }
+            catch (System.Exception ex)
+            {
+                Log("[MCP] No se pudo anotar el token de acceso (" + ex.Message + "): el servidor MCP no podrá conectarse.");
+            }
         }
 
         private static void OnUiThreadException(object sender,
@@ -120,6 +152,7 @@ namespace AutoCadMcpPlugin
                 var dir = Path.GetDirectoryName(PortFilePath);
                 if (!Directory.Exists(dir))
                     Directory.CreateDirectory(dir);
+                PublishToken();   // antes que el puerto: quien lea el puerto ya encuentra el token
                 File.WriteAllText(PortFilePath, port.ToString());
             }
             catch (System.Exception)

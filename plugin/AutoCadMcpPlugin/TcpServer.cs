@@ -134,6 +134,17 @@ namespace AutoCadMcpPlugin
                     if (string.IsNullOrWhiteSpace(line))
                         continue;
 
+                    // Autenticación: cualquier programa (o una página web con un POST a 127.0.0.1) puede abrir el
+                    // puerto. Cada línea tiene que ser un JSON con el "token" que el plugin anotó al arrancar; a la
+                    // primera que no lo sea se corta la conexión (eso también mata las cabeceras HTTP colgadas).
+                    string motivo = MotivoRechazo(line);
+                    if (motivo != null)
+                    {
+                        if (motivo.Length > 0)
+                            try { writer.WriteLine(CommandDispatcher.ErrorResponse(motivo)); } catch (IOException) { }
+                        break;
+                    }
+
                     string response = CommandDispatcher.Dispatch(line);
 
                     try
@@ -149,6 +160,64 @@ namespace AutoCadMcpPlugin
                     }
                 }
             }
+        }
+
+        // ------------------------------------------------------------ token de acceso
+
+        /// <summary>
+        /// Token aleatorio de esta sesión de AutoCAD (32 bytes en hex). PluginEntry lo anota junto al archivo
+        /// "port"; el cliente Python lo lee y lo manda en cada pedido.
+        /// </summary>
+        public static readonly string Token = NuevoToken();
+
+        private static string NuevoToken()
+        {
+            var b = new byte[32];
+            using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create()) rng.GetBytes(b);
+            var sb = new StringBuilder(64);
+            foreach (var x in b) sb.Append(x.ToString("x2"));
+            return sb.ToString();
+        }
+
+        private static readonly string[] PrefijosHttp =
+        {
+            "GET ", "POST ", "PUT ", "HEAD ", "DELETE ", "OPTIONS ", "PATCH ", "CONNECT ", "TRACE ", "HTTP/",
+        };
+
+        /// <summary>Comparación en tiempo constante (no revela cuántos caracteres coinciden).</summary>
+        internal static bool IgualConstante(string a, string b)
+        {
+            if (a == null || b == null) return false;
+            int dif = a.Length ^ b.Length;
+            for (int i = 0; i < b.Length; i++)
+                dif |= (i < a.Length ? a[i] : 0) ^ b[i];
+            return dif == 0;
+        }
+
+        /// <summary>
+        /// null si la línea se atiende; "" si se corta sin contestar (no es JSON: HTTP u otra cosa);
+        /// un texto si se contesta ese error y se corta (JSON sin token o con uno equivocado).
+        /// </summary>
+        internal static string MotivoRechazo(string line)
+        {
+            string t = line.TrimStart();
+            foreach (var p in PrefijosHttp)
+                if (t.StartsWith(p, StringComparison.OrdinalIgnoreCase)) return "";
+            if (!t.StartsWith("{")) return "";
+            string token;
+            try
+            {
+                var obj = System.Text.Json.Nodes.JsonNode.Parse(t) as System.Text.Json.Nodes.JsonObject;
+                if (obj == null) return "";
+                var nodo = obj["token"];
+                token = nodo != null && nodo.GetValueKind() == System.Text.Json.JsonValueKind.String ? nodo.GetValue<string>() : null;
+            }
+            catch (Exception) { return ""; }
+            if (!IgualConstante(token, Token))
+                return "TOKEN: pedido sin el token de acceso de esta sesión de AutoCAD (o con uno viejo). " +
+                       "El cliente lo lee del archivo 'token' junto a 'port' en %LOCALAPPDATA%\\AutoCadMcp: " +
+                       "actualiza el servidor MCP o reinicia AutoCAD.";
+            return null;
         }
 
         /// <summary>

@@ -94,6 +94,9 @@ function Get-AutoCadInstalados {
         foreach ($k in Get-ChildItem $base -ErrorAction SilentlyContinue) {
             $serie = $k.PSChildName
             if ($series.ContainsKey($serie)) { $out += [pscustomobject]@{ Serie = $serie; Anio = $series[$serie] } }
+            elseif ($serie -match '^R(\d+)\.(\d+)$' -and ([int]$Matches[1] -gt 26 -or ([int]$Matches[1] -eq 26 -and [int]$Matches[2] -gt 0))) {
+                $out += [pscustomobject]@{ Serie = 'NUEVA'; Anio = $serie }
+            }
         }
     }
     return $out
@@ -125,7 +128,8 @@ if (-not $acads) {
     foreach ($a in $acads) {
         $nota = switch ($a.Serie) {
             'R25.1' { 'AutoCAD 2026: usa el plugin de .NET 8 (el de 2025). NO se probó en esta versión: si algo falla, avisá.' }
-            'R26.0' { 'AutoCAD 2027: usa .NET 10 y este plugin NO lo soporta todavía.' }
+            'R26.0' { '' }   # 2027: plugin de .NET 10 (Contents/net10), probado en vivo
+            'NUEVA' { 'versión más nueva que 2027: este plugin NO la soporta todavía (el bundle llega hasta R26.0).' }
             default { '' }
         }
         if ($nota) { Aviso "AutoCAD $($a.Anio): $nota" } else { Ok "AutoCAD $($a.Anio)" }

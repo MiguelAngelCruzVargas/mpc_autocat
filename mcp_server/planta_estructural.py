@@ -310,8 +310,10 @@ def _cimentacion(columns, tipos, ligas, lot, upm, c, title, text_mm, origin, col
         ty = tb["bottom"] - 3.0 * h
         right = max(right, tb["right"])
     if notes:
-        _notas(notes, tx0, ty, upm)
+        ty = _notas(notes, tx0, ty, upm)
         right = max(right, tx0 + 70 * 0.92 * 2.0 * upm)
+    dt.sello_estructural(tx0, ty, upm)   # predimensionamiento: lo firma un DRO / corresponsable
+    right = max(right, tx0 + dt.text_width(dt.SELLO_ESTRUCTURAL, 3.0 * upm))
     return {"box": [ejes["left"], min(lin_b - 3 * upm, t["box"][1]), right, ejes["top"]],
             "overlaps": encimadas,
             "warnings": [f"Zapatas encimadas {e['a']} / {e['b']}: van COMBINADAS"
@@ -481,8 +483,10 @@ def _losas(columns, beams, panels, upm, huecos, c, title, text_mm, column_mark, 
         todas.insert(0, f"Losa maciza de {slab_thickness * 100:.0f} cm de espesor; el armado de cada "
                         "tablero se indica con sus bastones (varilla @ separación en cm).")
     if todas:
-        _notas(todas, tx0, ty, upm)
+        ty = _notas(todas, tx0, ty, upm)
         right = max(right, tx0 + 70 * 0.92 * 2.0 * upm)
+    dt.sello_estructural(tx0, ty, upm)   # predimensionamiento: lo firma un DRO / corresponsable
+    right = max(right, tx0 + dt.text_width(dt.SELLO_ESTRUCTURAL, 3.0 * upm))
     return {"box": [ejes["left"], min(lin_b - 3 * upm, t["box"][1]), right, ejes["top"]],
             "warnings": [f"Tablero {m}: el hueco lo ocupa casi entero, sin lugar para anotarlo"
                          for m in sin_lugar]}

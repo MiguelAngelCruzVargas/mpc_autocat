@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import secrets
@@ -47,6 +48,10 @@ from correo import correo_desde_entorno
 DIA = 86400
 TOKEN_DIAS = 7
 PLANES = {"perpetua": None, "anual": 365, "mensual": 30, "prueba": 7}
+# Pruebas NUEVAS por IP: borrar licencia.json o cambiar el MachineGuid da "otro equipo", asi que ademas se limita por
+# IP (guardada como hash). Las pruebas ya iniciadas y las licencias pagadas no cuentan ni se ven afectadas.
+MAX_PRUEBAS_POR_IP = 2
+VENTANA_PRUEBAS_IP_DIAS = 30
 MAX_EQUIPOS_DEFECTO = 2
 ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # sin 0/O/1/I
 
@@ -108,6 +113,8 @@ class Servicio:
                 kid TEXT NOT NULL, maquina TEXT NOT NULL, equipo TEXT DEFAULT '', primera REAL NOT NULL, ultima REAL NOT NULL,
                 PRIMARY KEY (kid, maquina));
             CREATE TABLE IF NOT EXISTS pruebas (maquina TEXT PRIMARY KEY, inicio REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS pruebas_ip (ip_hash TEXT NOT NULL, inicio REAL NOT NULL);
+            CREATE INDEX IF NOT EXISTS pruebas_ip_idx ON pruebas_ip (ip_hash, inicio);
         """)
         self.db.commit()
 
@@ -159,13 +166,20 @@ class Servicio:
             self.db.commit()
             return self._token(fila["kid"], fila["plan"], maquina, vence)
 
-    def prueba(self, maquina: str) -> dict[str, Any]:
-        """Prueba gratis de 7 dias, una sola vez por equipo."""
+    def prueba(self, maquina: str, ip: str = "") -> dict[str, Any]:
+        """Prueba gratis de 7 dias, una sola vez por equipo y como mucho MAX_PRUEBAS_POR_IP nuevas por IP al mes."""
         maquina = self._maquina(maquina)
         with self._lock:
             fila = self.db.execute("SELECT inicio FROM pruebas WHERE maquina=?", (maquina,)).fetchone()
             ahora = self.ahora()
             if fila is None:
+                if ip:
+                    ip_hash = hashlib.sha256(("vigentra-ip:" + ip).encode()).hexdigest()
+                    desde = ahora - VENTANA_PRUEBAS_IP_DIAS * DIA
+                    n = self.db.execute("SELECT COUNT(*) FROM pruebas_ip WHERE ip_hash=? AND inicio>=?", (ip_hash, desde)).fetchone()[0]
+                    if n >= MAX_PRUEBAS_POR_IP:
+                        raise ErrorLicencia("Desde esta conexion ya se iniciaron %d pruebas gratis este mes. Compra una licencia o escribe a soporte." % n, 429)
+                    self.db.execute("INSERT INTO pruebas_ip VALUES (?,?)", (ip_hash, ahora))
                 self.db.execute("INSERT INTO pruebas VALUES (?,?)", (maquina, ahora))
                 self.db.commit()
                 inicio = ahora
@@ -351,6 +365,22 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                 raise ErrorLicencia("Se esperaba un objeto JSON.")
             return d
 
+        def _ip_real(self) -> str:
+            """La IP del cliente. Detras de Caddy (127.0.0.1 o red privada de Docker) la conexion viene del proxy:
+            se usa X-Real-IP, que Caddy pone con {remote_host} (Caddyfile.licencias). Sin proxy, la de la conexion."""
+            ip = self.client_address[0]
+            try:
+                privada = ipaddress.ip_address(ip).is_private or ipaddress.ip_address(ip).is_loopback
+            except ValueError:
+                privada = False
+            if privada:
+                real = (self.headers.get("X-Real-IP") or "").strip()
+                if not real:
+                    real = (self.headers.get("X-Forwarded-For") or "").split(",")[-1].strip()
+                if real:
+                    return real[:64]
+            return ip
+
         def _admin(self) -> bool:
             enviado = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
             return bool(admin_token) and secrets.compare_digest(enviado, admin_token)
@@ -419,7 +449,7 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                         if ruta == "/v1/activar":
                             r = servicio.activar(d.get("clave", ""), d.get("maquina", ""), d.get("equipo", ""))
                         else:
-                            r = servicio.prueba(d.get("maquina", ""))
+                            r = servicio.prueba(d.get("maquina", ""), self._ip_real())
                     except ErrorLicencia as exc:
                         if exc.codigo == 403:
                             limite.fallo(ip)

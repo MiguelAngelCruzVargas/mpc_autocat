@@ -21,6 +21,7 @@ import base64
 import hashlib
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -117,7 +118,8 @@ def estado(ahora: Optional[float] = None, publica_b64: Optional[str] = None, toc
         return {"valida": False, "plan": p.get("plan"), "motivo": "otro_equipo",
                 "mensaje": "Esta licencia esta activada para otro equipo. Activala aqui con tu clave (si ya usaste todos tus equipos, pide a soporte liberar uno)."}
     visto = float(d.get("visto", 0))
-    if ahora < visto - 2 * 3600:
+    # "emitido" va firmado en el token: atrasar el reloj por debajo de él no se tapa editando licencia.json.
+    if ahora < visto - 2 * 3600 or ahora < float(p.get("emitido", 0)) - 2 * 3600:
         return {"valida": False, "plan": p.get("plan"), "motivo": "reloj",
                 "mensaje": "El reloj del equipo esta atrasado respecto a la ultima vez que se uso. Corrige la fecha y hora de Windows."}
     if tocar_reloj and ahora > visto + 60:
@@ -197,6 +199,37 @@ def renovar_si_hace_falta() -> None:
 
 _CACHE: dict[str, Any] = {"t": 0.0, "mtime": None, "estado": None}
 
+# Renovación en segundo plano: antes exigir() llamaba al servidor (hasta 15 s de espera) en el MISMO hilo del comando,
+# cada 30 s en los últimos 3 días del token. Ahora se lanza un hilo, uno a la vez y como mucho cada 10 minutos.
+_RENOVACION: dict[str, Any] = {"hilo": None, "ultimo": 0.0}
+_RENOVACION_CANDADO = threading.Lock()
+RENOVAR_CADA_S = 600
+
+
+def _renovar_en_fondo(e: dict[str, Any], ahora: float) -> Optional[threading.Thread]:
+    """Arranca (si hace falta y no hay otro) un hilo que renueva el token. Devuelve el hilo en curso o None."""
+    if not (e.get("por_renovar") or e.get("motivo") == "token_vencido"):
+        return None
+    with _RENOVACION_CANDADO:
+        hilo = _RENOVACION["hilo"]
+        if hilo is not None and hilo.is_alive():
+            return hilo
+        if ahora - _RENOVACION["ultimo"] < RENOVAR_CADA_S:
+            return None
+        _RENOVACION["ultimo"] = ahora
+
+        def correr() -> None:
+            try:
+                renovar_si_hace_falta()
+            except Exception:  # noqa: BLE001 - un hilo de fondo no puede tumbar nada; sin red el token sigue valiendo
+                pass
+            _CACHE["estado"] = None   # que el próximo exigir relea el archivo renovado
+
+        hilo = threading.Thread(target=correr, name="licencia-renovar", daemon=True)
+        _RENOVACION["hilo"] = hilo
+        hilo.start()
+        return hilo
+
 
 def exigir(cmd: str) -> None:
     """Llamar antes de mandar un comando a AutoCAD. Levanta LicenciaError si no hay licencia valida."""
@@ -208,8 +241,12 @@ def exigir(cmd: str) -> None:
     except OSError:
         mtime = None
     if _CACHE["estado"] is None or mtime != _CACHE["mtime"] or ahora - _CACHE["t"] > 30:
-        renovar_si_hace_falta()
         nuevo = estado(ahora)  # puede reescribir el archivo (reloj): el mtime se lee DESPUES
+        hilo = _renovar_en_fondo(nuevo, ahora)
+        if hilo is not None and nuevo.get("motivo") == "token_vencido":
+            # Sin token vigente el comando fallaría igual: se espera un poco a la renovación (nunca con uno válido).
+            hilo.join(timeout=5)
+            nuevo = estado(time.time())
         try:
             mtime = os.path.getmtime(ARCHIVO)
         except OSError:
