@@ -26,9 +26,15 @@ namespace AutoCadMcpPlugin.Chat
     /// </summary>
     internal static class Proveedores
     {
-        // Ordenados por id, como los devuelve el servidor.
+        /// <summary>«IA incluida en mi plan»: el servidor de licencias de Vigentra hace de intermediario (licencias/servidor/ia.py).
+        /// No pide clave: se autentica con el token de la licencia. Va primero porque es la opción para quien no tiene cuenta
+        /// con un proveedor; quien prefiera su propia clave elige cualquiera de los demás.</summary>
+        public const string IdIncluida = "vigentra";
+
+        // La incluida primero; el resto ordenados por id, como los devuelve el servidor.
         public static readonly IReadOnlyList<PresetProveedor> Presets = new List<PresetProveedor>
         {
+            new PresetProveedor { Id = IdIncluida,   Url = LicenciaGuard.UrlIaIncluida(),     Variable = "VIGENTRA_IA_TOKEN",  ModeloSugerido = "incluido" },
             new PresetProveedor { Id = "anthropic",  Url = "https://api.anthropic.com/v1",    Variable = "ANTHROPIC_API_KEY",  ModeloSugerido = "claude-sonnet-5-5" },
             new PresetProveedor { Id = "deepseek",   Url = "https://api.deepseek.com/v1",     Variable = "DEEPSEEK_API_KEY",   ModeloSugerido = "deepseek-flash" },
             new PresetProveedor { Id = "groq",       Url = "https://api.groq.com/openai/v1",  Variable = "GROQ_API_KEY",       ModeloSugerido = "openai/gpt-oss-120b" },
@@ -70,6 +76,41 @@ namespace AutoCadMcpPlugin.Chat
                     return Analizar(texto);
                 }
             }
+        }
+
+        /// <summary>Cuánto crédito de la IA incluida le queda este mes, dicho para la persona. Nunca lanza.</summary>
+        public static async Task<string> SaldoIncluidaAsync(string urlBase = null, CancellationToken ct = default)
+        {
+            var token = Credenciales.Obtener(IdIncluida, "VIGENTRA_IA_TOKEN");
+            if (string.IsNullOrEmpty(token)) return "La IA incluida necesita una licencia activa o la prueba gratis.";
+            try
+            {
+                using (var req = new HttpRequestMessage(HttpMethod.Get, (urlBase ?? LicenciaGuard.UrlIaIncluida()).TrimEnd('/') + "/saldo"))
+                {
+                    req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
+                    using (var resp = await Http.SendAsync(req, ct).ConfigureAwait(false))
+                    {
+                        var texto = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        if ((int)resp.StatusCode == 404)
+                            return "La IA incluida todavía no está disponible. Por ahora elige un proveedor y usa tu propia clave.";
+                        using (var doc = JsonDocument.Parse(texto))
+                        {
+                            var r = doc.RootElement;
+                            if ((int)resp.StatusCode >= 400)
+                                return r.TryGetProperty("error", out var e) && e.TryGetProperty("message", out var msg) ? msg.GetString() : "No pude consultar tu crédito.";
+                            double Num(string k) => r.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0;
+                            var inv = System.Globalization.CultureInfo.InvariantCulture;
+                            var restante = Num("restante_usd");
+                            var texto2 = "Incluida en tu plan: no necesitas clave. Te quedan US$" + restante.ToString("0.00", inv)
+                                         + " de crédito este mes (de US$" + Num("credito_del_plan_usd").ToString("0.00", inv) + ")";
+                            if (Num("extra_usd") > 0) texto2 += " más US$" + Num("extra_usd").ToString("0.00", inv) + " de paquetes";
+                            return restante > 0 ? texto2 + "."
+                                : "Se acabó el crédito incluido de este mes. Usa tu propia clave (elige otro proveedor) o pide un paquete; se renueva el día 1.";
+                        }
+                    }
+                }
+            }
+            catch (Exception) { return "Incluida en tu plan: no necesitas clave. (No pude consultar tu crédito ahora.)"; }
         }
 
         /// <summary>De la respuesta de /models («data» u «models»), las filas. Lo que el proveedor publica de visión manda sobre el nombre.</summary>

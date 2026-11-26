@@ -34,6 +34,8 @@ namespace AutoCadMcpPlugin.Chat
     {
         public long Entrada, Salida;
         public int Vueltas;
+        /// <summary>Lo que el proveedor dijo que costó (OpenRouter y la IA incluida lo mandan en usage.cost). 0 si no lo dijo.</summary>
+        public double CostoReportado;
         public long Total => Entrada + Salida;
         public void AnotarVuelta() { Vueltas++; }
 
@@ -42,6 +44,7 @@ namespace AutoCadMcpPlugin.Chat
             if (!(uso is JsonObject o)) return;
             Entrada += Largo(o, "prompt_tokens") + Largo(o, "input_tokens");
             Salida += Largo(o, "completion_tokens") + Largo(o, "output_tokens");
+            try { if (o["cost"] != null) CostoReportado += o["cost"].GetValue<double>(); } catch (Exception) { }
             Vueltas++;
         }
 
@@ -152,6 +155,8 @@ namespace AutoCadMcpPlugin.Chat
                 var nombre = m.Success ? m.Groups[1].Value : "";
                 return new ToolInvalida("El modelo pidió la tool '" + (nombre.Length > 0 ? nombre : "?") + "', que no está en el perfil elegido.", nombre);
             }
+            if ((codigo == 401 || codigo == 402 || codigo == 403 || codigo == 429) && mensaje.Length > 0 && mensaje.Length < 400)
+                return new ErrorProveedor(mensaje);
             return new ErrorProveedor("El modelo respondió " + codigo + ": " + (texto.Length > 600 ? texto.Substring(0, 600) : texto));
         }
     }
@@ -619,9 +624,10 @@ namespace AutoCadMcpPlugin.Chat
             return entrada["modo"].ToString();
         }
 
-        /// <summary>¿Hay una clave GUARDADA (no de entorno) para este proveedor?</summary>
+        /// <summary>¿Hay una clave GUARDADA (no de entorno) para este proveedor? Para la IA incluida: ¿hay licencia?</summary>
         public static bool TieneGuardada(string proveedor)
         {
+            if (proveedor == Proveedores.IdIncluida) return !string.IsNullOrEmpty(LicenciaGuard.TokenGuardado());
             try { return !string.IsNullOrEmpty(Revelar(LeerTodo()[proveedor])); }
             catch (Exception) { return false; }
         }
@@ -673,6 +679,8 @@ namespace AutoCadMcpPlugin.Chat
                 var env = Environment.GetEnvironmentVariable(variableEntorno);
                 if (!string.IsNullOrEmpty(env)) return env;
             }
+            // La IA incluida no tiene clave propia: va el token firmado de la licencia (nunca la clave de licencia).
+            if (proveedor == Proveedores.IdIncluida) return LicenciaGuard.TokenGuardado();
             try
             {
                 if (!File.Exists(Archivo)) return null;

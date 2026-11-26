@@ -54,6 +54,8 @@ namespace AgenteTests
         {
             var cli = new ChatCliente(url);
             var agente = new AgenteNativo(() => cli, Path.Combine(dir, Guid.NewGuid().ToString("N") + ".json"));
+            // Las pruebas no dependen de la licencia de ESTA PC (si venció, nada llegaba al modelo y fallaban sin motivo).
+            agente.Licencia = () => (false, true, "");
             var m = modelo();
             agente.FabricaProveedor = (prep, ped) => m;
             var eventos = new List<JsonElement>();
@@ -126,7 +128,7 @@ namespace AgenteTests
                 Check("sin dato publicado se reconoce por el nombre", !filas[1].Imagenes && filas[2].Imagenes);
                 Check("modality «text->text» no ve imagenes", !filas[4].Imagenes);
                 Check("también entiende {models:[...]} y una lista suelta", Proveedores.Analizar("{\"models\":[{\"id\":\"a\"}]}").Count == 1 && Proveedores.Analizar("[\"a\",\"b\"]").Count == 2);
-                Check("los 7 proveedores y su modelo sugerido", Proveedores.Presets.Count == 7 && Proveedores.Buscar("groq").ModeloSugerido == "openai/gpt-oss-120b" && Proveedores.Buscar("nadie") == null);
+                Check("los 8 proveedores (la IA incluida primero) y su modelo sugerido", Proveedores.Presets.Count == 8 && Proveedores.Presets[0].Id == Proveedores.IdIncluida && Proveedores.Buscar("groq").ModeloSugerido == "openai/gpt-oss-120b" && Proveedores.Buscar("nadie") == null);
                 try
                 {
                     var puerto = 0;
@@ -215,7 +217,7 @@ namespace AgenteTests
 
                 var sinVista = new ModeloGuion(() => ModeloGuion.Texto("listo"));
                 var (evImg, _) = await Correr(url, new PedidoAgente { Mensaje = "mira", Proveedor = "groq", Modelo = "openai/gpt-oss-120b", Imagenes = new List<string> { png } }, () => sinVista, dir);
-                Check("con un modelo que no ve imagenes avisa y manda solo el texto", Hay(evImg, "aviso", "no ve imágenes") && !sinVista.Ultimos[0].Contains("image_url"), sinVista.Ultimos.Count > 0 ? sinVista.Ultimos[0] : "(sin llamada)");
+                Check("con un modelo que no ve imagenes avisa y manda solo el texto", Hay(evImg, "aviso", "no ve imágenes") && !sinVista.Ultimos[0].Contains("image_url"), sinVista.Ultimos.Count > 0 ? sinVista.Ultimos[0] : "(sin llamada) " + string.Join(" | ", evImg.Select(e => e.ToString())));
                 var conVista = new ModeloGuion(() => ModeloGuion.Texto("listo"));
                 var (evVe, _) = await Correr(url, new PedidoAgente { Mensaje = "mira", Proveedor = "anthropic", Modelo = "claude-sonnet-5-5", Imagenes = new List<string> { png } }, () => conVista, dir);
                 Check("con un modelo que ve, la imagen llega como image_url y sin aviso", !Hay(evVe, "aviso", "no ve imágenes") && conVista.Ultimos[0].Contains("image_url"), conVista.Ultimos.Count > 0 ? conVista.Ultimos[0] : "(sin llamada)");

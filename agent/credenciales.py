@@ -148,7 +148,20 @@ def guardar(proveedor: str, clave: str) -> str:
 
 
 def obtener(proveedor: str) -> Optional[str]:
+    # La IA incluida no tiene clave propia: va el token firmado de la licencia
+    # (el mismo licencia.json que usa el plugin), nunca la clave de licencia.
+    if proveedor == "vigentra":
+        return token_de_licencia()
     return _revelar(_leer_todo().get(proveedor))
+
+
+def token_de_licencia() -> Optional[str]:
+    try:
+        with open(os.path.join(DIRECTORIO, "licencia.json"), encoding="utf-8") as fh:
+            token = json.load(fh).get("token")
+        return token if isinstance(token, str) and token else None
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def borrar(proveedor: str) -> bool:

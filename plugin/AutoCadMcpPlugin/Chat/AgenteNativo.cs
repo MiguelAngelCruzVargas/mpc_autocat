@@ -697,6 +697,7 @@ namespace AutoCadMcpPlugin.Chat
 
         private static double? Costo(UsoTokens uso, JsonObject precio)
         {
+            if (uso.CostoReportado > 0) return uso.CostoReportado;
             if (precio == null) return null;
             try
             {

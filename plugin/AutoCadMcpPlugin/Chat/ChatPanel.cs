@@ -32,7 +32,9 @@ namespace AutoCadMcpPlugin.Chat
         public string Id, ModeloSugerido, Detalle;
         public bool Clave, Puente, Vivo;
         public string Nombre =>
-            Vivo ? "En vivo · tu agente" : (Id.ToUpperInvariant() + (Clave || Puente ? "" : " · sin clave"));
+            Vivo ? "En vivo · tu agente"
+            : Id == Proveedores.IdIncluida ? "IA INCLUIDA EN TU PLAN" + (Clave ? "" : " · sin licencia")
+            : (Id.ToUpperInvariant() + (Clave || Puente ? "" : " · sin clave"));
     }
 
     /// <summary>
@@ -77,6 +79,7 @@ namespace AutoCadMcpPlugin.Chat
         private readonly Button _enviar = new Button();
         private readonly PasswordBox _clave = new PasswordBox();
         private readonly TextBlock _claveEstado = new TextBlock();
+        private StackPanel _claveBotones;
         private readonly CheckBox _reglas = new CheckBox();
         private readonly Slider _temp = new Slider();
         // permisos, tope de gasto y licencia (ajustes)
@@ -641,6 +644,7 @@ namespace AutoCadMcpPlugin.Chat
             _clave.Background = _t.Tarjeta; _clave.Foreground = _t.Texto; _clave.BorderBrush = _t.Borde; _clave.Padding = new Thickness(4, 4, 4, 4);
             _seccionApi.Children.Add(_clave);
             var botones = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+            _claveBotones = botones;
             var guardar = new Button { Content = "Guardar", Background = _t.Acento, Foreground = _t.AcentoTexto };
             guardar.Click += async (s, e) => await GuardarClaveAsync(false).ConfigureAwait(true);
             var borrar = new Button { Content = "Borrar", Margin = new Thickness(6, 0, 0, 0) };
@@ -1135,10 +1139,22 @@ namespace AutoCadMcpPlugin.Chat
         private async Task ElegirProveedorAsync(ProveedorItem p, bool guardar)
         {
             _prov = p;
-            _modelo.Text = _modelos.TryGetValue(p.Id, out var m) && m.Length > 0 ? m : p.ModeloSugerido;
-            _modelo.IsEnabled = !p.Vivo;
-            _modeloBtn.IsEnabled = !p.Vivo;
-            _claveEstado.Text = p.Vivo ? p.Detalle : (p.Clave ? "Hay una clave guardada para " + p.Id + "." : "Todavía no hay clave para " + p.Id + ".");
+            bool incluida = p.Id == Proveedores.IdIncluida;
+            _modelo.Text = incluida ? p.ModeloSugerido : (_modelos.TryGetValue(p.Id, out var m) && m.Length > 0 ? m : p.ModeloSugerido);
+            // Con la IA incluida el modelo lo pone Vigentra y no hay clave que escribir.
+            _modelo.IsEnabled = !p.Vivo && !incluida;
+            _modeloBtn.IsEnabled = !p.Vivo && !incluida;
+            _clave.IsEnabled = !incluida;
+            if (_claveBotones != null) _claveBotones.IsEnabled = !incluida;
+            _claveEstado.Text = p.Vivo ? p.Detalle
+                : incluida ? (p.Clave ? "Incluida en tu plan: no necesitas clave. Consultando tu crédito…"
+                                      : "La IA incluida necesita una licencia activa o la prueba gratis.")
+                : (p.Clave ? "Hay una clave guardada para " + p.Id + "." : "Todavía no hay clave para " + p.Id + ".");
+            if (incluida && p.Clave)
+            {
+                var texto = await Proveedores.SaldoIncluidaAsync().ConfigureAwait(true);
+                if (_prov == p) _claveEstado.Text = texto;
+            }
             _placeholder.Text = p.Vivo ? "Mensaje para tu agente…" : "Escribe tu instrucción…";
             AplicarBloqueoLicencia();
             bool vivo = p.Vivo;
@@ -1706,7 +1722,9 @@ namespace AutoCadMcpPlugin.Chat
             if (!_prov.Clave && !_prov.Puente)
             {
                 _ajustes.Visibility = Visibility.Visible;
-                _claveEstado.Text = "Falta la clave de " + _prov.Id + ": pégala aquí abajo y pulsa Guardar.";
+                _claveEstado.Text = _prov.Id == Proveedores.IdIncluida
+                    ? "La IA incluida necesita una licencia activa o la prueba gratis. O elige otro proveedor y usa tu propia clave."
+                    : "Falta la clave de " + _prov.Id + ": pégala aquí abajo y pulsa Guardar.";
                 return;
             }
 

@@ -348,13 +348,44 @@ def test_costo_y_modelos_vivos() -> None:
           providers.soporta_imagenes("modelo-nuevo-2027"))
 
 
+def test_ia_incluida() -> None:
+    """«IA incluida en mi plan»: sin clave, con el token de la licencia y el costo que reporta el servidor."""
+    import json
+    import os
+    import tempfile
+    from . import credenciales, providers
+    check("la incluida es un proveedor más", providers.ID_INCLUIDA in providers.PRESETS)
+    check("apunta al servidor de licencias",
+          providers.PRESETS["vigentra"]["url"].endswith("/ia/v1"))
+    viejo = credenciales.DIRECTORIO
+    credenciales.DIRECTORIO = tempfile.mkdtemp()
+    try:
+        check("sin licencia no hay «clave»", credenciales.obtener("vigentra") is None)
+        try:
+            providers.construir("vigentra")
+            check("sin licencia explica qué hacer", False)
+        except providers.ErrorProveedor as exc:
+            check("sin licencia explica qué hacer", "propia clave" in str(exc), str(exc))
+        with open(os.path.join(credenciales.DIRECTORIO, "licencia.json"), "w", encoding="utf-8") as fh:
+            json.dump({"token": "abc.def"}, fh)
+        check("con licencia, la «clave» es su token", credenciales.obtener("vigentra") == "abc.def")
+        check("y se arma el cliente", providers.construir("vigentra").api_key == "abc.def")
+    finally:
+        credenciales.DIRECTORIO = viejo
+    contador = providers.ContadorUso()
+    contador.anotar_uso({"prompt_tokens": 10, "completion_tokens": 2, "cost": 0.03})
+    contador.anotar_uso({"prompt_tokens": 10, "completion_tokens": 2, "cost": 0.02})
+    check("el costo reportado manda sobre la tabla",
+          abs(providers.costo_usd(contador.resumen(), None) - 0.05) < 1e-9)
+
+
 def main() -> int:
     for fn in (test_aplanar_schema, test_recortar, test_bucle_openai,
                test_bucle_anthropic, test_un_error_de_tool_no_corta_la_sesion,
                test_json_invalido_no_revienta, test_tope_de_vueltas,
                test_la_web_rechaza_paginas_ajenas,
                test_la_conversacion_sobrevive,
-               test_costo_y_modelos_vivos):
+               test_costo_y_modelos_vivos, test_ia_incluida):
         print(fn.__name__)
         fn()
     print("_con_conexion")

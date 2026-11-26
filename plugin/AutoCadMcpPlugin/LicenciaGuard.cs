@@ -48,6 +48,25 @@ namespace AutoCadMcpPlugin
         private const string ServidorUrl = "https://vigentra-architech.vigentra.mx";
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
 
+        /// <summary>El token firmado guardado en licencia.json (o null). Es la «clave» de la IA incluida.</summary>
+        internal static string TokenGuardado()
+        {
+            try
+            {
+                if (!File.Exists(Archivo)) return null;
+                var t = (JsonNode.Parse(File.ReadAllText(Archivo)) as JsonObject)?["token"]?.GetValue<string>();
+                return string.IsNullOrEmpty(t) ? null : t;
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>La IA incluida vive en el mismo servidor de licencias (licencias/servidor/ia.py).</summary>
+        internal static string UrlIaIncluida()
+        {
+            var url = Environment.GetEnvironmentVariable("AUTOCAD_IA_LICENCIAS_URL");
+            return (string.IsNullOrEmpty(url) ? ServidorUrl : url).TrimEnd('/') + "/ia/v1";
+        }
+
         private static string UrlServidor()
         {
             var url = Environment.GetEnvironmentVariable("AUTOCAD_IA_LICENCIAS_URL");

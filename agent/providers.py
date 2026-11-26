@@ -21,7 +21,19 @@ import httpx
 
 # Proveedores conocidos: URL base y de qué variable sale la clave. Sirven
 # para que `--proveedor openrouter` funcione sin configurar nada más.
+# «IA incluida en mi plan»: el servidor de licencias de Vigentra hace de intermediario
+# (licencias/servidor/ia.py). No hay clave: va el token de la licencia (ver
+# credenciales.obtener) y el modelo lo pone Vigentra.
+ID_INCLUIDA = "vigentra"
+URL_INCLUIDA = ((os.environ.get("AUTOCAD_IA_LICENCIAS_URL")
+                 or "https://vigentra-architech.vigentra.mx").rstrip("/") + "/ia/v1")
+
 PRESETS: dict[str, dict[str, str]] = {
+    ID_INCLUIDA: {
+        "url": URL_INCLUIDA,
+        "env": "VIGENTRA_IA_TOKEN",
+        "modelo": "incluido",
+    },
     "openrouter": {
         "url": "https://openrouter.ai/api/v1",
         "env": "OPENROUTER_API_KEY",
@@ -180,6 +192,9 @@ class ContadorUso:
         self.entrada = 0
         self.salida = 0
         self.vueltas = 0
+        # Lo que el proveedor dijo que costó (OpenRouter y la IA incluida lo
+        # mandan en usage.cost): manda sobre la tabla de precios.
+        self.costo_reportado = 0.0
 
     def anotar_uso(self, uso: dict[str, Any]) -> None:
         if not uso:
@@ -188,6 +203,8 @@ class ContadorUso:
                             or uso.get("input_tokens") or 0)
         self.salida += int(uso.get("completion_tokens")
                            or uso.get("output_tokens") or 0)
+        if isinstance(uso.get("cost"), (int, float)):
+            self.costo_reportado += float(uso["cost"])
         self.vueltas += 1
 
     @property
@@ -195,8 +212,11 @@ class ContadorUso:
         return self.entrada + self.salida
 
     def resumen(self) -> dict[str, int]:
-        return {"entrada": self.entrada, "salida": self.salida,
-                "total": self.total, "vueltas": self.vueltas}
+        datos = {"entrada": self.entrada, "salida": self.salida,
+                 "total": self.total, "vueltas": self.vueltas}
+        if self.costo_reportado:
+            datos["costo_reportado"] = self.costo_reportado
+        return datos
 
 
 class ProveedorOpenAI(ContadorUso):
@@ -377,6 +397,8 @@ def precio_de(proveedor: str, modelo: str) -> Optional[dict[str, float]]:
 
 def costo_usd(uso: dict[str, Any], precio: Optional[dict[str, float]]) -> Optional[float]:
     """Lo que costó lo gastado hasta ahora, en US$, o None sin precio."""
+    if uso.get("costo_reportado"):
+        return float(uso["costo_reportado"])
     if not precio:
         return None
     return (float(uso.get("entrada", 0)) * float(precio.get("entrada", 0))
@@ -485,6 +507,10 @@ def construir(proveedor: str, modelo: Optional[str] = None,
         raise ErrorProveedor("Falta --modelo.")
     # Un endpoint local no necesita clave; uno remoto sí, y decirlo acá
     # ahorra un 401 incomprensible más adelante.
+    if not clave and proveedor == ID_INCLUIDA:
+        raise ErrorProveedor(
+            "La IA incluida necesita una licencia activa o la prueba gratis. "
+            "O elige otro proveedor y usa tu propia clave.")
     if not clave and base.startswith("https://"):
         raise ErrorProveedor(
             f"Falta la API key de '{proveedor}'. Guardala una sola vez con:\n"
