@@ -98,6 +98,10 @@ namespace BancoModelos
         public Func<Contexto, Task> Preparar = c => Task.CompletedTask;
         public Func<Contexto, Task<(bool ok, string detalle)>> Verificar;
         public Func<Contexto, string> PedidoPara;       // si el pedido necesita una ruta propia de cada modelo
+        // Un proyecto completo necesita más vueltas, más tiempo y más gasto que un círculo.
+        public int Vueltas = 25;
+        public int Minutos = 5;
+        public double? TopeUSD;                          // null = el --tope general
     }
 
     internal sealed class Resultado
@@ -127,6 +131,26 @@ namespace BancoModelos
                 Pedido = "Dibuja la planta arquitectónica de una casa de 9 x 12 metros con dos recámaras y un baño: muros, puertas y ventanas.",
                 Preparar = async c => { await c.Limpiar(); },
                 Verificar = async c => { var n = await c.Entidades(); return (n >= 30, n < 0 ? "no pude contar entidades" : n + " entidades (se piden 30 o más)"); },
+            },
+            new Caso
+            {
+                // Lo que de verdad se vende: sirve para saber cuánto cuesta en IA un
+                // proyecto y así poner los créditos de la «IA incluida».
+                Id = "completa", Titulo = "Casa completa",
+                Pedido = "Proyecto de una casa de un nivel en un terreno de 8 x 20 metros, con sala-comedor, cocina, " +
+                         "dos recámaras, un baño y patio de servicio. Dibuja: la planta arquitectónica con muros, puertas, " +
+                         "ventanas, cotas y nombres de los espacios; la instalación eléctrica con contactos, apagadores y " +
+                         "salidas de luz; y el cuadro de cantidades de obra. No preguntes datos: usa valores típicos y " +
+                         "deja en blanco los del rótulo.",
+                Vueltas = 90, Minutos = 25, TopeUSD = 6.0,
+                Preparar = async c => { await c.Limpiar(); },
+                Verificar = async c =>
+                {
+                    var n = await c.Entidades();
+                    var textos = await c.Contar("MText") + Math.Max(0, await c.Contar("DBText"));
+                    var ok = n >= 150 && textos >= 10;
+                    return (ok, n < 0 ? "no pude contar entidades" : n + " entidades y " + textos + " textos (se piden 150 y 10)");
+                },
             },
             new Caso
             {
@@ -211,9 +235,9 @@ namespace BancoModelos
                         var pedido = new PedidoAgente
                         {
                             Mensaje = caso.PedidoPara != null ? caso.PedidoPara(ctx) : caso.Pedido, Proveedor = proveedor, Modelo = modelo, Perfil = perfil,
-                            ModoPermisos = "nada", Vueltas = 25, TopeUSD = topeUsd, ConReglas = true,
+                            ModoPermisos = "nada", Vueltas = caso.Vueltas, TopeUSD = caso.TopeUSD ?? topeUsd, ConReglas = true,
                         };
-                        using (var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5)))
+                        using (var cts = new CancellationTokenSource(TimeSpan.FromMinutes(caso.Minutos)))
                         {
                             await agente.EjecutarAsync(pedido, ev =>
                             {
@@ -268,7 +292,8 @@ namespace BancoModelos
             sb.AppendLine().AppendLine("## Detalle").AppendLine();
             foreach (var r in rs)
             {
-                sb.AppendLine("- **" + r.Modelo + " · " + r.Caso + "**: " + (r.Ok ? "logrado" : "NO logrado") + " — " + r.Detalle + (r.Errores > 0 ? " · " + r.Errores + " herramienta(s) con error" : ""));
+                sb.AppendLine("- **" + r.Modelo + " · " + r.Caso + "**: " + (r.Ok ? "logrado" : "NO logrado") + " — " + r.Detalle + (r.Errores > 0 ? " · " + r.Errores + " herramienta(s) con error" : "")
+                + " · " + r.Segundos.ToString("0") + " s, " + r.Vueltas + " vueltas, " + r.Tokens.ToString("N0") + " tokens, US$" + r.Costo.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture));
                 if (!string.IsNullOrWhiteSpace(r.Final)) sb.AppendLine("  - dijo al final: " + r.Final.Replace("\n", " ").Substring(0, Math.Min(240, r.Final.Replace("\n", " ").Length)));
             }
             return sb.ToString();
