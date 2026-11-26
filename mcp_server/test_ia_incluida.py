@@ -218,6 +218,54 @@ def test_http():
     apagado.shutdown()
 
 
+class FlujoFalso:
+    """Como OpenRouter con stream: trozos de texto y, al final, el uso con su costo."""
+
+    def __init__(self, costo=0.25, codigo=200):
+        self.costo, self.codigo, self.cuerpo = costo, codigo, None
+
+    def __call__(self, url, headers, cuerpo):
+        self.cuerpo = json.loads(cuerpo)
+        if self.codigo != 200:
+            return self.codigo, b'{"error": {"message": "sk-or-VIGENTRA"}}'
+        trozos = [{"choices": [{"delta": {"content": "Ho"}}], "provider": "Anthropic"},
+                  {"choices": [{"delta": {"content": "la"}}]},
+                  {"choices": [], "usage": {"prompt_tokens": 900, "completion_tokens": 20, "cost": self.costo}}]
+        fin = b"\n\n"
+        return 200, iter([b"data: " + json.dumps(t).encode() + fin for t in trozos] + [b"data: [DONE]" + fin])
+
+
+def test_flujo_en_vivo():
+    print("respuesta en vivo (stream), como la pide el chat de AutoCAD")
+    svc, s, _, _ = armar()
+    flujo = FlujoFalso()
+    s.abrir_flujo = flujo
+    token, kid = token_de(svc)
+    salida, empezo = [], []
+    error = s.completar_flujo(token, dict(PEDIDO, stream=True), lambda: empezo.append(1), salida.append)
+    texto = b"".join(salida).decode()
+    check("sin error", error, None)
+    check("pide stream con el uso al final", (flujo.cuerpo["stream"], flujo.cuerpo["stream_options"]), (True, {"include_usage": True}))
+    check("pasa el texto", '"Ho"' in texto and '"la"' in texto and "[DONE]" in texto, True)
+    check("quita el proveedor de fondo", "Anthropic" in texto, False)
+    check("cobra el costo del último trozo", s.saldo(kid, "mensual")["usado_este_mes_usd"], 0.25)
+    s.abrir_flujo = FlujoFalso(codigo=500)
+    cod, cuerpo = s.completar_flujo(token, dict(PEDIDO, stream=True), lambda: None, salida.append)
+    check("error antes de empezar: 502 limpio", (cod, "VIGENTRA" in json.dumps(cuerpo)), (502, False))
+
+    srv = servidor.crear_servidor(svc, "x" * 30, "127.0.0.1", 0, ia=s)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    s.abrir_flujo = FlujoFalso(costo=0.1)
+    req = urllib.request.Request("http://127.0.0.1:%d/ia/v1/chat/completions" % srv.server_address[1],
+                                 data=json.dumps(dict(PEDIDO, stream=True)).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + token})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        tipo, cuerpo = r.headers.get("Content-Type"), r.read().decode()
+    check("por HTTP: event-stream", tipo, "text/event-stream")
+    check("por HTTP: llega todo", cuerpo.count("data:"), 4)
+    srv.shutdown()
+
+
 def test_apagado_sin_variables():
     print("desde_entorno")
     os.environ.pop("IA_UPSTREAM_KEY", None)
@@ -229,7 +277,7 @@ def test_apagado_sin_variables():
 if __name__ == "__main__":
     for prueba in (test_credito_mensual, test_paquete_extra, test_prueba_por_equipo, test_perpetua_sin_credito,
                    test_tokens_malos, test_error_del_proveedor_no_cobra_ni_filtra, test_sin_costo_ni_precio_no_regala,
-                   test_http, test_apagado_sin_variables):
+                   test_http, test_flujo_en_vivo, test_apagado_sin_variables):
         prueba()
     print()
     if FAILED:

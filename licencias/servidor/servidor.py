@@ -506,6 +506,22 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                         return self._responder(400, {"error": {"message": "JSON inválido."}})
                     if not isinstance(pedido, dict):
                         return self._responder(400, {"error": {"message": "Se esperaba un objeto JSON."}})
+                    if pedido.get("stream"):
+                        def empezar():
+                            self.send_response(200)
+                            self.send_header("Content-Type", "text/event-stream")
+                            self.send_header("Cache-Control", "no-cache")
+                            self.end_headers()
+
+                        def escribir(linea: bytes):
+                            self.wfile.write(linea)
+                            self.wfile.flush()
+
+                        error = ia.completar_flujo(token, pedido, empezar, escribir)
+                        if error is not None:
+                            return self._responder(*error)
+                        self.close_connection = True
+                        return None
                     codigo, datos, saldo = ia.completar(token, pedido)
                     return self._responder(codigo, datos, {"X-Credito-Restante-USD": "%.4f" % saldo["restante_usd"]})
                 return self._responder(404, {"error": {"message": "no existe"}})

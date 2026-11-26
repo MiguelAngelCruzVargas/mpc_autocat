@@ -84,6 +84,7 @@ class ServicioIA:
                  modelo: str, creditos: dict[str, float], precios: Optional[dict[str, dict[str, float]]] = None,
                  estado_licencia: Optional[Callable[[str], Optional[str]]] = None,
                  llamar: Optional[Callable[[str, dict[str, str], bytes], tuple[int, bytes]]] = None,
+                 abrir_flujo: Optional[Callable[[str, dict[str, str], bytes], tuple[int, Any]]] = None,
                  ahora: Callable[[], float] = time.time):
         self.publica = publica
         self.upstream_url = upstream_url.rstrip("/")
@@ -94,6 +95,7 @@ class ServicioIA:
         # Para no aceptar tokens de una licencia revocada (el token dura 7 días).
         self.estado_licencia = estado_licencia or (lambda kid: "activa")
         self.llamar = llamar or self._llamar_http
+        self.abrir_flujo = abrir_flujo or self._abrir_flujo_http
         self.ahora = ahora
         self._lock = threading.Lock()
         self.db = sqlite3.connect(ruta_db, check_same_thread=False)
@@ -199,8 +201,18 @@ class ServicioIA:
         except (urllib.error.URLError, TimeoutError) as exc:
             raise ErrorIA("No se pudo contactar a la IA en este momento. Intenta de nuevo.", 502) from exc
 
-    def completar(self, token: str, pedido: dict[str, Any]) -> tuple[int, dict[str, Any], dict[str, Any]]:
-        """(código, respuesta del proveedor, saldo después)."""
+    def _abrir_flujo_http(self, url: str, headers: dict[str, str], cuerpo: bytes) -> tuple[int, Any]:
+        """(código, respuesta abierta para leer por líneas) o (código, bytes del error)."""
+        req = urllib.request.Request(url, data=cuerpo, method="POST", headers=headers)
+        try:
+            return 200, urllib.request.urlopen(req, timeout=TIEMPO_LIMITE)
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise ErrorIA("No se pudo contactar a la IA en este momento. Intenta de nuevo.", 502) from exc
+
+    def _preparar(self, token: str, pedido: dict[str, Any], flujo: bool):
+        """(cuenta, plan, saldo antes, encabezados, cuerpo) listos para llamar al proveedor."""
         cuenta, plan = self.cuenta_de(token)
         antes = self.saldo(cuenta, plan)
         if antes["restante_usd"] <= 0:
@@ -210,19 +222,64 @@ class ServicioIA:
             raise ErrorIA("Falta 'messages'.")
         cuerpo["model"] = self.modelo          # el cliente no elige un modelo más caro
         cuerpo["usage"] = {"include": True}    # OpenRouter: que devuelva el costo de la llamada
-        cuerpo["stream"] = False
+        cuerpo["stream"] = flujo
+        if flujo:
+            cuerpo["stream_options"] = {"include_usage": True}
         headers = {"Content-Type": "application/json", "Authorization": "Bearer " + self.upstream_key,
                    "HTTP-Referer": "https://vigentra.mx", "X-Title": "Vigentra Architech"}
-        codigo, crudo = self.llamar(self.upstream_url + "/chat/completions", headers, json.dumps(cuerpo).encode())
+        return cuenta, plan, antes, headers, json.dumps(cuerpo).encode()
+
+    @staticmethod
+    def _error_limpio(codigo: int) -> tuple[int, dict[str, Any]]:
+        # Sin detalles del proveedor (podrían mencionar nuestra cuenta).
+        return (502 if codigo >= 500 or codigo in (401, 403) else codigo,
+                {"error": {"message": "La IA no pudo responder (%d). Intenta de nuevo en un momento." % codigo}})
+
+    def completar_flujo(self, token: str, pedido: dict[str, Any], empezar: Callable[[], None],
+                        escribir: Callable[[bytes], None]) -> Optional[tuple[int, dict[str, Any]]]:
+        """Respuesta en vivo (SSE), como la pide el chat de AutoCAD. Llama `empezar()` antes del primer byte y
+        `escribir(linea)` por cada línea. Devuelve (código, error) si el proveedor falló antes de empezar."""
+        cuenta, plan, _antes, headers, cuerpo = self._preparar(token, pedido, True)
+        codigo, respuesta = self.abrir_flujo(self.upstream_url + "/chat/completions", headers, cuerpo)
+        if codigo >= 400:
+            return self._error_limpio(codigo)
+        uso: dict[str, Any] = {}
+        empezar()
+        try:
+            for crudo in respuesta:
+                linea = crudo if isinstance(crudo, bytes) else str(crudo).encode()
+                texto = linea.decode("utf-8", "replace").strip()
+                if texto.startswith("data:") and texto[5:].strip() not in ("", "[DONE]"):
+                    try:
+                        trozo = json.loads(texto[5:].strip())
+                        if isinstance(trozo, dict):
+                            if isinstance(trozo.get("usage"), dict):
+                                uso = trozo["usage"]
+                            trozo.pop("provider", None)
+                            linea = b"data: " + json.dumps(trozo).encode() + b"\n"
+                    except ValueError:
+                        pass
+                escribir(linea if linea.endswith(b"\n") else linea + b"\n")
+        finally:
+            if hasattr(respuesta, "close"):
+                respuesta.close()
+            # Se cobra lo usado aunque el cliente se desconecte a la mitad.
+            if uso:
+                self._cobrar(cuenta, plan, self.costo(uso), int(uso.get("prompt_tokens") or 0),
+                             int(uso.get("completion_tokens") or 0))
+        return None
+
+    def completar(self, token: str, pedido: dict[str, Any]) -> tuple[int, dict[str, Any], dict[str, Any]]:
+        """(código, respuesta del proveedor, saldo después)."""
+        cuenta, plan, antes, headers, cuerpo = self._preparar(token, pedido, False)
+        codigo, crudo = self.llamar(self.upstream_url + "/chat/completions", headers, cuerpo)
         try:
             datos = json.loads(crudo or b"{}")
         except ValueError:
             raise ErrorIA("La IA respondió algo que no se entiende. Intenta de nuevo.", 502) from None
         if codigo >= 400:
-            # Sin detalles del proveedor (podrían mencionar nuestra cuenta).
-            return (502 if codigo >= 500 or codigo in (401, 403) else codigo,
-                    {"error": {"message": "La IA no pudo responder (%d). Intenta de nuevo en un momento." % codigo}},
-                    antes)
+            c, error = self._error_limpio(codigo)
+            return c, error, antes
         uso = datos.get("usage") or {}
         self._cobrar(cuenta, plan, self.costo(uso), int(uso.get("prompt_tokens") or 0),
                      int(uso.get("completion_tokens") or 0))
