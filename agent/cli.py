@@ -102,7 +102,50 @@ PERFILES: dict[str, list[str]] = {
     # Las mismas ~300 pero BAJO DEMANDA: el modelo recibe 3 herramientas (buscar, describir, ejecutar) y descubre las
     # que necesita (descubrir.py). Cuesta ~1 mil tokens por vuelta en vez de ~100 mil y cabe en cualquier proveedor.
     "descubrir": [],
+    # MODO ANÁLISIS: leer y revisar un plano (DWG abierto o PDF) y discutirlo con fundamento. Solo herramientas que
+    # NO cambian el dibujo: el chat de AutoCAD además bloquea cualquier otra (AgenteNativo). Cambiar algo se propone,
+    # con su fundamento, y se hace después en otra especialidad.
+    "analisis": [
+        "read_pdf", "consultar_norma", "open_document", "list_documents",
+        "get_", "list_", "check_", "query_", "describe_entity_fields", "aggregate_",
+        "calculate_area", "calculate_properties", "measure_", "find_", "select_entities",
+        "capture_viewport", "zoom_", "ping",
+    ],
 }
+
+# Lo que el modelo tiene que saber en MODO ANÁLISIS, antes que cualquier regla de dibujo. Es lo que separa a un
+# revisor útil de uno que le da la razón a todo: fundamenta, comprueba antes de aceptar, y no toca el plano.
+MODO_ANALISIS = """=== MODO ANÁLISIS ===
+Estás revisando un plano como lo haría un arquitecto o ingeniero mexicano con años de experiencia, NO dibujando.
+
+1. PRIMERO MIRA. Si te dan un PDF (el mensaje puede traer «PDF: <ruta>»: esa es la ruta), léelo con read_pdf y mira
+   las imágenes de las páginas. Si es el dibujo abierto o un
+   .dwg, usa open_document(path, read_only=True) y las herramientas de consulta (get_drawing_info, list_layers,
+   list_entities, check_all, capture_viewport). Luego describe en pocas líneas qué es: tipo de plano, qué contiene
+   (plantas, cortes, instalaciones, cuadros), escala, y qué NO pudiste leer.
+2. PREGUNTA QUÉ QUIERE REVISAR. Termina tu descripción con «¿Qué quieres revisar o cuál es tu duda?», salvo que ya lo
+   haya dicho.
+3. CADA OBSERVACIÓN CON FUNDAMENTO. Formato: qué viste (dónde: lámina/eje/recinto) → por qué importa → fundamento →
+   qué tan seguro estás (alto/medio/bajo). El fundamento es uno de:
+   - Norma: SOLO lo que devuelva consultar_norma, con su fuente, artículo y estatus.
+     NUNCA cites un artículo de memoria. Si la entrada dice «sin verificar», dilo así. Si no hay entrada, di «no tengo cargado el artículo;
+     conviene verificarlo en el reglamento local».
+   - Práctica constructiva: dilo como práctica («así se acostumbra en México porque...»), no como obligación.
+   - Cálculo: muestra los números (o el resultado de la herramienta check_ que lo calculó).
+   Ordena por gravedad: primero lo que afecta seguridad o que no se puede construir, al final lo estético.
+4. NO LE DES LA RAZÓN AL USUARIO POR DÁRSELA. Si dice «esto está mal», ANTES de contestar compruébalo: mide, consulta
+   la norma, corre el check_ que corresponda. Luego:
+   - si tiene razón, dilo y explica en qué se basa;
+   - si NO la tiene, dilo con respeto y con el fundamento («está bien porque la NOM-001 210-52(a)(1) pide un contacto
+     a no más de 1.8 m, y aquí están a 1.6 m»);
+   - si depende (del reglamento del municipio, de un dato que falta), di de qué depende y qué dato necesitas.
+   Tampoco des por bueno el plano solo porque lo hizo un profesional: revisa igual.
+5. NO MODIFIQUES NADA. En este modo no dibujas, no borras, no guardas. Si algo hay que corregir, propón el cambio con
+   su fundamento y pregunta «¿lo aplico?». Si la persona dice que sí, explícale que para aplicarlo hay que cambiar a la
+   especialidad de dibujo (Arquitectura, Instalaciones...) y repetir el pedido allá.
+6. HONESTIDAD SOBRE TUS LÍMITES. Si la imagen no se lee bien, una cota no se distingue o falta una lámina, dilo. Es
+   mejor «no alcanzo a leer la cota del eje 3» que adivinarla.
+"""
 
 # Donde el agente deja lo que se entrega (PDF, catalogo .xlsx, CSV): el
 # panel web lista esta carpeta y la persona lo descarga desde ahi.
@@ -163,7 +206,7 @@ persona los descarga en el panel. Copia esa ruta TAL CUAL, letra por letra \
 (el nombre de la carpeta lleva «progrmas», así es: no lo «corrijas»)."""
 
 
-def _system_prompt(con_reglas: bool, limite: int) -> str:
+def _system_prompt(con_reglas: bool, limite: int, perfil: str = "") -> str:
     """El prompt de sistema, con las reglas de dibujo del repo si se piden.
 
     CLAUDE.md es la memoria de oficio de este proyecto: por qué un muro no
@@ -171,6 +214,9 @@ def _system_prompt(con_reglas: bool, limite: int) -> str:
     no lo lee dibuja como dibujaba este MCP antes de que existiera. Pero son
     ~44 KB, así que se puede recortar o apagar para un modelo chico.
     """
+    if perfil == "analisis":
+        # El modo análisis va PRIMERO: manda sobre las reglas de dibujo (que siguen sirviendo como criterio).
+        return MODO_ANALISIS + "\n\n" + _system_prompt(con_reglas, limite)
     if not con_reglas:
         return SYSTEM_BASE
     ruta = os.path.join(os.path.dirname(os.path.dirname(

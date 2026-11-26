@@ -156,5 +156,28 @@
  {
   "id": "descubrir",
   "patrones": []
+ },
+ {
+  "id": "analisis",
+  "patrones": [
+   "read_pdf",
+   "consultar_norma",
+   "open_document",
+   "list_documents",
+   "get_",
+   "list_",
+   "check_",
+   "query_",
+   "describe_entity_fields",
+   "aggregate_",
+   "calculate_area",
+   "calculate_properties",
+   "measure_",
+   "find_",
+   "select_entities",
+   "capture_viewport",
+   "zoom_",
+   "ping"
+  ]
  }
 ]

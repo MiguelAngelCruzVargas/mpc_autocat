@@ -382,6 +382,7 @@ namespace AutoCadMcpPlugin.Chat
                     hubieronTools = true;
                     bool cortado = false;
                     var capturas = new List<string>();
+                    int paginasPdf = 0;
                     foreach (var ll in llamadas)
                     {
                         // Se corta ENTRE herramientas, nunca a mitad de una: abandonar un create_walls a medio camino dejaría el dibujo inconsistente.
@@ -417,6 +418,12 @@ namespace AutoCadMcpPlugin.Chat
                             salida = "La persona RECHAZÓ esta acción (no se ejecutó). No la repitas ni busques otro camino para lograr lo mismo: pregúntale qué prefiere hacer.";
                             error = true;
                         }
+                        else if (p.Perfil == PerfilAnalisis && !PermitidaEnAnalisis(visible, argsVisibles, _soloLectura))
+                        {
+                            salida = "MODO ANÁLISIS: '" + visible + "' cambiaría el dibujo y aquí no se modifica nada (no se ejecutó). Propón el cambio con su fundamento y pregunta si lo aplica; para aplicarlo, la persona cambia a una especialidad de dibujo.";
+                            error = true;
+                            Emitir("nota", Obj("texto", "Modo análisis: se bloqueó «" + visible + "», que modificaría el dibujo."));
+                        }
                         else
                         {
                             // Antes de la primera herramienta que toca el dibujo: una marca de UNDO para poder deshacer el pedido entero.
@@ -435,14 +442,20 @@ namespace AutoCadMcpPlugin.Chat
                             var cap = LeerCaptura(argsVisibles);
                             if (cap != null) capturas.Add(cap);
                         }
+                        if (!error && !rechazada && visible == "read_pdf")
+                        {
+                            foreach (var pag in PaginasDelPdf(salida)) { capturas.Add(pag); paginasPdf++; }
+                        }
                     }
                     // El resultado de una herramienta es texto: para que un modelo con visión MIRE la captura se le da como imagen en un
                     // mensaje aparte, justo después de los resultados (no puede ir entre la llamada y su respuesta).
                     if (capturas.Count > 0 && !cortado && Capacidades.Evaluar(p.Proveedor, p.Modelo).Imagenes)
                     {
-                        _mensajes.Add(MensajeUsuario("Esta es la captura del dibujo que pediste con capture_viewport. Mírala y juzga el resultado: ¿algo encimado, fuera de lugar o que falte?", capturas));
+                        _mensajes.Add(MensajeUsuario(paginasPdf > 0
+                            ? "Estas son las páginas del PDF que leíste con read_pdf, en orden. Míralas con cuidado (cotas, ejes, rótulos, símbolos) antes de opinar; si algo no se alcanza a leer, dilo."
+                            : "Esta es la captura del dibujo que pediste con capture_viewport. Mírala y juzga el resultado: ¿algo encimado, fuera de lugar o que falte?", capturas));
                         QuitarImagenes(_mensajes, 2);            // las capturas viejas no se reenvían en cada vuelta
-                        Emitir("nota", Obj("texto", "El modelo está mirando la captura del dibujo."));
+                        Emitir("nota", Obj("texto", paginasPdf > 0 ? "El modelo está mirando " + paginasPdf + " página(s) del PDF." : "El modelo está mirando la captura del dibujo."));
                     }
                     if (cortado) break;
                     if (vuelta == p.Vueltas - 1)
@@ -577,6 +590,40 @@ namespace AutoCadMcpPlugin.Chat
         /// <summary>Tope de lo que se le manda al modelo, en caracteres (~4 por token: unos 60 mil tokens).</summary>
         internal const int MaxCharsContexto = 240000;
         /// <summary>Los resultados de herramienta más recientes que se conservan completos; los anteriores se acortan.</summary>
+        /// <summary>La especialidad de revisión (agent/cli.py, PERFILES["analisis"]).</summary>
+        internal const string PerfilAnalisis = "analisis";
+        internal const int MaxPaginasPdf = 4;
+
+        /// <summary>En modo análisis solo corre lo que no cambia el dibujo; abrir un DWG, solo de lectura.</summary>
+        internal static bool PermitidaEnAnalisis(string herramienta, JsonObject args, Regex soloLectura)
+        {
+            if (herramienta == "open_document")
+            {
+                try { return args?["read_only"] != null && args["read_only"].GetValue<bool>(); } catch (Exception) { return false; }
+            }
+            if (herramienta == "list_documents") return true;
+            if (herramienta == "save_drawing" || herramienta.StartsWith("export_", StringComparison.Ordinal)) return false;
+            return soloLectura.IsMatch(herramienta);
+        }
+
+        /// <summary>Las imágenes de las páginas que dejó read_pdf (su «imagenes_para_ver»), como data URL; como mucho MaxPaginasPdf.</summary>
+        internal static List<string> PaginasDelPdf(string salida)
+        {
+            var lista = new List<string>();
+            try
+            {
+                if (!(JsonNode.Parse(salida) is JsonObject o) || !(o["imagenes_para_ver"] is JsonArray rutas)) return lista;
+                foreach (var r in rutas)
+                {
+                    if (lista.Count >= MaxPaginasPdf) break;
+                    var img = LeerCaptura(new JsonObject { ["path"] = r?.ToString() });
+                    if (img != null) lista.Add(img);
+                }
+            }
+            catch (Exception) { }
+            return lista;
+        }
+
         internal const int ResultadosCompletos = 8;
         private const int RecorteResultado = 500;
 

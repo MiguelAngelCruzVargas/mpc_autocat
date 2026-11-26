@@ -21,7 +21,7 @@ DESTRUCTIVAS = re.compile(
 SOLO_LECTURA = re.compile(
     r"^(get_|list_|check_|query_|describe_|aggregate_|calculate_|measure_|capture_|zoom_|find_|select_entities$|"
     r"export_|buscar_|describir_|native_status$|ping$|api_guide$|diagnose_|panel_leer_|point_on_road$|sheet_origin$|"
-    r"save_drawing$)")
+    r"save_drawing$|read_pdf$|consultar_norma$)")
 
 
 def pide_permiso(nombre: str) -> bool:

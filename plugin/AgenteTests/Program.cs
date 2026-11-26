@@ -174,7 +174,7 @@ namespace AgenteTests
             Console.WriteLine("test_perfiles_en_csharp");
             {
                 var ids = Perfiles.Todos.Select(p => p.Id).ToArray();
-                Check("las 6 especialidades, en el orden de siempre", string.Join(",", ids) == "arquitectura,civil,estructura,basico,todo,descubrir", string.Join(",", ids));
+                Check("las 7 especialidades (análisis al final), en el orden de siempre", string.Join(",", ids) == "arquitectura,civil,estructura,basico,todo,descubrir,analisis", string.Join(",", ids));
                 var nombresPrueba = new[] { "create_line", "create_walls", "check_all", "delete_entities", "run_command", "create_road", "design_footing" };
                 var arq = Perfiles.Filtrar(nombresPrueba, Perfiles.Buscar("arquitectura"));
                 Check("nombre exacto o prefijo (check_ entra por prefijo)", arq.Contains("create_walls") && arq.Contains("check_all") && arq.Contains("delete_entities") && !arq.Contains("create_road"), string.Join(",", arq));
@@ -221,6 +221,21 @@ namespace AgenteTests
                 var conVista = new ModeloGuion(() => ModeloGuion.Texto("listo"));
                 var (evVe, _) = await Correr(url, new PedidoAgente { Mensaje = "mira", Proveedor = "anthropic", Modelo = "claude-sonnet-5-5", Imagenes = new List<string> { png } }, () => conVista, dir);
                 Check("con un modelo que ve, la imagen llega como image_url y sin aviso", !Hay(evVe, "aviso", "no ve imágenes") && conVista.Ultimos[0].Contains("image_url"), conVista.Ultimos.Count > 0 ? conVista.Ultimos[0] : "(sin llamada)");
+            }
+
+            Console.WriteLine("test_modo_analisis");
+            {
+                var soloLectura = new System.Text.RegularExpressions.Regex("^(get_|list_|check_|capture_|read_pdf$|consultar_norma$|save_drawing$|export_)");
+                Check("análisis: leer sí", AgenteNativo.PermitidaEnAnalisis("check_all", new JsonObject(), soloLectura) && AgenteNativo.PermitidaEnAnalisis("read_pdf", new JsonObject(), soloLectura));
+                Check("análisis: dibujar o borrar no", !AgenteNativo.PermitidaEnAnalisis("create_walls", new JsonObject(), soloLectura) && !AgenteNativo.PermitidaEnAnalisis("delete_entities", new JsonObject(), soloLectura) && !AgenteNativo.PermitidaEnAnalisis("run_code", new JsonObject(), soloLectura));
+                Check("análisis: ni guardar ni exportar (escriben archivos)", !AgenteNativo.PermitidaEnAnalisis("save_drawing", new JsonObject(), soloLectura) && !AgenteNativo.PermitidaEnAnalisis("export_pdf", new JsonObject(), soloLectura));
+                Check("análisis: abrir un DWG solo de lectura", AgenteNativo.PermitidaEnAnalisis("open_document", new JsonObject { ["read_only"] = true }, soloLectura) && !AgenteNativo.PermitidaEnAnalisis("open_document", new JsonObject(), soloLectura));
+                var png = Path.Combine(dir, "pagina.png");
+                File.WriteAllBytes(png, Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="));
+                var rutas = new JsonArray(); for (int i = 0; i < 6; i++) rutas.Add(png);
+                var paginas = AgenteNativo.PaginasDelPdf(new JsonObject { ["ok"] = true, ["imagenes_para_ver"] = rutas }.ToJsonString());
+                Check("las páginas del PDF van como imágenes (como mucho 4)", paginas.Count == AgenteNativo.MaxPaginasPdf && paginas[0].StartsWith("data:image/png;base64,"));
+                Check("un resultado sin imágenes no truena", AgenteNativo.PaginasDelPdf("no es json").Count == 0);
             }
 
             Console.WriteLine("test_modelo_ve_la_captura");

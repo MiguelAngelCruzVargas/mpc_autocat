@@ -4956,6 +4956,31 @@ def set_active_document(name: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def read_pdf(path: str, pages: str = "", with_images: bool = True) -> dict[str, Any]:
+    """Lee un PDF de planos para ANALIZARLO (modo análisis): el texto de cada página (rótulos, cotas, notas, cuadros)
+    y una imagen de cada página para que un modelo con visión la mire. No modifica nada.
+
+    pages: '1-3' o '2,5' (máximo 6 por llamada; sin nada, las primeras). Las imágenes van en 'imagenes_para_ver':
+    el chat se las muestra al modelo. Si una página no tiene texto (plano vectorial o escaneo), lo dice: ahí la
+    lectura sale de la imagen. Para un .dwg usa open_document(path, read_only=True)."""
+    import pdf_lector
+    return pdf_lector.leer(path, pages, with_images)
+
+
+@mcp.tool()
+def consultar_norma(tema: str = "", texto: str = "", limite: int = 12) -> dict[str, Any]:
+    """Las normas y criterios que el sistema tiene RESPALDADOS, con su fuente, artículo y estatus, para fundamentar
+    una observación. Úsala ANTES de afirmar «la norma dice...»: NUNCA cites un artículo de memoria.
+
+    tema: 'eléctrica', 'sanitaria', 'hidráulica' o 'arquitectura' (vacío = todos). texto: palabras de lo que buscas
+    («contactos cocina», «pendiente drenaje», «recámara mínima»). Cada entrada trae 'estatus': «norma» (se cita con
+    artículo), «práctica» (criterio usual, no obligación) o «sin verificar» (no hay texto oficial cargado: dilo y
+    recomienda verificar). Si no aparece lo que buscas, dilo así en vez de inventar la cita."""
+    import normas_base
+    return normas_base.consultar(tema, texto, limite)
+
+
+@mcp.tool()
 def open_document(path: str, read_only: bool = False) -> dict[str, Any]:
     """Abre un .dwg del disco y lo deja activo.
 

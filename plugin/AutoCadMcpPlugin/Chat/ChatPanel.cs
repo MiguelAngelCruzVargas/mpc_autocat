@@ -377,11 +377,31 @@ namespace AutoCadMcpPlugin.Chat
             if (!_imgBtn.IsEnabled) return;
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                Title = "Adjuntar imágenes", Multiselect = true,
-                Filter = "Imágenes|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp|Todos los archivos|*.*",
+                Title = "Adjuntar imágenes o un PDF de planos", Multiselect = true,
+                Filter = "Imágenes y PDF|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp;*.pdf|PDF de planos|*.pdf|Imágenes|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp|Todos los archivos|*.*",
             };
             if (dlg.ShowDialog() != true) return;
-            foreach (var f in dlg.FileNames) AdjuntarImagenArchivo(f);
+            foreach (var f in dlg.FileNames)
+            {
+                if (f.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) AdjuntarPdf(f);
+                else AdjuntarImagenArchivo(f);
+            }
+        }
+
+        /// <summary>Un PDF de planos: va como ruta en el mensaje (el modelo lo lee con read_pdf) y deja el chat en «Análisis».</summary>
+        internal void AdjuntarPdf(string ruta)
+        {
+            if (_perfil != AgenteNativo.PerfilAnalisis)
+            {
+                _perfil = AgenteNativo.PerfilAnalisis; RefrescarPerfiles(); ActualizarChip();
+                Preferencias.Guardar("perfil", _perfil);
+                AgregarNota("Cambié a la especialidad «Análisis»: reviso el plano sin modificar nada.");
+            }
+            var actual = _entrada.Text ?? "";
+            var pedido = actual.Trim().Length > 0 ? actual.Trim() : "Analiza este plano y dime qué contiene.";
+            _entrada.Text = pedido + "\nPDF: " + ruta;
+            _entrada.CaretIndex = _entrada.Text.Length;
+            if (!ModeloVeImagenes) AgregarAviso("Este modelo no ve imágenes: del PDF solo leerá el texto. Para revisar el dibujo elige uno que vea imágenes.");
         }
 
         internal void AdjuntarImagenArchivo(string ruta)
@@ -1011,7 +1031,7 @@ namespace AutoCadMcpPlugin.Chat
             foreach (var pf in _perfiles)
             {
                 var item = pf;
-                _listaPerfiles.Children.Add(Fila(char.ToUpperInvariant(item.id[0]) + item.id.Substring(1), item.tools + " herramientas" + (item.id == "todo" ? " (todas a la vez: caro en tokens y Groq/OpenAI aceptan máximo 128)" : item.id == "descubrir" ? " (todas, bajo demanda: el agente busca y usa las que necesita; la recomendada)" : item.id == "basico" ? " (dibujo simple)" : ""), item.id == _perfil, async () =>
+                _listaPerfiles.Children.Add(Fila(item.id == AgenteNativo.PerfilAnalisis ? "Análisis" : char.ToUpperInvariant(item.id[0]) + item.id.Substring(1), item.tools + " herramientas" + (item.id == AgenteNativo.PerfilAnalisis ? " (revisa un plano o PDF con fundamento; no modifica nada)" : item.id == "todo" ? " (todas a la vez: caro en tokens y Groq/OpenAI aceptan máximo 128)" : item.id == "descubrir" ? " (todas, bajo demanda: el agente busca y usa las que necesita; la recomendada)" : item.id == "basico" ? " (dibujo simple)" : ""), item.id == _perfil, async () =>
                 {
                     _perfil = item.id; RefrescarPerfiles(); ActualizarChip();
                     Preferencias.Guardar("perfil", _perfil);

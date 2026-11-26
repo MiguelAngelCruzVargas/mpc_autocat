@@ -1029,7 +1029,7 @@ class Handler(BaseHTTPRequestHandler):
         modelo = str(datos.get("modelo") or preset.get("modelo", ""))
         limite = descubrir.LIMITES.get(proveedor)
         forzar = bool(datos.get("forzarBajoDemanda"))
-        sistema = _system_prompt(bool(datos.get("conReglas", True)), int(datos.get("limiteReglas") or 0))
+        sistema = _system_prompt(bool(datos.get("conReglas", True)), int(datos.get("limiteReglas") or 0), perfil)
         contexto = str(datos.get("contexto") or "").strip()[:2000]
         if contexto:
             sistema += "\n\n--- Contexto fijo de este proyecto (lo definió la persona) ---\n" + contexto

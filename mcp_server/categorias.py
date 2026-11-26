@@ -181,6 +181,9 @@ _r("utilidades", "calculate_area", "AREA MEASUREGEOM")
 _r("utilidades", "calculate_properties", "MASSPROP")
 _r("utilidades", "get_extents", "")
 _r("utilidades", "calculate_quantities create_quantities_table export_quantities_csv export_concept_catalog")
+# Modo análisis: leer un PDF de planos y consultar la norma respaldada (con su estatus) antes de opinar.
+_r("xref", "read_pdf", "PDFIMPORT")
+_r("p_entrega", "consultar_norma", "")
 
 # ---- vista y documentos
 _r("vista", "zoom_extents", "ZOOM")

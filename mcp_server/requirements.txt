@@ -19,3 +19,4 @@ anthropic>=0.40
 
 # Opcional, solo para vectorize_image (calcar una captura): no se instala por defecto.
 #   pip install numpy opencv-python-headless scikit-image
+pypdfium2>=4.30   # read_pdf: imagen de cada página del PDF para el modo análisis
