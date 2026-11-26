@@ -133,7 +133,8 @@ def main() -> int:
               test_insumos_fuera_del_catalogo,
               test_partidas_en_orden_de_obra_y_extras,
               test_hoja_formulada_sin_precios,
-              test_errores_claros):
+              test_errores_claros,
+              test_para_importar_en_opus_y_neodata):
         print(t.__name__)
         t()
     if FAILED:
@@ -143,6 +144,36 @@ def main() -> int:
         return 1
     print("\nOK: el catálogo trae conceptos de obra, netos y sin precios.")
     return 0
+
+
+def test_para_importar_en_opus_y_neodata() -> None:
+    """La hoja PLANA que se importa en Opus (Liga Office) o se pega en Neodata."""
+    from openpyxl import load_workbook
+    extra = [{"group": "Preliminares", "concept": "Limpieza y\n trazo  del   terreno", "unit": "m2", "quantity": None}]
+    for destino, titulo in (("opus", "Clave"), ("neodata", "Código")):
+        with tempfile.TemporaryDirectory() as d:
+            ruta = os.path.join(d, "importar.xlsx")
+            r = budget.export_concept_catalog(RESULTADO, ruta, extra_concepts=extra, formato=destino)
+            libro = load_workbook(ruta)
+            filas = list(libro["Catalogo"].iter_rows(values_only=True))
+            check(destino + ": títulos en la fila 1", filas[0][0] == titulo and filas[0][3] == "Cantidad", str(filas[0]))
+            celdas = [c for fila in libro["Catalogo"].iter_rows() for c in fila]
+            check(destino + ": solo valores, sin fórmulas", not any(str(c.value).startswith("=") for c in celdas))
+            check(destino + ": sin celdas combinadas", not libro["Catalogo"].merged_cells.ranges)
+            partidas = [f for f in filas[1:] if f[5] == "Partida"]
+            check(destino + ": partidas como renglones con clave de dos dígitos",
+                  partidas and all(re.fullmatch(r"\d\d", f[0]) and not f[2] and f[3] is None for f in partidas), str(partidas))
+            limpieza = next(f for f in filas if f[1] and f[1].startswith("Limpieza"))
+            check(destino + ": texto sin saltos de línea ni espacios dobles", "\n" not in limpieza[1] and "  " not in limpieza[1], repr(limpieza[1]))
+            check(destino + ": sin cantidad queda en blanco y marcado", limpieza[3] is None and limpieza[5] == "POR CUANTIFICAR")
+            numericas = [f[3] for f in filas[1:] if not f[5]]
+            check(destino + ": cantidades numéricas (no texto)", numericas and all(isinstance(q, float) for q in numericas), str(numericas))
+            check(destino + ": hoja con los pasos", "Como importar" in libro.sheetnames and r["formato"] == destino)
+    try:
+        budget.export_concept_catalog(RESULTADO, "x.csv", formato="opus")
+        check("opus en .csv se rechaza", False)
+    except ValueError as exc:
+        check("opus en .csv se rechaza", ".xlsx" in str(exc))
 
 
 if __name__ == "__main__":

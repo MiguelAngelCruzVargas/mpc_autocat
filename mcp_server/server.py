@@ -4452,7 +4452,8 @@ def export_quantities_csv(result: dict[str, Any], path: str) -> dict[str, Any]:
 def export_concept_catalog(result: dict[str, Any], path: str,
                            extra_concepts: Optional[list[dict[str, Any]]] = None,
                            project: str = "",
-                           vat_pct: float = 16.0) -> dict[str, Any]:
+                           vat_pct: float = 16.0,
+                           format: str = "normal") -> dict[str, Any]:
     """CATÁLOGO DE CONCEPTOS para el presupuesto, SIN precios: los conceptos
     redactados, con clave, unidad y cantidad, en un .xlsx donde quien
     presupuesta solo escribe el P.U. (celdas amarillas) — importe,
@@ -4478,11 +4479,14 @@ def export_concept_catalog(result: dict[str, Any], path: str,
     quantity=None y el concepto sale POR CUANTIFICAR — nunca un número
     inventado. Cada item puede traer 'concept' (descripción propia) y
     'concept_unit' para forzar la unidad.
-    vat_pct: IVA en %; 0 lo omite."""
+    vat_pct: IVA en %; 0 lo omite.
+    format: 'normal' (el .xlsx formulado de siempre), 'opus' o 'neodata': un .xlsx PLANO listo para importar en ese
+    programa de precios unitarios (títulos en la fila 1, solo valores, partidas como renglones, texto limpio y una
+    hoja «Como importar» con los pasos). Si la persona dice que presupuesta en Opus o Neodata, usa ese."""
     import budget
     return budget.export_concept_catalog(
         result=result, path=path, extra_concepts=extra_concepts,
-        project=project, vat_pct=vat_pct)
+        project=project, vat_pct=vat_pct, formato=format)
 
 
 @mcp.tool()

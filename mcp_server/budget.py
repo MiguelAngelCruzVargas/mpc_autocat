@@ -160,19 +160,105 @@ def armar(result: dict[str, Any],
                                for c in p["concepts"] if c["quantity"] is None]}
 
 
+# Para llevar el catálogo a los programas de precios unitarios que se usan en México. Ninguno publica un formato de
+# archivo propio: los dos IMPORTAN DESDE EXCEL. Opus relaciona las columnas de la hoja con las suyas («Liga Office» /
+# «De Excel a OPUS»); en Neodata se copia el catálogo y se pega, y falla con títulos mal escritos, saltos de línea,
+# espacios dobles o celdas combinadas. Por eso la hoja «para importar» es PLANA: títulos en la fila 1, solo valores
+# (nada de fórmulas), partidas como renglones con su clave y el texto limpio. Una segunda hoja dice cómo importarla.
+FORMATOS = ("normal", "opus", "neodata")
+COLUMNAS_IMPORTAR = {
+    "opus": ["Clave", "Descripción", "Unidad", "Cantidad", "Precio unitario", "Nota"],
+    "neodata": ["Código", "Concepto", "Unidad", "Cantidad", "Precio unitario", "Nota"],
+}
+PASOS_IMPORTAR = {
+    "opus": [
+        "Abre tu obra en OPUS (o crea una nueva) y ve a la herramienta de importación desde Excel ("
+        "«Liga Office» o «De Excel a OPUS», según tu versión).",
+        "Abre este archivo y elige la hoja «Catalogo». El rango empieza en la fila 1 (los títulos).",
+        "Relaciona las columnas: Clave → Clave, Descripción → Descripción, Unidad → Unidad, Cantidad → Cantidad "
+        "(y Precio unitario si ya lo tienes).",
+        "Los renglones sin unidad ni cantidad son PARTIDAS (agrupadores): impórtalos como partidas.",
+        "Los conceptos con la nota «POR CUANTIFICAR» no tienen cantidad medida: captúrala antes de presupuestar.",
+    ],
+    "neodata": [
+        "Abre el presupuesto en Neodata Precios Unitarios.",
+        "En este archivo, hoja «Catalogo», selecciona desde la primera partida hasta el último concepto "
+        "(columnas Código a Cantidad) y cópialo (Ctrl+C).",
+        "Pégalo en el catálogo de Neodata respetando el orden de las columnas. Si tu versión pide los títulos "
+        "exactos de sus columnas, cámbialos en la fila 1 antes de copiar.",
+        "Los renglones sin unidad ni cantidad son PARTIDAS: el código de dos dígitos (01, 02...) las agrupa.",
+        "El texto ya va sin saltos de línea ni espacios dobles (lo que suele romper el pegado).",
+        "Los conceptos con la nota «POR CUANTIFICAR» no tienen cantidad medida: captúrala antes de presupuestar.",
+    ],
+}
+
+
+def texto_limpio(texto: Any) -> str:
+    """Sin saltos de línea, tabuladores ni espacios dobles: lo que rompe el pegado en Neodata."""
+    return " ".join(str(texto or "").replace("\r", " ").replace("\n", " ").replace("\t", " ").split())
+
+
+def filas_para_importar(cat: dict[str, Any]) -> list[list[Any]]:
+    """Partidas y conceptos, en orden, como renglones planos (clave, texto, unidad, cantidad, P.U., nota)."""
+    filas: list[list[Any]] = []
+    for p in cat["partidas"]:
+        filas.append([p["key"], texto_limpio(p["name"]).upper(), "", None, None, "Partida"])
+        for c in p["concepts"]:
+            q = None if c["quantity"] is None else round(float(c["quantity"]), 2)
+            filas.append([c["key"], texto_limpio(c["concept"]), texto_limpio(c["unit"]), q, None,
+                          "POR CUANTIFICAR" if q is None else ""])
+    return filas
+
+
+def _xlsx_para_importar(cat: dict[str, Any], path: str, destino: str, project: str) -> None:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    libro = Workbook()
+    hoja = libro.active
+    hoja.title = "Catalogo"
+    hoja.append(COLUMNAS_IMPORTAR[destino])
+    for celda in hoja[1]:
+        celda.font = Font(bold=True)
+    for fila in filas_para_importar(cat):
+        hoja.append(fila)
+    for col, ancho in zip("ABCDEF", (10, 80, 9, 12, 15, 18)):
+        hoja.column_dimensions[col].width = ancho
+    for celda in hoja["D"][1:]:
+        celda.number_format = "0.00"
+    ayuda = libro.create_sheet("Como importar")
+    ayuda.append([f"Cómo importar este catálogo en {destino.upper() if destino == 'opus' else 'Neodata'}"
+                  + (f" — {project}" if project else "")])
+    ayuda["A1"].font = Font(bold=True, size=13)
+    for i, paso in enumerate(PASOS_IMPORTAR[destino], start=1):
+        ayuda.append([f"{i}. {paso}"])
+    ayuda.append([])
+    ayuda.append(["Cantidades NETAS (sin merma: la merma va en el precio unitario). Generado por Vigentra Architech "
+                  "a partir del dibujo; revísalo antes de presupuestar."])
+    ayuda.column_dimensions["A"].width = 120
+    libro.save(path)
+
+
 def export_concept_catalog(result: dict[str, Any], path: str,
                            extra_concepts: Optional[list[dict[str, Any]]] = None,
-                           project: str = "", vat_pct: float = 16.0
-                           ) -> dict[str, Any]:
-    """Escribe el catálogo en .xlsx (formulado) o .csv. Ver el módulo."""
+                           project: str = "", vat_pct: float = 16.0,
+                           formato: str = "normal") -> dict[str, Any]:
+    """Escribe el catálogo en .xlsx (formulado) o .csv. Con formato 'opus' o 'neodata', un .xlsx plano listo para
+    importar en ese programa de precios unitarios. Ver el módulo."""
     if not path:
         raise ValueError("Falta 'path' (termina en .xlsx o .csv).")
     cat = armar(result, extra_concepts)
     if not cat["partidas"]:
         raise ValueError("No hay conceptos: el resultado no trae items que "
                          "sean trabajos (solo insumos o nada).")
+    formato = (formato or "normal").strip().lower()
+    if formato not in FORMATOS:
+        raise ValueError("formato: 'normal' (con fórmulas), 'opus' o 'neodata'.")
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    if path.lower().endswith(".csv"):
+    if formato != "normal":
+        if not path.lower().endswith(".xlsx"):
+            raise ValueError("Para importar en Opus o Neodata el catálogo va en .xlsx.")
+        _xlsx_para_importar(cat, path, formato, project)
+    elif path.lower().endswith(".csv"):
         _csv(cat, path)
     elif path.lower().endswith(".xlsx"):
         _xlsx(cat, path, project, vat_pct)
@@ -182,7 +268,7 @@ def export_concept_catalog(result: dict[str, Any], path: str,
     n = sum(len(p["concepts"]) for p in cat["partidas"])
     salida: dict[str, Any] = {
         "path": os.path.abspath(path), "partidas": len(cat["partidas"]),
-        "concepts": n,
+        "concepts": n, "formato": formato,
         "catalog": [{"key": c["key"], "concept": c["concept"],
                      "unit": c["unit"],
                      "quantity": None if c["quantity"] is None
