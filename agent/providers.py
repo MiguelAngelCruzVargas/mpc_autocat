@@ -253,8 +253,15 @@ class ProveedorOpenAI(ContadorUso):
             cuerpo["temperature"] = self.temperatura
 
         try:
-            r = httpx.post(f"{self.url}/chat/completions", json=cuerpo,
-                           headers=self._headers(), timeout=self.timeout)
+            if "/ia/v1" in self.url:
+                # IA incluida: el pedido va comprimido (cabe en el límite del servidor de licencias).
+                import gzip
+                r = httpx.post(f"{self.url}/chat/completions",
+                               content=gzip.compress(json.dumps(cuerpo).encode("utf-8")),
+                               headers={**self._headers(), "Content-Encoding": "gzip"}, timeout=self.timeout)
+            else:
+                r = httpx.post(f"{self.url}/chat/completions", json=cuerpo,
+                               headers=self._headers(), timeout=self.timeout)
         except httpx.HTTPError as exc:
             raise ErrorProveedor(
                 f"No se pudo llamar a {self.url}: {exc}") from exc

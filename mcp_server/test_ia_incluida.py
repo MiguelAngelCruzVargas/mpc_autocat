@@ -266,6 +266,39 @@ def test_flujo_en_vivo():
     srv.shutdown()
 
 
+def test_comprimido_y_cache():
+    print("pedido comprimido (cabe en el límite del servidor web) y caché de instrucciones")
+    import gzip
+    svc, s, falso, _ = armar()
+    token, _kid = token_de(svc)
+    srv = servidor.crear_servidor(svc, "x" * 30, "127.0.0.1", 0, ia=s)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    grande = dict(PEDIDO, messages=[{"role": "system", "content": "reglas " * 60000},
+                                    {"role": "user", "content": "dibuja"}])
+    crudo = json.dumps(grande).encode()
+    comprimido = gzip.compress(crudo)
+    check("el pedido real pesa más de 256 KB y comprimido menos", len(crudo) > 256 * 1024 > len(comprimido), True)
+    req = urllib.request.Request("http://127.0.0.1:%d/ia/v1/chat/completions" % srv.server_address[1], data=comprimido,
+                                 method="POST", headers={"Content-Type": "application/json", "Content-Encoding": "gzip",
+                                                         "Authorization": "Bearer " + token})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        check("comprimido: responde", r.status, 200)
+    enviado = falso.ultimo[2]["messages"][0]
+    check("anthropic: el sistema va marcado para la caché",
+          isinstance(enviado["content"], list) and enviado["content"][-1].get("cache_control") == {"type": "ephemeral"}, True)
+    check("y con el mismo texto", enviado["content"][0]["text"].startswith("reglas reglas"), True)
+    srv.shutdown()
+    bomba = gzip.compress(b" " * (ia.MAX_DESCOMPRIMIDO + 10))
+    try:
+        ia.descomprimir(bomba, "gzip")
+        check("un gzip que se infla de más se rechaza", "sin error", 413)
+    except ia.ErrorIA as exc:
+        check("un gzip que se infla de más se rechaza", exc.codigo, 413)
+    check("sin gzip pasa tal cual", ia.descomprimir(b"{}", ""), b"{}")
+    otro = ia.con_cache([{"role": "system", "content": "x"}], "openai/gpt-6")
+    check("otros modelos no se tocan", otro, [{"role": "system", "content": "x"}])
+
+
 def test_apagado_sin_variables():
     print("desde_entorno")
     os.environ.pop("IA_UPSTREAM_KEY", None)
@@ -277,7 +310,7 @@ def test_apagado_sin_variables():
 if __name__ == "__main__":
     for prueba in (test_credito_mensual, test_paquete_extra, test_prueba_por_equipo, test_perpetua_sin_credito,
                    test_tokens_malos, test_error_del_proveedor_no_cobra_ni_filtra, test_sin_costo_ni_precio_no_regala,
-                   test_http, test_flujo_en_vivo, test_apagado_sin_variables):
+                   test_http, test_flujo_en_vivo, test_comprimido_y_cache, test_apagado_sin_variables):
         prueba()
     print()
     if FAILED:

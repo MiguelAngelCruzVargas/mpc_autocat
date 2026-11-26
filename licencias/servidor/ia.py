@@ -45,7 +45,44 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-MAX_CUERPO = 4 * 1024 * 1024        # las definiciones de herramientas pesan
+MAX_CUERPO = 4 * 1024 * 1024        # lo que llega por la red (comprimido o no)
+MAX_DESCOMPRIMIDO = 16 * 1024 * 1024  # ya descomprimido: las definiciones de herramientas pesan
+# El chat manda el pedido COMPRIMIDO (gzip): ocupa 5 a 10 veces menos y cabe en el límite de 256 KB que el servidor web
+# compartido ya tiene para este sitio, sin tocar su configuración (el mismo servidor web atiende otros sistemas).
+
+
+def descomprimir(cuerpo: bytes, codificacion: str) -> bytes:
+    """El cuerpo tal cual o, con Content-Encoding: gzip, descomprimido con tope (que un gzip chico no se infle a GB)."""
+    if (codificacion or "").strip().lower() != "gzip":
+        return cuerpo
+    import zlib
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    salida = d.decompress(cuerpo, MAX_DESCOMPRIMIDO + 1)
+    if len(salida) > MAX_DESCOMPRIMIDO or d.unconsumed_tail:
+        raise ErrorIA("Pedido demasiado grande.", 413)
+    return salida
+
+
+def con_cache(mensajes: list[Any], modelo: str) -> list[Any]:
+    """Marca el texto de sistema para la caché de instrucciones de Anthropic (vía OpenRouter).
+
+    Cada vuelta reenvía las reglas de dibujo y las herramientas (~45 mil tokens): con la caché, las vueltas después
+    de la primera cobran esa parte a ~10 % de su precio. Solo para modelos de Anthropic (los demás o cachean solos,
+    como OpenAI y DeepSeek, o lo ignoran)."""
+    if not modelo.startswith("anthropic/") or not mensajes or not isinstance(mensajes[0], dict):
+        return mensajes
+    primero = mensajes[0]
+    if primero.get("role") != "system":
+        return mensajes
+    contenido = primero.get("content")
+    if isinstance(contenido, str):
+        partes = [{"type": "text", "text": contenido}]
+    elif isinstance(contenido, list) and contenido and isinstance(contenido[-1], dict):
+        partes = [dict(p) for p in contenido]
+    else:
+        return mensajes
+    partes[-1] = {**partes[-1], "cache_control": {"type": "ephemeral"}}
+    return [{**primero, "content": partes}] + list(mensajes[1:])
 TIEMPO_LIMITE = 300
 MENSAJE_SIN_CREDITO = ("Se acabó el crédito de IA incluido en tu plan este mes. Puedes seguir con tu propia clave "
                        "(Configuración → Proveedor de IA) o pedir un paquete de crédito a Vigentra. "
@@ -221,6 +258,7 @@ class ServicioIA:
         if not isinstance(cuerpo.get("messages"), list) or not cuerpo["messages"]:
             raise ErrorIA("Falta 'messages'.")
         cuerpo["model"] = self.modelo          # el cliente no elige un modelo más caro
+        cuerpo["messages"] = con_cache(cuerpo["messages"], self.modelo)
         cuerpo["usage"] = {"include": True}    # OpenRouter: que devuelva el costo de la llamada
         cuerpo["stream"] = flujo
         if flujo:

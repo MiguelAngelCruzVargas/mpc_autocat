@@ -238,6 +238,20 @@ namespace AgenteTests
                 Check("un resultado sin imágenes no truena", AgenteNativo.PaginasDelPdf("no es json").Count == 0);
             }
 
+            Console.WriteLine("test_ia_incluida_comprimida");
+            {
+                var cuerpoGrande = new JsonObject { ["messages"] = new JsonArray { new JsonObject { ["role"] = "user", ["content"] = new string('x', 300000) } } };
+                var c = ClienteHttp.Contenido("https://vigentra-architech.vigentra.mx/ia/v1/chat/completions", cuerpoGrande);
+                var bytes = c.ReadAsByteArrayAsync().Result;
+                Check("hacia la IA incluida va comprimido", c.Headers.ContentEncoding.Contains("gzip") && bytes.Length < 256 * 1024);
+                using (var ms = new MemoryStream(bytes))
+                using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionMode.Decompress))
+                using (var lector = new StreamReader(gz))
+                    Check("y se descomprime al mismo JSON", lector.ReadToEnd() == cuerpoGrande.ToJsonString());
+                var normal = ClienteHttp.Contenido("https://api.openai.com/v1/chat/completions", cuerpoGrande);
+                Check("a los demás proveedores va sin comprimir", normal.Headers.ContentEncoding.Count == 0);
+            }
+
             Console.WriteLine("test_modelo_ve_la_captura");
             {
                 var rutaPng = Path.Combine(dir, "captura.png");

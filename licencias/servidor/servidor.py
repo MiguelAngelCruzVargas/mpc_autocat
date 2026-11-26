@@ -501,7 +501,8 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                     if n <= 0 or n > ia_mod.MAX_CUERPO:
                         return self._responder(413, {"error": {"message": "Pedido demasiado grande."}})
                     try:
-                        pedido = json.loads(self.rfile.read(n))
+                        crudo = ia_mod.descomprimir(self.rfile.read(n), self.headers.get("Content-Encoding", ""))
+                        pedido = json.loads(crudo)
                     except ValueError:
                         return self._responder(400, {"error": {"message": "JSON inválido."}})
                     if not isinstance(pedido, dict):

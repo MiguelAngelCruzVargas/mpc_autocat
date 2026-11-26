@@ -88,12 +88,29 @@ namespace AutoCadMcpPlugin.Chat
             return new HttpClient { Timeout = TimeSpan.FromSeconds(180) };
         }
 
+        /// <summary>Hacia la IA incluida el pedido va comprimido (gzip): cabe en el límite del servidor de licencias.</summary>
+        internal static bool Comprimir(string url) => url != null && url.IndexOf("/ia/v1", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        internal static HttpContent Contenido(string url, JsonObject cuerpo)
+        {
+            var json = Encoding.UTF8.GetBytes(cuerpo.ToJsonString());
+            if (!Comprimir(url))
+                return new StringContent(Encoding.UTF8.GetString(json), Encoding.UTF8, "application/json");
+            var ms = new MemoryStream();
+            using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Fastest, true))
+                gz.Write(json, 0, json.Length);
+            var c = new ByteArrayContent(ms.ToArray());
+            c.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+            c.Headers.ContentEncoding.Add("gzip");
+            return c;
+        }
+
         public static async Task<(int codigo, string texto)> PostAsync(string url, JsonObject cuerpo,
             Action<HttpRequestMessage> cabeceras, CancellationToken ct)
         {
             using (var pedido = new HttpRequestMessage(HttpMethod.Post, url))
             {
-                pedido.Content = new StringContent(cuerpo.ToJsonString(), Encoding.UTF8, "application/json");
+                pedido.Content = Contenido(url, cuerpo);
                 cabeceras?.Invoke(pedido);
                 try
                 {
@@ -114,7 +131,7 @@ namespace AutoCadMcpPlugin.Chat
         /// <summary>Abre una respuesta en flujo (SSE): el llamador la lee línea a línea y la cierra.</summary>
         public static async Task<HttpResponseMessage> AbrirFlujoAsync(string url, JsonObject cuerpo, Action<HttpRequestMessage> cabeceras, CancellationToken ct)
         {
-            var pedido = new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(cuerpo.ToJsonString(), Encoding.UTF8, "application/json") };
+            var pedido = new HttpRequestMessage(HttpMethod.Post, url) { Content = Contenido(url, cuerpo) };
             cabeceras?.Invoke(pedido);
             try { return await Http.SendAsync(pedido, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(true); }
             catch (HttpRequestException ex) { throw new ErrorProveedor("No se pudo llamar a " + url + ": " + ex.Message); }
