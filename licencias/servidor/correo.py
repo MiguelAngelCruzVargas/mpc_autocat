@@ -30,7 +30,7 @@ def armar(destino: str, de: str, plan: str, clave: Optional[str], referencia: st
         m["Subject"] = "Tu clave de Vigentra Architech"
         cuerpo = ("Hola,\n\nGracias por tu compra. Esta es tu clave de licencia %s:\n\n    %s\n\n"
                   "Sirve en 2 computadoras. Guarda este correo.\n\nReferencia de pedido: %s\n\n"
-                  "1) Descarga el instalador: %s/descargas/AutoCAD-IA-1.22.0.zip\n"
+                  "1) Descarga el instalador: %s/descargas/AutoCAD-IA-1.23.0.zip\n"
                   "2) Cierra AutoCAD, descomprime y haz doble clic en INSTALAR.bat\n"
                   "3) Abre AutoCAD IA del escritorio y pega tu clave en Primeros pasos.\n"
                   "Guia completa: %s/instalacion\n" % (PLAN.get(plan, plan), clave, referencia, SITIO, SITIO))
