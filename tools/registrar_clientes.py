@@ -63,17 +63,24 @@ def ruta_codex(env: Optional[dict[str, str]] = None) -> str:
     return os.path.join(base, "config.toml")
 
 
+def _comando(nombre: str, env: Optional[dict[str, str]]) -> Optional[str]:
+    """El programa en el PATH. Con un `env` de prueba solo se busca en SU PATH: nunca se toca el claude/codex real."""
+    if env is None:
+        return shutil.which(nombre)
+    return shutil.which(nombre, path=env.get("PATH", "")) if env.get("PATH") else None
+
+
 def detectar(env: Optional[dict[str, str]] = None) -> list[str]:
     """Clientes que parecen estar instalados (por su carpeta de configuración
     o su comando en el PATH)."""
     out = []
     if os.path.isdir(os.path.dirname(ruta_claude_desktop(env))):
         out.append("claude-desktop")
-    if shutil.which("claude"):
+    if _comando("claude", env):
         out.append("claude-code")
-    if os.path.isdir(os.path.dirname(ruta_opencode(env))) or shutil.which("opencode"):
+    if os.path.isdir(os.path.dirname(ruta_opencode(env))) or _comando("opencode", env):
         out.append("opencode")
-    if os.path.isdir(os.path.dirname(ruta_codex(env))) or shutil.which("codex"):
+    if os.path.isdir(os.path.dirname(ruta_codex(env))) or _comando("codex", env):
         out.append("codex")
     return out
 
@@ -258,7 +265,8 @@ def registrar(clientes: list[str], py: str, server: str,
             elif c == "opencode":
                 res[c] = registrar_opencode(py, server, env)
             elif c == "claude-code":
-                res[c] = registrar_claude_code(py, server)
+                # Con un env de prueba no se ejecuta el CLI real (registraría en la PC de quien corre la prueba).
+                res[c] = registrar_claude_code(py, server) if env is None else "omitido (entorno de prueba)"
             elif c == "codex":
                 res[c] = registrar_codex(py, server, env)
             else:
@@ -281,6 +289,44 @@ def quitar(clientes: list[str], env: Optional[dict[str, str]] = None) -> dict[st
     return res
 
 
+NOMBRES = {"claude-desktop": "Claude (app de escritorio)", "claude-code": "Claude Code",
+           "codex": "Codex (ChatGPT)", "opencode": "OpenCode"}
+
+
+def _amigable(py: Optional[str], server: Optional[str], env: Optional[dict[str, str]] = None) -> int:
+    """Lo que ve el cliente al hacer doble clic en CONECTAR_MI_SUSCRIPCION.bat: qué se conectó y qué sigue."""
+    if not py or not server or not os.path.isfile(server):
+        print("No encuentro el servidor de Architech. Reinstala con INSTALAR.bat y vuelve a intentarlo.")
+        return 1
+    clientes = detectar(env)
+    if not clientes:
+        print("No encontré ningún programa de IA con suscripción en esta computadora.\n")
+        print("Instala UNO de estos (con la cuenta de tu suscripción) y vuelve a hacer doble clic aquí:")
+        print("  - Suscripción de Claude (Pro o Max):  la app de escritorio de Claude  -> https://claude.ai/download")
+        print("  - Suscripción de ChatGPT (Plus o Pro): Codex                           -> https://developers.openai.com/codex")
+        print("\nSi no tienes suscripción, no hace falta: usa la «IA incluida en tu plan» en el chat de AutoCAD.")
+        return 0
+    res = registrar(clientes, os.path.abspath(py), os.path.abspath(server), env)
+    listos = [c for c, e in res.items() if e in ("registrado", "ya estaba")]
+    for c, estado in res.items():
+        marca = "LISTO" if c in listos else "NO SE PUDO"
+        print(f"  [{marca}]  {NOMBRES.get(c, c)}" + ("" if c in listos else f"  ({estado})"))
+    if not listos:
+        print("\nNo se pudo conectar. Manda una captura de esta ventana a soporte de Vigentra.")
+        return 1
+    print("\nYa está. Ahora:")
+    print("  1. Abre AutoCAD (con Architech instalado).")
+    if "claude-desktop" in listos:
+        print("  2. Cierra por completo la app de Claude (también del icono junto al reloj) y vuelve a abrirla.")
+        print("     En el chat verás las herramientas de AutoCAD. Pídele, por ejemplo:")
+    else:
+        print("  2. Abre tu agente (Claude Code o Codex) y pídele, por ejemplo:")
+    print("       «Revisa el plano abierto en AutoCAD y dime qué contiene»")
+    print("       «Dibuja la planta de una casa de 8 x 20 con 2 recámaras»")
+    print("  3. Para ver lo que hace desde AutoCAD: en el chat de AutoCAD elige «En vivo».")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--python", help="python.exe del venv del servidor")
@@ -288,7 +334,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--clientes", default="auto",
                     help="auto (los detectados) o lista separada por comas: " + ", ".join(CLIENTES))
     ap.add_argument("--quitar", action="store_true", help="sacar la entrada 'autocad'")
+    ap.add_argument("--amigable", action="store_true",
+                    help="mensajes para el cliente (lo usa CONECTAR_MI_SUSCRIPCION.bat)")
     a = ap.parse_args(argv)
+    if a.amigable and not a.quitar:
+        return _amigable(a.python, a.server)
     clientes = detectar() if a.clientes == "auto" else [c.strip() for c in a.clientes.split(",") if c.strip()]
     if a.quitar:
         res = quitar(clientes or list(CLIENTES))

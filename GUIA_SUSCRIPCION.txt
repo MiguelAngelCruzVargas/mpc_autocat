@@ -1,0 +1,78 @@
+VIGENTRA ARCHITECH - Cómo usarlo con tu suscripción de Claude o ChatGPT
+=======================================================================
+
+¿Ya pagas Claude (Pro o Max) o ChatGPT (Plus o Pro)? Puedes usar esa misma
+suscripción con Architech. No necesitas ninguna clave.
+
+Si NO tienes suscripción, no necesitas nada de esto: en el chat de AutoCAD
+elige «IA INCLUIDA EN TU PLAN» y listo.
+
+
+PASO 1. Instala el programa de tu suscripción (si no lo tienes)
+-----------------------------------------------------------------
+  Si tienes Claude:   instala la app de Claude para Windows
+                      https://claude.ai/download
+                      y entra con tu cuenta.
+
+  Si tienes ChatGPT:  instala Codex
+                      https://developers.openai.com/codex
+                      y entra con tu cuenta de ChatGPT.
+
+
+PASO 2. Conéctalo con Architech (una sola vez)
+----------------------------------------------
+  En la carpeta donde instalaste Architech, haz doble clic en:
+
+        CONECTAR_MI_SUSCRIPCION.bat
+
+  La ventana te dice qué quedó conectado, por ejemplo:
+
+        [LISTO]  Claude (app de escritorio)
+
+  Si dice que no encontró ningún programa, vuelve al paso 1.
+
+
+PASO 3. Úsalo
+-------------
+  1. Abre AutoCAD.
+  2. Con Claude: cierra la app de Claude por completo (también desde el
+     icono junto al reloj de Windows) y vuelve a abrirla. Esto solo la
+     primera vez.
+  3. En Claude (o en Codex) pídele lo que necesites, por ejemplo:
+
+        «Revisa el plano abierto en AutoCAD y dime qué contiene»
+        «¿Las instalaciones eléctricas de este plano cumplen la norma?»
+        «Dibuja la planta de una casa de 8 x 20 con 2 recámaras y 1 baño»
+
+     La primera vez te pregunta si permites usar las herramientas de
+     AutoCAD: di que sí.
+
+  4. Opcional: en el chat de AutoCAD (comando MCPCHAT) elige «En vivo»
+     para ver desde AutoCAD lo que va haciendo.
+
+
+PREGUNTAS FRECUENTES
+--------------------
+  ¿Puedo pegar mi suscripción como «clave» en el chat de AutoCAD?
+     No. Las suscripciones de Claude o ChatGPT no traen clave de API; por
+     eso se usan con su propio programa, como explica esta guía.
+
+  ¿Cuánto cuesta usarlo así?
+     Nada extra: usa lo que ya incluye tu suscripción (con sus límites de
+     uso). Vigentra no cobra nada adicional por esto.
+
+  ¿Mis planos se suben a algún lado?
+     Tus pedidos van a Claude o a ChatGPT, como cuando usas su chat. A
+     Vigentra no se sube nada.
+
+  ¿Y si quiero dejar de usarlo así?
+     En el chat de AutoCAD elige otra opción (la IA incluida o tu propia
+     clave). No tienes que desinstalar nada.
+
+  No aparecen las herramientas de AutoCAD en Claude.
+     - Revisa que AutoCAD esté abierto.
+     - Cierra Claude POR COMPLETO y ábrelo de nuevo.
+     - Vuelve a hacer doble clic en CONECTAR_MI_SUSCRIPCION.bat.
+     - Si sigue igual, manda una captura de esa ventana a soporte.
+
+Soporte: WhatsApp y correo de Vigentra (los que vienen en tu compra).

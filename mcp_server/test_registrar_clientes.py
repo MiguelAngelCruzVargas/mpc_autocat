@@ -136,6 +136,34 @@ def test_codex() -> None:
         check("codex: se detecta por su carpeta", "codex" in rc.detectar(env))
 
 
+def test_modo_amigable_para_el_cliente() -> None:
+    """Lo que ve el cliente con CONECTAR_MI_SUSCRIPCION.bat: qué quedó conectado y qué sigue, sin jerga."""
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as d:
+        env = entorno(d)
+        server = os.path.join(d, "server.py")
+        open(server, "w").close()
+        salida = io.StringIO()
+        with contextlib.redirect_stdout(salida):
+            codigo = rc._amigable(PY, server, env)
+        texto = salida.getvalue()
+        check("sin programas: dice qué instalar y que la IA incluida no necesita nada",
+              codigo == 0 and "claude.ai/download" in texto and "IA incluida" in texto, texto)
+        os.makedirs(os.path.dirname(rc.ruta_claude_desktop(env)))
+        salida = io.StringIO()
+        with contextlib.redirect_stdout(salida):
+            codigo = rc._amigable(PY, server, env)
+        texto = salida.getvalue()
+        check("con Claude de escritorio: LISTO y los pasos que siguen",
+              codigo == 0 and "[LISTO]  Claude (app de escritorio)" in texto and "Cierra por completo" in texto, texto)
+        check("y quedó escrito en su configuración", '"autocad"' in open(rc.ruta_claude_desktop(env), encoding="utf-8").read())
+        salida = io.StringIO()
+        with contextlib.redirect_stdout(salida):
+            codigo = rc._amigable(PY, os.path.join(d, "no-existe.py"), env)
+        check("sin servidor: pide reinstalar", codigo == 1 and "INSTALAR.bat" in salida.getvalue())
+
+
 if __name__ == "__main__":
     for n, fn in list(globals().items()):
         if n.startswith("test_") and callable(fn):

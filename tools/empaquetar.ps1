@@ -84,7 +84,8 @@ New-Item -ItemType Directory -Force -Path (Join-Path $salida 'tools') | Out-Null
 foreach ($f in 'instalar.ps1', 'firmar_plugin.ps1', 'registrar_clientes.py', 'lanzar_silencioso.bat', 'run_code_acceso.py') {
     Copy-Item (Join-Path $raiz "tools\$f") (Join-Path $salida 'tools')
 }
-foreach ($f in 'iniciar.py', 'iniciar_en_autocad.py', 'AutoCAD-IA.vbs', 'AutoCAD-IA.bat', 'INSTALAR.bat', 'LEEME.txt') {
+foreach ($f in 'iniciar.py', 'iniciar_en_autocad.py', 'AutoCAD-IA.vbs', 'AutoCAD-IA.bat', 'INSTALAR.bat', 'LEEME.txt',
+            'CONECTAR_MI_SUSCRIPCION.bat', 'GUIA_SUSCRIPCION.txt') {
     $p = Join-Path $raiz $f
     if (Test-Path $p) { Copy-Item $p $salida }
 }

@@ -5,8 +5,11 @@ Lo que necesitas
   - Windows 10 u 11 (64 bits). No hay versión para Mac.
   - AutoCAD completo instalado (no AutoCAD LT ni AutoCAD web: no admiten complementos .NET), con TU propia
     licencia (este programa no la incluye).
-  - Una IA a tu elección: una clave de OpenAI, Anthropic, OpenRouter, DeepSeek,
-    Groq, etc., o un modelo local. Se paga aparte, al proveedor que elijas.
+  - IA, de una de estas tres formas:
+      * la IA INCLUIDA EN TU PLAN (no necesitas nada más);
+      * tu suscripción de Claude o ChatGPT (ver GUIA_SUSCRIPCION.txt);
+      * tu propia clave de OpenAI, Anthropic, OpenRouter, Groq... (la pagas a
+        ese proveedor).
   - Internet para activar la licencia y para la IA.
   - Una clave de licencia de Vigentra (te la mandamos al comprar) o iniciar la
     prueba gratis de 7 días.
