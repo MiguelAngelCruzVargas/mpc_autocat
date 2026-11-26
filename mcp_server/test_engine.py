@@ -95,7 +95,7 @@ def _con(mock: Mock, fn):
 
 
 def _limpio() -> None:
-    session.reset()
+    session.reset_all()
     space.clear_footprints()
 
 
@@ -133,7 +133,8 @@ def test_manda_la_contrasena() -> None:
 
 def test_autoguardado_con_path_de_la_sesion() -> None:
     _limpio()
-    session.note_saved("C:/obra/casa.dwg")
+    session.note_saved("C:/obra/casa.dwg", doc=session.doc_key(
+        {"name": "Drawing1.dwg", "fullPath": "Drawing1.dwg"}))
     session.note_mutation()
     m = Mock({"list_documents": _doc("Drawing1.dwg", sucio=True),
               "save_drawing": {"saved": True}, "run_code": _ok()})
@@ -160,6 +161,80 @@ def test_autoguardado_con_el_archivo_del_documento() -> None:
           p == {"path": None, "overwrite": False}, p)
     check("y ese archivo queda como el path recordado",
           session.last_save_path() == ruta, session.last_save_path())
+    check("atado a ESE documento",
+          session.last_save_path(session.doc_key(
+              {"name": os.path.basename(ruta), "fullPath": ruta})) == ruta)
+
+
+def _docs_dos(activo: str, ruta_a: str) -> dict:
+    """Dos dibujos abiertos: A (archivo real) y B (Drawing1, sin guardar)."""
+    return {"documents": [
+        {"name": os.path.basename(ruta_a), "fullPath": ruta_a,
+         "isActive": activo == "A", "isReadOnly": False,
+         "hasUnsavedChanges": True},
+        {"name": "Drawing1.dwg", "fullPath": "Drawing1.dwg",
+         "isActive": activo == "B", "isReadOnly": False,
+         "hasUnsavedChanges": True}], "count": 2}
+
+
+def test_dos_dibujos_no_se_pisan() -> None:
+    """El bug real: un modelo (B) se había guardado con save_drawing(path),
+    después el activo pasó a ser otro dibujo (A) sin que el servidor se
+    enterara (capture_viewport plotea y cambia el activo) y el autoguardado de
+    run_code escribió A encima del archivo de B."""
+    _limpio()
+    ruta_a = _archivo_dwg()
+    ruta_b = "C:/modelos/iphone.dwg"
+    clave_b = session.doc_key({"name": "Drawing1.dwg",
+                               "fullPath": "Drawing1.dwg"})
+    session.note_saved(ruta_b, doc=clave_b)      # B se guardó con path
+
+    # El activo ahora es A: tiene que guardarse en SU archivo.
+    m = Mock({"list_documents": _docs_dos("A", ruta_a),
+              "save_drawing": {"saved": True}, "run_code": _ok()})
+    _con(m, lambda: engine.run_code("return 1;"))
+    p = m.params("save_drawing")
+    check("activo A: NO se guarda sobre el path de B",
+          p.get("path") != ruta_b and p.get("path") is None, p)
+
+    # Y al revés: con B activo sí va a SU path.
+    m = Mock({"list_documents": _docs_dos("B", ruta_a),
+              "save_drawing": {"saved": True}, "run_code": _ok()})
+    _con(m, lambda: engine.run_code("return 1;"))
+    p = m.params("save_drawing")
+    check("activo B: se guarda en el path de B",
+          p == {"path": ruta_b, "overwrite": True}, p)
+
+    # El path de A no se contagia a B por haberse guardado A después.
+    check("el de A quedó atado a A y el de B sigue siendo de B",
+          session.last_save_path(clave_b) == ruta_b
+          and session.last_save_path(session.doc_key(
+              {"name": os.path.basename(ruta_a), "fullPath": ruta_a}))
+          == ruta_a)
+
+
+def test_documento_nuevo_no_hereda_el_path() -> None:
+    """AutoCAD reutiliza 'Drawing1.dwg' al cerrar y crear otro."""
+    _limpio()
+    clave = session.doc_key({"name": "Drawing1.dwg", "fullPath": "Drawing1.dwg"})
+    session.note_saved("C:/viejo/casa.dwg", doc=clave)
+    session.forget_doc(clave)
+    m = Mock({"list_documents": _doc("Drawing1.dwg", sucio=True),
+              "run_code": _ok()})
+    _con(m, lambda: engine.run_code("return 1;"))
+    check("el Drawing1 nuevo no hereda el path del anterior: no ejecuta",
+          "run_code" not in m.cmds() and "save_drawing" not in m.cmds(),
+          m.cmds())
+
+
+def test_activo_desconocido_no_usa_el_path_global() -> None:
+    _limpio()
+    session.note_saved("C:/obra/casa.dwg")         # global, sin documento
+    m = Mock({"list_documents": autocad_client.AutoCadError("x"),
+              "run_code": _ok()})
+    _con(m, lambda: engine.run_code("return 1;"))
+    check("sin saber cuál es el activo no guarda sobre el último path",
+          "save_drawing" not in m.cmds(), m.cmds())
 
 
 def test_niega_sin_path_salvo_force() -> None:
@@ -435,6 +510,9 @@ def main() -> int:
                    test_manda_la_contrasena,
                    test_autoguardado_con_path_de_la_sesion,
                    test_autoguardado_con_el_archivo_del_documento,
+                   test_dos_dibujos_no_se_pisan,
+                   test_documento_nuevo_no_hereda_el_path,
+                   test_activo_desconocido_no_usa_el_path_global,
                    test_niega_sin_path_salvo_force,
                    test_dibujo_limpio_sin_path_ejecuta,
                    test_compile_only_no_toca_nada,

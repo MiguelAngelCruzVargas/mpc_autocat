@@ -71,6 +71,27 @@ _OPS_SINCE_SAVE = [0]
 _SAVE_PATH: list[Optional[str]] = [None]
 _DIRTY_SINCE_CHECK = [False]
 
+# Path donde se guardó CADA documento, por su clave (ver doc_key). El path
+# "de la sesión" de arriba es uno solo, y con dos dibujos abiertos eso pisó un
+# archivo con el contenido del otro: el autoguardado previo de run_code
+# escribía el documento ACTIVO en el último path guardado, que era de otro
+# dibujo. Hasta el cambio de documento se desincroniza sin que este proceso
+# se entere: capture_viewport plotea y deja activo otro documento, y nada
+# pasa por _reset_drawing_state. Por eso el destino de un guardado se busca
+# por documento y nunca se hereda del "último path" global.
+_SAVE_PATH_BY_DOC: dict[str, str] = {}
+
+
+def doc_key(doc: Any) -> Optional[str]:
+    """Clave estable de un documento, a partir de la entrada de
+    list_documents (dict con fullPath/name). Un dibujo sin guardar conserva
+    el nombre 'Drawing1.dwg' aunque se lo haya guardado con SaveAs, así que
+    el nombre sirve de clave cuando no hay carpeta."""
+    if not isinstance(doc, dict):
+        return None
+    clave = doc.get("fullPath") or doc.get("name")
+    return str(clave).replace("/", "\\").lower() if clave else None
+
 
 def _is_mutation(cmd: str) -> bool:
     if cmd in _READ_ONLY or cmd in _LIFECYCLE:
@@ -171,22 +192,43 @@ def note_mutation(result: Any = None) -> Any:
     return result
 
 
-def note_saved(path: Optional[str]) -> None:
-    """El dibujo se guardó: arranca el conteo de nuevo y recuerda el path."""
+def note_saved(path: Optional[str], doc: Optional[str] = None) -> None:
+    """El dibujo se guardó: arranca el conteo de nuevo y recuerda el path.
+
+    doc: la clave (doc_key) del documento que se guardó. Con ella el path
+    queda atado a ESE documento; sin ella solo se actualiza el path global,
+    que ninguna decisión de guardado debe usar para otro documento."""
     _OPS_SINCE_SAVE[0] = 0
     if path:
         _SAVE_PATH[0] = str(path)
+        if doc:
+            _SAVE_PATH_BY_DOC[doc] = str(path)
 
 
-def note_opened(path: Optional[str]) -> None:
+def note_opened(path: Optional[str], doc: Optional[str] = None) -> None:
     """Se abrió un DWG existente: su path es el destino natural del próximo
     guardado sin path."""
     if path:
         _SAVE_PATH[0] = str(path)
+        if doc:
+            _SAVE_PATH_BY_DOC[doc] = str(path)
 
 
-def last_save_path() -> Optional[str]:
+def last_save_path(doc: Optional[str] = None) -> Optional[str]:
+    """Path de guardado recordado. Con doc: el de ESE documento (None si no
+    se guardó con path explícito). Sin doc: el último global, solo para
+    mensajes — no para decidir dónde escribir."""
+    if doc is not None:
+        return _SAVE_PATH_BY_DOC.get(doc)
     return _SAVE_PATH[0]
+
+
+def forget_doc(doc: Optional[str]) -> None:
+    """Un documento se cerró o nació uno nuevo con ese nombre: AutoCAD
+    reutiliza 'Drawing1.dwg', y heredar el path del dibujo anterior que se
+    llamaba igual sería pisar su archivo."""
+    if doc:
+        _SAVE_PATH_BY_DOC.pop(doc, None)
 
 
 def ops_since_save() -> int:
@@ -204,8 +246,17 @@ def dirty_since_check() -> bool:
 
 
 def reset() -> None:
-    """Cambio de dibujo: nada de esto vale para el DWG nuevo."""
+    """Cambio de dibujo: nada de esto vale para el DWG nuevo.
+
+    Los paths por documento NO se tocan: describen cada archivo, no la
+    sesión, y hay que conservarlos al volver a un dibujo ya guardado."""
     _OPS_SINCE_SAVE[0] = 0
     _SAVE_PATH[0] = None
     _DIRTY_SINCE_CHECK[0] = False
     _UNDO_HISTORIAL.clear()
+
+
+def reset_all() -> None:
+    """Todo, incluidos los paths por documento (para tests)."""
+    reset()
+    _SAVE_PATH_BY_DOC.clear()

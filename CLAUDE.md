@@ -215,6 +215,34 @@ el nombre del archivo:
 - Escuela: UNID (la plataforma de la materia "14956-EMIQ-INR19 Dibujo y Diseño
   en Ingeniería").
 
+**El path de guardado se recuerda POR DOCUMENTO, no por sesión.** Antes el
+guardado automático de `run_code` (y `save_drawing()` sin path) escribía el
+documento activo en el ÚLTIMO path guardado de la sesión: con dos dibujos
+abiertos eso pisaba uno con el contenido del otro (pasó: el modelo de un
+iPhone quedó sobrescrito por el plano de otro proyecto y se salvó porque
+seguía en memoria). La causa: `capture_viewport` plotea y deja activo otro
+documento sin que el servidor se entere. Ahora `session.py` guarda el path
+de cada documento (`doc_key`), el autoguardado usa el del documento ACTIVO
+según `list_documents`, y si no se puede saber cuál es el activo no guarda
+sobre ningún path ajeno. Un `Drawing1.dwg` nuevo no hereda el path del que se
+llamaba igual (`forget_doc`).
+
+Igual conviene, al cambiar de documento, `save_drawing(path=<el de ESE
+documento>)` antes de un `run_code` largo. Y después de mover cosas
+"temporalmente" (apartarlas para una captura), verificar que volvieron antes
+de guardar. Ojo: `run_tests.py` con AutoCAD abierto corre también las pruebas en vivo
+(visto: al terminar, los dibujos que había abiertos ya no estaban); guardar
+los planos propios antes de correrlo.
+
+## 2.pre.bis Corregir al usuario cuando algo está mal
+
+Si lo que pide va a dejar el plano peor (vistas que quedan fuera de la hoja,
+un formato que no entra, una medida inventada, un paso del enunciado que se
+saltea), decirlo ANTES de hacerlo y proponer la alternativa; no ejecutarlo en
+silencio y esperar a que lo note. Y si lo hice yo y después lo veo mal,
+avisarlo y corregirlo sin que me lo pidan. Antes de dar una lámina por
+buena, verificar que TODAS las vistas dibujadas quedaron dentro del cajón.
+
 ## 2.bis Guardar seguido: AutoCAD se puede caer a mitad de sesión
 
 `Drawing1.dwg` (el que arranca sin nombre) vive solo en memoria. Un plano

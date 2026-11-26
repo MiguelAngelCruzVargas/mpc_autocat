@@ -5006,7 +5006,9 @@ def open_document(path: str, read_only: bool = False) -> dict[str, Any]:
     if not read_only:
         # El archivo abierto es el destino natural del próximo guardado sin
         # path — así save_drawing() pisa ESTE archivo y no el default.
-        session_mod.note_opened(path)
+        session_mod.note_opened(
+            path, doc=session_mod.doc_key(
+                {"fullPath": r.get("fullPath") or path}))
     if avisos:
         r = dict(r)
         r["warnings"] = avisos
@@ -5026,6 +5028,10 @@ def new_document(template: Optional[str] = None) -> dict[str, Any]:
 
     Olvida lo cacheado del dibujo anterior — ver los 'warnings'."""
     r = acad.call("new_document", {"template": template})
+    # AutoCAD reutiliza 'Drawing1.dwg': un dibujo nuevo no hereda el path del
+    # que se llamaba igual.
+    session_mod.forget_doc(session_mod.doc_key(
+        {"fullPath": r.get("fullPath"), "name": r.get("active")}))
     avisos = _reset_drawing_state(r.get("active", "dibujo nuevo"))
     if avisos:
         r = dict(r)
@@ -5048,6 +5054,11 @@ def close_document(name: Optional[str] = None, save: bool = False,
     Después de cerrar, el estado cacheado del dibujo anterior se olvida."""
     r = acad.call("close_document", {"name": name, "save": save,
                                      "discardUnsaved": discard_unsaved})
+    # El documento cerrado ya no existe: su path no puede heredarlo otro que
+    # reciba el mismo nombre. Con 'name' se conoce; sin él se cerró el activo
+    # y la clave está en r["closed"].
+    cerrado = r.get("closed") or name
+    session_mod.forget_doc(session_mod.doc_key({"name": cerrado}))
     avisos = _reset_drawing_state(r.get("active", "?"))
     if avisos:
         r = dict(r)
@@ -5657,7 +5668,11 @@ def save_drawing(path: Optional[str] = None,
 
     Escribe el archivo por API: AutoCAD puede seguir mostrando el nombre viejo
     en la pestaña hasta que lo reabras, pero en disco queda bien."""
-    recordado = session_mod.last_save_path()
+    # El path recordado es el de ESTE documento (el activo), no el último de
+    # la sesión: con dos dibujos abiertos, "sin path" guardaba uno encima del
+    # otro. Si no se puede saber cuál es el activo, no se recuerda nada.
+    clave = session_mod.doc_key(engine_mod._documento_activo())
+    recordado = session_mod.last_save_path(clave) if clave else None
     efectivo = path or recordado
     r = acad.call("save_drawing", {
         "path": efectivo,
@@ -5669,11 +5684,11 @@ def save_drawing(path: Optional[str] = None,
         "overwrite": overwrite or (recordado is not None
                                    and _mismo_archivo(efectivo, recordado)),
     })
-    session_mod.note_saved(efectivo)
+    session_mod.note_saved(efectivo, doc=clave)
     if path is None and recordado:
         r = dict(r)
-        r["note"] = ("path omitido: se guardó sobre el último path de la "
-                     "sesión, '%s'." % recordado)
+        r["note"] = ("path omitido: se guardó sobre el path de ESTE "
+                     "documento, '%s'." % recordado)
     return r
 
 
