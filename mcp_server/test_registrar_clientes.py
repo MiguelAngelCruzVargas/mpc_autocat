@@ -101,6 +101,41 @@ def test_claude_code_y_deteccion() -> None:
           rc.registrar(["chatgpt"], PY, SRV, {"APPDATA": "x"})["chatgpt"] == "cliente desconocido")
 
 
+def test_codex() -> None:
+    """Codex sin su CLI: un bloque propio en ~/.codex/config.toml, sin tocar lo demás."""
+    with tempfile.TemporaryDirectory() as d:
+        env = entorno(d)
+        ruta = rc.ruta_codex(env)
+        os.makedirs(os.path.dirname(ruta))
+        with open(ruta, "w", encoding="utf-8") as fh:
+            fh.write('model = "gpt-6"\n\n[mcp_servers.otro]\ncommand = "npx"\n')
+        check("codex: registra", rc.registrar(["codex"], PY, SRV, env)["codex"] == "registrado")
+        texto = open(ruta, encoding="utf-8").read()
+        check("codex: conserva lo que había", 'model = "gpt-6"' in texto and "[mcp_servers.otro]" in texto)
+        check("codex: su tabla con las rutas escapadas", "[mcp_servers.autocad]" in texto
+              and 'command = "C:\\\\app\\\\.venv' in texto, texto)
+        try:
+            import tomllib  # type: ignore
+        except ImportError:
+            try:
+                import tomli as tomllib  # type: ignore
+            except ImportError:
+                tomllib = None
+        if tomllib is not None:
+            datos = tomllib.loads(texto)
+            check("codex: TOML válido con las rutas exactas",
+                  datos["mcp_servers"]["autocad"] == {"command": PY, "args": [SRV]}, str(datos))
+        check("codex: repetir no duplica", rc.registrar(["codex"], PY, SRV, env)["codex"] == "ya estaba"
+              and open(ruta, encoding="utf-8").read().count("[mcp_servers.autocad]") == 1)
+        check("codex: quitar deja lo demás", rc.quitar(["codex"], env)["codex"] == "quitado"
+              and "[mcp_servers.autocad]" not in open(ruta, encoding="utf-8").read()
+              and "[mcp_servers.otro]" in open(ruta, encoding="utf-8").read())
+        with open(ruta, "a", encoding="utf-8") as fh:
+            fh.write('\n[mcp_servers.autocad]\ncommand = "mio"\n')
+        check("codex: un «autocad» ajeno no se pisa", "no se toca" in rc.registrar(["codex"], PY, SRV, env)["codex"])
+        check("codex: se detecta por su carpeta", "codex" in rc.detectar(env))
+
+
 if __name__ == "__main__":
     for n, fn in list(globals().items()):
         if n.startswith("test_") and callable(fn):

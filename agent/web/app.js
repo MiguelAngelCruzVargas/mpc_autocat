@@ -1857,6 +1857,7 @@ function vivoIniciar() {
   vivoSondear();
   fetch('/api/vivo/info').then(r => r.json()).then(i => {
     const a = $('#vivo-cmd-claude'); if (a) a.textContent = i.claude;
+    const c = $('#vivo-cmd-codex'); if (c) c.textContent = i.codex || '';
     const b = $('#vivo-cmd-otro'); if (b) b.textContent = 'comando: ' + i.python + '\nargumentos: ' + i.servidor;
   }).catch(() => {});
 }

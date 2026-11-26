@@ -22,7 +22,7 @@
 
 .PARAMETER Clientes
   'auto' (default: los detectados), 'ninguno', o una lista separada por
-  comas: claude-desktop, claude-code, opencode.
+  comas: claude-desktop, claude-code, opencode, codex.
 .PARAMETER SinPlugin
   No instala el plugin de AutoCAD.
 .PARAMETER SinAtajo

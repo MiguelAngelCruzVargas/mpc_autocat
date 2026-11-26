@@ -889,6 +889,8 @@ class Handler(BaseHTTPRequestHandler):
             py = _python_mcp()
             self._json({"servidor": servidor, "python": py,
                         "claude": f'claude mcp add autocad -s user -- "{py}" "{servidor}"',
+                        # Con suscripción de ChatGPT: Codex (terminal, editor o la app de ChatGPT) comparte esta config.
+                        "codex": f'codex mcp add autocad -- "{py}" "{servidor}"',
                         "carpeta": canal.carpeta()})
         else:
             self.send_error(404)

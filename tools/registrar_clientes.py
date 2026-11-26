@@ -15,9 +15,15 @@ Clientes:
   opencode        ~/.config/opencode/opencode.json              -> mcp
                   (formato actual: mcp.<nombre>; si el archivo ya usa el
                   formato v2, mcp.servers.<nombre>, se respeta)
+  codex           OpenAI Codex: CLI 'codex mcp add', o ~/.codex/config.toml
+                  -> [mcp_servers.autocad]. Esa configuración la comparten la
+                  terminal, la extensión del editor y Codex en la app de
+                  ChatGPT: es la vía para quien tiene suscripción de ChatGPT.
 
-ChatGPT de escritorio NO está: no carga servidores MCP locales por stdio. Con
-ese modelo se usa el panel web de AutoCAD IA con una clave de OpenAI.
+ChatGPT (el chat normal) NO carga servidores MCP locales por stdio: con
+suscripción de ChatGPT se usa Codex; sin suscripción, la IA incluida o una clave.
+El asistente de Autodesk (AutoCAD 2027) tampoco: Autodesk no documenta cómo
+agregarle servidores de terceros.
 """
 from __future__ import annotations
 
@@ -29,7 +35,10 @@ import sys
 from typing import Any, Callable, Optional
 
 NOMBRE = "autocad"
-CLIENTES = ("claude-desktop", "claude-code", "opencode")
+CLIENTES = ("claude-desktop", "claude-code", "opencode", "codex")
+# Bloque propio dentro del config.toml de Codex (cuando no está su CLI): se reemplaza entero, el resto no se toca.
+_CODEX_INICIO = "# >>> Vigentra Architech (no editar este bloque a mano)"
+_CODEX_FIN = "# <<< Vigentra Architech"
 
 
 def _env(env: Optional[dict[str, str]]) -> dict[str, str]:
@@ -48,6 +57,12 @@ def ruta_opencode(env: Optional[dict[str, str]] = None) -> str:
     return os.path.join(home, ".config", "opencode", "opencode.json")
 
 
+def ruta_codex(env: Optional[dict[str, str]] = None) -> str:
+    e = _env(env)
+    base = e.get("CODEX_HOME") or os.path.join(e.get("USERPROFILE") or e.get("HOME") or os.path.expanduser("~"), ".codex")
+    return os.path.join(base, "config.toml")
+
+
 def detectar(env: Optional[dict[str, str]] = None) -> list[str]:
     """Clientes que parecen estar instalados (por su carpeta de configuración
     o su comando en el PATH)."""
@@ -58,6 +73,8 @@ def detectar(env: Optional[dict[str, str]] = None) -> list[str]:
         out.append("claude-code")
     if os.path.isdir(os.path.dirname(ruta_opencode(env))) or shutil.which("opencode"):
         out.append("opencode")
+    if os.path.isdir(os.path.dirname(ruta_codex(env))) or shutil.which("codex"):
+        out.append("codex")
     return out
 
 
@@ -145,6 +162,64 @@ def quitar_opencode(env: Optional[dict[str, str]] = None) -> str:
     return "quitado" if os.path.exists(p) and _editar(p, f) else "no estaba"
 
 
+def _toml_texto(valor: str) -> str:
+    return '"' + valor.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def bloque_codex(py: str, server: str) -> str:
+    return (f"{_CODEX_INICIO}\n[mcp_servers.{NOMBRE}]\ncommand = {_toml_texto(py)}\n"
+            f"args = [{_toml_texto(server)}]\n{_CODEX_FIN}\n")
+
+
+def _sin_bloque_codex(texto: str) -> tuple[str, bool]:
+    i, j = texto.find(_CODEX_INICIO), texto.find(_CODEX_FIN)
+    if i < 0 or j < i:
+        return texto, False
+    j = texto.find("\n", j)
+    return texto[:i] + (texto[j + 1:] if j >= 0 else ""), True
+
+
+def registrar_codex(py: str, server: str, env: Optional[dict[str, str]] = None) -> str:
+    """Con el CLI de Codex, como él lo quiere; sin él, un bloque propio en config.toml."""
+    import subprocess
+    exe = shutil.which("codex") if env is None else None
+    if exe:
+        subprocess.run([exe, "mcp", "remove", NOMBRE], capture_output=True, text=True)
+        r = subprocess.run([exe, "mcp", "add", NOMBRE, "--", py, server], capture_output=True, text=True)
+        return "registrado" if r.returncode == 0 else "falló: " + (r.stderr or r.stdout).strip()[:200]
+    ruta = ruta_codex(env)
+    texto = open(ruta, encoding="utf-8").read() if os.path.exists(ruta) else ""
+    limpio, _ = _sin_bloque_codex(texto)
+    if f"[mcp_servers.{NOMBRE}]" in limpio:
+        return "ya hay otro servidor «autocad» en " + ruta + ": no se toca"
+    nuevo = limpio.rstrip("\n") + ("\n\n" if limpio.strip() else "") + bloque_codex(py, server)
+    if nuevo == texto:
+        return "ya estaba"
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    if os.path.exists(ruta) and not os.path.exists(ruta + ".bak-autocad-ia"):
+        shutil.copy2(ruta, ruta + ".bak-autocad-ia")
+    with open(ruta, "w", encoding="utf-8") as fh:
+        fh.write(nuevo)
+    return "registrado"
+
+
+def quitar_codex(env: Optional[dict[str, str]] = None) -> str:
+    import subprocess
+    exe = shutil.which("codex") if env is None else None
+    if exe:
+        r = subprocess.run([exe, "mcp", "remove", NOMBRE], capture_output=True, text=True)
+        return "quitado" if r.returncode == 0 else "no estaba"
+    ruta = ruta_codex(env)
+    if not os.path.exists(ruta):
+        return "no estaba"
+    limpio, habia = _sin_bloque_codex(open(ruta, encoding="utf-8").read())
+    if not habia:
+        return "no estaba"
+    with open(ruta, "w", encoding="utf-8") as fh:
+        fh.write(limpio)
+    return "quitado"
+
+
 def comando_claude_code(py: str, server: str) -> list[str]:
     return ["claude", "mcp", "add", "--scope", "user", NOMBRE, "--", py, server]
 
@@ -184,6 +259,8 @@ def registrar(clientes: list[str], py: str, server: str,
                 res[c] = registrar_opencode(py, server, env)
             elif c == "claude-code":
                 res[c] = registrar_claude_code(py, server)
+            elif c == "codex":
+                res[c] = registrar_codex(py, server, env)
             else:
                 res[c] = "cliente desconocido"
         except Exception as ex:                      # noqa: BLE001
@@ -197,6 +274,7 @@ def quitar(clientes: list[str], env: Optional[dict[str, str]] = None) -> dict[st
         try:
             res[c] = {"claude-desktop": lambda: quitar_claude_desktop(env),
                       "opencode": lambda: quitar_opencode(env),
+                      "codex": lambda: quitar_codex(env),
                       "claude-code": quitar_claude_code}[c]()
         except Exception as ex:                      # noqa: BLE001
             res[c] = f"falló: {ex}"

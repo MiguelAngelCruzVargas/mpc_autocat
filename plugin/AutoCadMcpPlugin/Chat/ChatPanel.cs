@@ -1877,8 +1877,9 @@ namespace AutoCadMcpPlugin.Chat
             try
             {
                 using (var doc = await _cli.GetAsync("/api/vivo/info").ConfigureAwait(true))
-                    _vivoAyuda.Text = "Conecta tu agente una sola vez a este servidor de AutoCAD.\n\nClaude Code (terminal):\n" +
-                                      Texto(doc.RootElement, "claude") + "\n\nOtro agente MCP: comando\n" + Texto(doc.RootElement, "python") +
+                    _vivoAyuda.Text = "Usa tu suscripción (Claude o ChatGPT) con tu propio agente: conéctalo una sola vez a este servidor de AutoCAD.\n\nClaude Code (suscripción de Claude):\n" +
+                                      Texto(doc.RootElement, "claude") + "\n\nCodex (suscripción de ChatGPT; sirve en la terminal, el editor y la app de ChatGPT):\n" +
+                                      Texto(doc.RootElement, "codex") + "\n\nOtro agente MCP: comando\n" + Texto(doc.RootElement, "python") +
                                       "\nargumento\n" + Texto(doc.RootElement, "servidor") +
                                       "\n\nDespués trabaja con él en su programa: aquí ves cada herramienta que use, y lo que escribas abajo le llega en su siguiente acción (si está quieto, escríbele en su programa).";
             }
