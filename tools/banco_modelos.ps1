@@ -34,7 +34,10 @@ if (-not (Get-Process acad -ErrorAction SilentlyContinue)) { throw "AutoCAD no e
 
 # el servidor de herramientas de Python (el mismo que usa el panel), con el AutoCAD de verdad
 $py = (Get-Command python).Source
-$srv = Start-Process $py -ArgumentList @("-c", "import sys; sys.path.insert(0, r'$raiz'); sys.path.insert(0, r'$raiz\mcp_server'); from agent import web; web.iniciar(puerto=$Puerto, abrir=False, en_autocad=False)") -PassThru -WindowStyle Hidden
+# Start-Process junta los argumentos con espacios SIN comillas: el código de -c (que lleva espacios) llegaba partido a
+# Python y el servidor nunca arrancaba. Se pasa como UNA cadena con el código entre comillas dobles.
+$codigo = "import sys; sys.path.insert(0, r'$raiz'); sys.path.insert(0, r'$raiz\mcp_server'); from agent import web; web.iniciar(puerto=$Puerto, abrir=False, en_autocad=False)"
+$srv = Start-Process $py -ArgumentList ('-c "' + $codigo + '"') -PassThru -WindowStyle Hidden
 try {
     $listo = $false
     for ($i = 0; $i -lt 30 -and -not $listo; $i++) {
