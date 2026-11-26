@@ -42,6 +42,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
+import ia as ia_mod
 from cobro import Cobro, ErrorCobro
 from correo import correo_desde_entorno
 
@@ -251,6 +252,12 @@ class Servicio:
         return {"dias": dias, "pruebas_iniciadas": len(pruebas), "pruebas_por_dia": por_dia,
                 "licencias_creadas": {p: n for p, n in lic}, "equipos_activados": act}
 
+    def estado(self, kid: str) -> Optional[str]:
+        """'activa', 'revocada' o None si no existe (lo usa la IA incluida)."""
+        with self._lock:
+            fila = self.db.execute("SELECT estado FROM licencias WHERE kid=?", (kid,)).fetchone()
+        return None if fila is None else fila["estado"]
+
     def vence_de(self, kid: str) -> Optional[float]:
         with self._lock:
             fila = self.db.execute("SELECT vence FROM licencias WHERE kid=?", (kid,)).fetchone()
@@ -329,7 +336,8 @@ class _Limite:
 ORIGENES_SITIO = ("https://vigentra.mx", "https://www.vigentra.mx")
 
 
-def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", puerto: int = 0, cobro: Any = None) -> ThreadingHTTPServer:
+def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", puerto: int = 0, cobro: Any = None,
+                   ia: Any = None) -> ThreadingHTTPServer:
     limite = _Limite()
     limite_compras = _Limite()
 
@@ -339,11 +347,13 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
         def log_message(self, *a):  # sin ruido ni claves en los logs
             pass
 
-        def _responder(self, codigo: int, cuerpo: Any) -> None:
+        def _responder(self, codigo: int, cuerpo: Any, extra: Optional[dict[str, str]] = None) -> None:
             datos = json.dumps(cuerpo).encode()
             self.send_response(codigo)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(datos)))
+            for k, v in (extra or {}).items():
+                self.send_header(k, v)
             origen = self.headers.get("Origin") or ""
             if origen in ORIGENES_SITIO and self.path.split("?")[0] in ("/v1/planes", "/v1/comprar", "/v1/entrega"):
                 self.send_header("Access-Control-Allow-Origin", origen)
@@ -386,7 +396,9 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
             return bool(admin_token) and secrets.compare_digest(enviado, admin_token)
 
         def _atender(self, metodo: str) -> None:
-            ip = self.client_address[0]
+            # La IP REAL del cliente: detrás de Caddy todas las conexiones vienen de 127.0.0.1, y frenar por esa
+            # dejaba a TODOS sin poder activar en cuanto alguien fallaba 20 claves.
+            ip = self._ip_real()
             ruta = self.path.split("?")[0]
             try:
                 if ruta == "/salud":
@@ -397,6 +409,11 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                         return self._responder(401, {"error": "no autorizado"})
                     if metodo == "GET" and ruta == "/admin/listar":
                         return self._responder(200, {"licencias": servicio.listar()})
+                    if metodo == "GET" and ruta == "/admin/ia_uso":
+                        if ia is None:
+                            return self._responder(404, {"error": "La IA incluida no está activa."})
+                        mes = urllib.parse.parse_qs(self.path.partition("?")[2]).get("mes", [None])[0]
+                        return self._responder(200, {"uso": ia.uso(mes)})
                     if metodo == "GET" and ruta == "/admin/estadisticas":
                         q = urllib.parse.parse_qs(self.path.partition("?")[2]).get("dias", ["30"])[0]
                         dias = int(q) if q.isdigit() and 1 <= int(q) <= 730 else 30
@@ -412,6 +429,9 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                         return self._responder(200, servicio.extender(str(d.get("kid", "")), d.get("dias")))
                     if ruta == "/admin/liberar":
                         return self._responder(200, servicio.liberar(str(d.get("kid", "")), d.get("maquina")))
+                    if ruta == "/admin/ia_credito" and ia is not None:
+                        servicio._kid(str(d.get("kid", "")))
+                        return self._responder(200, ia.sumar_extra(str(d.get("kid", "")), d.get("usd")))
                     return self._responder(404, {"error": "no existe"})
                 if ruta == "/stripe/webhook" and metodo == "POST":
                     if cobro is None:
@@ -441,6 +461,8 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                     except ErrorCobro as exc:
                         return self._responder(exc.codigo, {"error": str(exc)})
                     return self._responder(404, {"error": "no existe"})
+                if ruta.startswith("/ia/v1/"):
+                    return self._atender_ia(metodo, ruta, ip)
                 if metodo == "POST" and ruta in ("/v1/activar", "/v1/prueba"):
                     if limite.bloqueado(ip):
                         return self._responder(429, {"error": "Demasiados intentos. Espera unos minutos."})
@@ -460,6 +482,37 @@ def crear_servidor(servicio: Servicio, admin_token: str, host: str = "0.0.0.0", 
                 self._responder(exc.codigo, {"error": str(exc)})
             except Exception:  # noqa: BLE001 - nunca filtrar detalles internos al cliente
                 self._responder(500, {"error": "error interno"})
+
+        def _atender_ia(self, metodo: str, ruta: str, ip: str) -> None:
+            """IA incluida (ver ia.py): formato de OpenAI, autenticado con el token de la licencia."""
+            if ia is None:
+                return self._responder(404, {"error": {"message": "La IA incluida no está disponible por ahora. Usa tu propia clave."}})
+            if limite.bloqueado(ip):
+                return self._responder(429, {"error": {"message": "Demasiados intentos. Espera unos minutos."}})
+            token = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+            try:
+                if metodo == "GET" and ruta == "/ia/v1/models":
+                    ia.cuenta_de(token)
+                    return self._responder(200, {"object": "list", "data": [{"id": ia.modelo, "object": "model"}]})
+                if metodo == "GET" and ruta == "/ia/v1/saldo":
+                    return self._responder(200, ia.saldo(*ia.cuenta_de(token)))
+                if metodo == "POST" and ruta == "/ia/v1/chat/completions":
+                    n = int(self.headers.get("Content-Length") or 0)
+                    if n <= 0 or n > ia_mod.MAX_CUERPO:
+                        return self._responder(413, {"error": {"message": "Pedido demasiado grande."}})
+                    try:
+                        pedido = json.loads(self.rfile.read(n))
+                    except ValueError:
+                        return self._responder(400, {"error": {"message": "JSON inválido."}})
+                    if not isinstance(pedido, dict):
+                        return self._responder(400, {"error": {"message": "Se esperaba un objeto JSON."}})
+                    codigo, datos, saldo = ia.completar(token, pedido)
+                    return self._responder(codigo, datos, {"X-Credito-Restante-USD": "%.4f" % saldo["restante_usd"]})
+                return self._responder(404, {"error": {"message": "no existe"}})
+            except ia_mod.ErrorIA as exc:
+                if exc.codigo == 401:
+                    limite.fallo(ip)
+                return self._responder(exc.codigo, {"error": {"message": str(exc), "code": exc.codigo}})
 
         def do_GET(self):  # noqa: N802
             self._atender("GET")
@@ -495,7 +548,9 @@ def main() -> int:
         cobro.correo = correo_desde_entorno()
         print("Correo de la clave:", "activo" if cobro.correo else "NO configurado (la clave solo se ve en /gracias)", flush=True)
         print("Cobro con Stripe:", ", ".join(cobro.precios), "| a la venta:", cobro.a_la_venta, flush=True)
-    srv = crear_servidor(servicio, token, "0.0.0.0", int(os.environ.get("PORT", "8780")), cobro)
+    ia = ia_mod.desde_entorno(ruta_db, servicio.privada.public_key(), servicio.estado)
+    print("IA incluida:", ("activa con " + ia.modelo) if ia else "apagada (falta IA_UPSTREAM_KEY o IA_CREDITO_USD)", flush=True)
+    srv = crear_servidor(servicio, token, "0.0.0.0", int(os.environ.get("PORT", "8780")), cobro, ia)
     print("Servidor de licencias escuchando en el puerto", srv.server_address[1], flush=True)
     srv.serve_forever()
     return 0
