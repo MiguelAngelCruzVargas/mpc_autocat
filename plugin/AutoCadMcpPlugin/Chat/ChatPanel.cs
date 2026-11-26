@@ -947,6 +947,7 @@ namespace AutoCadMcpPlugin.Chat
             {
                 var item = p;
                 string detalle = item.Vivo ? "Claude Code, Codex, OpenCode…: trabajan en su programa; aquí ves lo que hacen"
+                               : item.Id == Proveedores.IdIncluida ? (item.Clave ? "sin clave: usa tu licencia" : "necesita licencia activa o la prueba gratis")
                                : item.Puente ? "usa tu sesión"
                                : item.Clave ? "con clave guardada" : "falta la clave";
                 _listaProv.Children.Add(Fila(NombresIa.TryGetValue(item.Id, out var bonito) ? bonito : item.Nombre.Replace(" · sin clave", ""), detalle, _prov != null && _prov.Id == item.Id,
