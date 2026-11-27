@@ -152,14 +152,14 @@ namespace AutoCadMcpPlugin.Chat
             }
             catch (Exception ex) { return (null, "No pude arrancar Python (" + exe + "): " + ex.Message); }
 
-            var limite = DateTime.UtcNow.AddSeconds(40);
+            var limite = DateTime.UtcNow.AddSeconds(120);   // la primera vez tras instalar Python compila y carga ~300 tools
             while (DateTime.UtcNow < limite)
             {
                 await Task.Delay(400).ConfigureAwait(true);
                 url = LeerUrl();
                 if (url != null && await RespondeAsync(url).ConfigureAwait(true)) return (url, null);
             }
-            return (null, "El servidor del chat no respondió en 40 s.");
+            return (null, "El servidor del chat no respondió en 2 minutos. Envía tu mensaje otra vez: lo vuelvo a intentar.");
         }
 
         private static string LeerUrl()

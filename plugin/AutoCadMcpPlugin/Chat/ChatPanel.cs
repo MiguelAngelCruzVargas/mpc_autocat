@@ -1043,7 +1043,7 @@ namespace AutoCadMcpPlugin.Chat
 
         private async Task ListarModelosAsync()
         {
-            if (_prov == null || _prov.Vivo || _cli == null) return;
+            if (!await ConectadoAsync().ConfigureAwait(true) || _prov.Vivo) return;
             _listaModelos.Children.Clear();
             _listaModelos.Children.Add(new TextBlock { Text = "Pidiendo la lista de modelos…", Foreground = _t.Suave, Margin = new Thickness(0, 6, 0, 0) });
             try
@@ -1721,9 +1721,22 @@ namespace AutoCadMcpPlugin.Chat
             }
         }
 
+        /// <summary>Si el arranque falló (el servidor tardó o se cayó), reintenta antes de rendirse en silencio.</summary>
+        private async Task<bool> ConectadoAsync()
+        {
+            if (_cli != null && _prov != null) return true;
+            if (_reconectando) return false;
+            _reconectando = true;
+            try { _cli = null; await IniciarAsync().ConfigureAwait(true); }
+            finally { _reconectando = false; }
+            return _cli != null && _prov != null;
+        }
+        private bool _reconectando;
+
         private async Task EnviarAsync()
         {
-            if (_trabajando || _cli == null || _prov == null) return;
+            if (_trabajando) return;
+            if (!await ConectadoAsync().ConfigureAwait(true)) return;
             var texto = _entrada.Text.Trim();
             if (texto.Length == 0 && _imagenes.Count > 0) texto = "Mira la imagen adjunta y úsala como referencia.";
             if (texto.Length == 0) return;
