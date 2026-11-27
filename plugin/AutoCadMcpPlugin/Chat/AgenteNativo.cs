@@ -248,7 +248,7 @@ namespace AutoCadMcpPlugin.Chat
                 _avisoDeshacer = "";
                 if (meta) PasarABajoDemanda(sistemaMeta, prep["nota"]?.ToString(), Emitir);
 
-                int invalidas = 0, silencios = 0;
+                int invalidas = 0, silencios = 0, marcasBasura = 0;
                 bool hubieronTools = false, dibujo = false;
                 bool tope = false;
 
@@ -286,6 +286,22 @@ namespace AutoCadMcpPlugin.Chat
                     }
                     catch (ToolInvalida ex)
                     {
+                        // gpt-oss (Groq) a veces pega su marca interna al nombre: «describir_herramienta<|channel|>commentary».
+                        // Groq la rechaza antes de que llegue aquí; no es culpa de la persona ni del perfil: se reintenta en silencio.
+                        var crudo = ex.Tool ?? "";
+                        int basura = crudo.IndexOf("<|", StringComparison.Ordinal);
+                        if (basura > 0 && marcasBasura < 4)
+                        {
+                            marcasBasura++;
+                            var limpio = crudo.Substring(0, basura);
+                            Emitir("nota", Tecnica("El modelo mandó el nombre '" + crudo + "' con una marca interna; se reintenta."));
+                            _mensajes.Add(new JsonObject
+                            {
+                                ["role"] = "user",
+                                ["content"] = "(Tu última llamada no salió: el nombre de la herramienta llevaba texto extra. Repítela con el nombre exacto '" + limpio + "', sin nada más.)"
+                            });
+                            continue;
+                        }
                         invalidas++;
                         if (invalidas > 3)
                         {

@@ -238,6 +238,12 @@ namespace AgenteTests
                 Check("un resultado sin imágenes no truena", AgenteNativo.PaginasDelPdf("no es json").Count == 0);
             }
 
+            Console.WriteLine("test_nombre_con_marca_de_gpt_oss");
+            {
+                var err = ClienteHttp.ErrorDeRespuesta(400, "{\"error\":{\"message\":\"Tool call validation failed: attempted to call tool 'describir_herramienta<|channel|>commentary' which was not in request.tools\",\"type\":\"invalid_request_error\",\"code\":\"tool_use_failed\"}}");
+                Check("el error en vivo de Groq se reconoce como tool inválida (se reintenta)", err is ToolInvalida ti && ti.Tool == "describir_herramienta<|channel|>commentary");
+            }
+
             Console.WriteLine("test_ia_incluida_comprimida");
             {
                 var cuerpoGrande = new JsonObject { ["messages"] = new JsonArray { new JsonObject { ["role"] = "user", ["content"] = new string('x', 300000) } } };

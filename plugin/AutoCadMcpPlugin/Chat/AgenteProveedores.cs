@@ -474,7 +474,8 @@ namespace AutoCadMcpPlugin.Chat
             if (d.Length == 0 || d == "[DONE]") return;
             JsonNode j;
             try { j = JsonNode.Parse(d); } catch (JsonException) { return; }
-            if (j?["error"] != null) throw new ErrorProveedor("El modelo respondió un error: " + (j["error"]["message"]?.ToString() ?? j["error"].ToString()));
+            // Mismo criterio que una respuesta normal: una tool inválida (p. ej. el nombre con basura de gpt-oss) se reintenta, no se corta.
+            if (j?["error"] != null) throw ClienteHttp.ErrorDeRespuesta(400, d);
             var u = j?["usage"] ?? j?["x_groq"]?["usage"];
             if (u != null) Uso = u.DeepClone();
             var delta = (j?["choices"] as JsonArray)?.FirstOrDefault()?["delta"];
