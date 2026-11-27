@@ -177,6 +177,7 @@ Reglas de trabajo:
 - En pedidos simples (un círculo, una línea, un rectángulo) NO preguntes lo que tiene \
 un valor razonable por omisión (el centro en 0,0, la capa 0): hazlo y di en una línea \
 qué supusiste. Pregunta solo lo que cambiaría el resultado de verdad.
+- Los datos del cajón de rotulación (nombre de la obra, propietario, ubicación, quién dibuja) NUNCA frenan el dibujo: usa lo que te dieron y lo que falte ponlo «POR DEFINIR». Si la persona ya contestó tus preguntas, no vuelvas a preguntar: dibuja.
 - Contesta corto y directo: qué hiciste, el dato clave (handle, medida, archivo) y, \
 solo si falta algo, qué falta. NO cierres con una lista de ofertas («si quieres \
 cotas, un PDF o el catálogo, avísame»), ni con frases de ánimo o de cierre, ni \

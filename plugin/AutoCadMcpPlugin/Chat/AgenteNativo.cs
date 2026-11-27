@@ -468,9 +468,15 @@ namespace AutoCadMcpPlugin.Chat
                 // Que la persona sepa que el pedido TERMINÓ, y si tocó o no el plano (un modelo puede contestar solo con texto
                 // —p. ej. un LISP— y dejar el dibujo vacío sin que se note).
                 if (!tope && !ct.IsCancellationRequested)
-                    Emitir("cierre", Obj("texto", dibujo
-                        ? "Listo: terminé y el dibujo quedó a la vista."
-                        : "Terminé sin dibujar nada en el plano: solo respondí con texto. Si querías verlo dibujado, pide «dibújalo en el plano»."));
+                {
+                    var ultimo = UltimoTextoAsistente();
+                    if (dibujo)
+                        Emitir("cierre", Obj("texto", "Listo: terminé y el dibujo quedó a la vista."));
+                    else if (ultimo.Contains("```"))
+                        // contestó con código (un LISP, un script) en vez de dibujar: que se note que el plano sigue vacío
+                        Emitir("cierre", Obj("texto", "Terminé sin dibujar nada en el plano: solo respondí con texto. Si querías verlo dibujado, pide «dibújalo en el plano»."));
+                    // Si hizo una pregunta o solo contestó (sin código ni dibujo), no hace falta aviso: está esperando tu respuesta.
+                }
 
                 if (dibujo && enAutocad)
                 {
@@ -498,6 +504,22 @@ namespace AutoCadMcpPlugin.Chat
         }
 
         // ------------------------------------------------------------------------------------------ piezas
+
+        private string UltimoTextoAsistente()
+        {
+            for (int i = _mensajes.Count - 1; i >= 0; i--)
+            {
+                if (!(_mensajes[i] is JsonObject m) || m["role"]?.ToString() != "assistant") continue;
+                var c = m["content"];
+                if (c is JsonValue v && v.TryGetValue<string>(out var s) && s.Trim().Length > 0) return s;
+                if (c is JsonArray partes)
+                    foreach (var parte in partes)
+                        if (parte is JsonObject po && po["type"]?.ToString() == "text" && (po["text"]?.ToString() ?? "").Trim().Length > 0)
+                            return po["text"].ToString();
+                return "";
+            }
+            return "";
+        }
 
         private string _ultimoError;
 

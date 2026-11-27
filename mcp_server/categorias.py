@@ -283,7 +283,10 @@ FLUJOS: dict[str, dict] = {
     "casa": {
         "titulo": "Una casa (vivienda entre medianeras)",
         "pasos": [
-            ("Datos", "get_normative (país) y los datos de la obra: preguntarlos UNA vez (nombre, ubicación, propietario, quién dibuja)."),
+            ("Datos", "get_normative (país). Los datos del cajón (nombre de la obra, ubicación, propietario, quién dibuja) NO "
+                      "detienen el dibujo: usa los que la persona ya dio y lo que falte ponlo «POR DEFINIR»; nunca preguntes por "
+                      "ellos antes de dibujar (se cambian al final). Pregunta solo lo que cambia el plano: medidas del terreno o "
+                      "programa si de verdad faltan."),
             ("Guardar", "save_drawing(path=...) con nombre propio ANTES de dibujar."),
             ("Terreno", "traverse / create_construction_table (si hay cuadro de construcción); create_north."),
             ("Programa", "check_program: ¿el programa entra en el terreno? Si no, decirlo con el número."),
