@@ -1699,6 +1699,15 @@ namespace AutoCadMcpPlugin.Chat
                 case "aviso":
                     AgregarAviso(Texto(ev, "texto"));
                     break;
+                case "cierre":
+                    Anotar("CIERRE  " + Texto(ev, "texto"));
+                    {
+                        var txt = Texto(ev, "texto");
+                        bool hecho = txt.StartsWith("Listo", StringComparison.Ordinal);
+                        Agregar(new TextBlock { Text = (hecho ? "✓ " : "! ") + txt, Foreground = hecho ? _t.Ok : _t.Aviso, FontSize = 12,
+                                                FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 6), TextWrapping = TextWrapping.Wrap });
+                    }
+                    break;
                 case "permiso":
                     Anotar("PERMISO  " + Texto(ev, "nombre"));
                     MostrarActividad("Esperando tu permiso");

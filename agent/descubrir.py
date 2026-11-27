@@ -48,7 +48,10 @@ META: list[dict[str, Any]] = [
         "description": "Busca herramientas de AutoCAD. Sin argumentos lista las categorías. `flujo` da los pasos EN ORDEN de un "
                        "tipo de proyecto; `categoria` lista las de una categoría; `texto` busca por palabras.",
         "parameters": {"type": "object", "properties": {
-            "texto": {"type": "string"}, "categoria": {"type": "string"}, "flujo": {"type": "string"}}}}},
+            # ["string", "null"]: hay modelos (gpt-oss en Groq) que mandan null en lo que no usan, y Groq valida el esquema
+            # ANTES de que nos llegue la llamada: con solo "string" la rechaza y el pedido muere con un error.
+            "texto": {"type": ["string", "null"]}, "categoria": {"type": ["string", "null"]},
+            "flujo": {"type": ["string", "null"]}}}}},
     {"type": "function", "function": {
         "name": "describir_herramienta",
         "description": "Devuelve la descripción y los parámetros exactos de UNA herramienta. Hazlo antes de ejecutarla.",
@@ -56,11 +59,46 @@ META: list[dict[str, Any]] = [
     {"type": "function", "function": {
         "name": "ejecutar_herramienta",
         "description": "Ejecuta una herramienta de AutoCAD con sus argumentos (un objeto JSON).",
-        "parameters": {"type": "object", "properties": {"nombre": {"type": "string"}, "argumentos": {"type": "object"}},
+        "parameters": {"type": "object", "properties": {"nombre": {"type": "string"}, "argumentos": {"type": ["object", "null"]}},
                        "required": ["nombre"]}}},
 ]
 
 NOMBRES = {m["function"]["name"] for m in META}
+
+# Proveedores que validan los argumentos contra el esquema ANTES de devolver la llamada (Groq): un modelo que manda null en un
+# opcional hace que todo el pedido muera con «Tool call validation failed». Para ellos los opcionales aceptan null.
+VALIDAN_ESQUEMA = {"groq"}
+
+
+def con_nulos(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copia de las herramientas donde cada parámetro OPCIONAL acepta también null (los null se quitan al ejecutar)."""
+    salida = []
+    for t in tools:
+        f = t.get("function") or {}
+        params = f.get("parameters") or {}
+        props = params.get("properties")
+        if not isinstance(props, dict):
+            salida.append(t)
+            continue
+        req = set(params.get("required") or [])
+        nuevas = {}
+        for k, v in props.items():
+            tipo = (v or {}).get("type") if isinstance(v, dict) else None
+            if k in req or tipo is None:
+                nuevas[k] = v
+            elif isinstance(tipo, list):
+                nuevas[k] = v if "null" in tipo else {**v, "type": tipo + ["null"]}
+            else:
+                nuevas[k] = {**v, "type": [tipo, "null"]}
+        salida.append({**t, "function": {**f, "parameters": {**params, "properties": nuevas}}})
+    return salida
+
+
+def sin_nulos(args: Any) -> Any:
+    """Quita los argumentos que llegaron en null: para la herramienta, «no mandado» (usa su valor por omisión)."""
+    if not isinstance(args, dict):
+        return args
+    return {k: v for k, v in args.items() if v is not None}
 
 
 ENVOLTURAS = ("properties", "arguments", "parameters", "params", "args", "input")
@@ -102,7 +140,7 @@ class Descubridor:
                     inner = json.loads(inner)
                 except ValueError:
                     inner = {}
-            return real, inner if isinstance(inner, dict) else {}
+            return real, sin_nulos(inner) if isinstance(inner, dict) else {}
         return nombre, args
 
     def _desenvolver(self, real: str, inner: Any) -> Any:

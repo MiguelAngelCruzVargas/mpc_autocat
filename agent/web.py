@@ -1053,7 +1053,9 @@ class Handler(BaseHTTPRequestHandler):
                 nota = (f"Este proveedor acepta {limite} herramientas por pedido y la especialidad trae {len(tools)}: "
                         "el agente busca y usa las herramientas bajo demanda (todas siguen disponibles).")
             out.update({
-                "tools": descubrir.META if meta else tools, "total": len(tools), "bajoDemanda": meta, "nota": nota,
+                "tools": (lambda ts: descubrir.con_nulos(ts) if proveedor in descubrir.VALIDAN_ESQUEMA else ts)(
+                    descubrir.META if meta else tools),
+                "total": len(tools), "bajoDemanda": meta, "nota": nota,
                 "nombres": [t["function"]["name"] for t in mcp.catalogo()],
             })
 
@@ -1076,7 +1078,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _h_ejecutar(self, datos: dict[str, Any]) -> None:
         nombre = str(datos.get("nombre", ""))
-        args = datos.get("args") if isinstance(datos.get("args"), dict) else {}
+        args = descubrir.sin_nulos(datos.get("args") if isinstance(datos.get("args"), dict) else {})
         meta = bool(datos.get("meta"))
         salida: dict[str, Any] = {}
 

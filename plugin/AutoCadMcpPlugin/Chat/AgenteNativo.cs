@@ -465,6 +465,13 @@ namespace AutoCadMcpPlugin.Chat
                 if (tope)
                     Emitir("aviso", Obj("texto", "Se alcanzó el tope de US$" + p.TopeUSD.ToString("0.####") + " por pedido: la corrida se detuvo. Lo dibujado se queda; sube el tope si hace falta seguir."));
 
+                // Que la persona sepa que el pedido TERMINÓ, y si tocó o no el plano (un modelo puede contestar solo con texto
+                // —p. ej. un LISP— y dejar el dibujo vacío sin que se note).
+                if (!tope && !ct.IsCancellationRequested)
+                    Emitir("cierre", Obj("texto", dibujo
+                        ? "Listo: terminé y el dibujo quedó a la vista."
+                        : "Terminé sin dibujar nada en el plano: solo respondí con texto. Si querías verlo dibujado, pide «dibújalo en el plano»."));
+
                 if (dibujo && enAutocad)
                 {
                     // Dentro de AutoCAD no hay visor: lo que se dibujó tiene que VERSE. Una línea de 5 unidades en una vista de cientos
